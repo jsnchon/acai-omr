@@ -1,14 +1,17 @@
-from datasets import GrandStaffLMXPreTrainDataset
+from datasets import GrandStaffLMXDataset, PrimusDataset
+from PIL import Image
+from utils import display_dataset_img
+from torchvision.transforms import ToTensor
 
 def test_grand_staff_dataset(mocker):
     # verify dataset retrieval works
-    dataset = GrandStaffLMXPreTrainDataset("data/grandstaff-lmx.2024-02-12/grandstaff-lmx", "samples.train.txt")
+    dataset = GrandStaffLMXDataset("data/grandstaff-lmx.2024-02-12/grandstaff-lmx", "samples.train.txt")
     original, distorted, lmx = dataset[0]
 
     # verify transforms are being applied
     mock_transform = mocker.Mock()
     mock_transform.return_value = "transformed_img"
-    dataset = GrandStaffLMXPreTrainDataset("data/grandstaff-lmx.2024-02-12/grandstaff-lmx", "samples.train.txt", transform=mock_transform)
+    dataset = GrandStaffLMXDataset("data/grandstaff-lmx.2024-02-12/grandstaff-lmx", "samples.train.txt", transform=mock_transform)
     original, distorted, lmx = dataset[0]
     mock_transform.assert_called()
     assert original == distorted == "transformed_img"
@@ -24,3 +27,24 @@ def test_grand_staff_dataset(mocker):
     with open(LAST_EX_LMX_PATH, "r") as f:
         last_ex_lmx = f.read()
     assert lmx == last_ex_lmx
+
+def test_primus_dataset(mocker):
+    # verify dataset retrieval works
+    dataset = PrimusDataset("data/primusPrepared")
+    img = dataset[0]
+
+    # verify transforms are being applied
+    mock_transform = mocker.Mock()
+    mock_transform.return_value = "transformed_img"
+    dataset = PrimusDataset("data/primusPrepared", transform=mock_transform)
+    img = dataset[0]
+    mock_transform.assert_called()
+    assert img == "transformed_img"
+
+# make sure that images are being converted into tensors correctly and are recoverable
+def test_to_tensor():
+    dataset = GrandStaffLMXDataset("data/grandstaff-lmx.2024-02-12/grandstaff-lmx", "samples.train.txt", transform=ToTensor())
+    display_dataset_img(dataset, 0)
+
+    dataset = PrimusDataset("data/primusPrepared", transform=ToTensor())
+    display_dataset_img(dataset, 0)
