@@ -1,7 +1,8 @@
-from datasets import GrandStaffLMXDataset, PrimusDataset
+from datasets import GrandStaffLMXDataset, PreparedDataset
 from PIL import Image
 from utils import display_dataset_img
 from torchvision.transforms import ToTensor
+import pytest
 
 def test_grand_staff_dataset(mocker):
     # verify dataset retrieval works
@@ -28,15 +29,16 @@ def test_grand_staff_dataset(mocker):
         last_ex_lmx = f.read()
     assert lmx == last_ex_lmx
 
-def test_primus_dataset(mocker):
+@pytest.mark.parametrize("root_dir", ["data/primusPrepared", "data/doReMiPrepared"])
+def test_prepared_datasets(mocker, root_dir):
     # verify dataset retrieval works
-    dataset = PrimusDataset("data/primusPrepared")
+    dataset = PreparedDataset(root_dir)
     img = dataset[0]
 
     # verify transforms are being applied
     mock_transform = mocker.Mock()
     mock_transform.return_value = "transformed_img"
-    dataset = PrimusDataset("data/primusPrepared", transform=mock_transform)
+    dataset = PreparedDataset(root_dir, transform=mock_transform)
     img = dataset[0]
     mock_transform.assert_called()
     assert img == "transformed_img"
@@ -46,5 +48,8 @@ def test_to_tensor():
     dataset = GrandStaffLMXDataset("data/grandstaff-lmx.2024-02-12/grandstaff-lmx", "samples.train.txt", transform=ToTensor())
     display_dataset_img(dataset, 0)
 
-    dataset = PrimusDataset("data/primusPrepared", transform=ToTensor())
+    dataset = PreparedDataset("data/primusPrepared", transform=ToTensor())
+    display_dataset_img(dataset, 0)
+
+    dataset = PreparedDataset("data/doReMiPrepared", transform=ToTensor())
     display_dataset_img(dataset, 0)
