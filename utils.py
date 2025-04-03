@@ -1,6 +1,5 @@
 import matplotlib.pyplot as plt
 import torch
-import time
 
 GRAND_STAFF_ROOT_DIR = "data/grandstaff-lmx.2024-02-12/grandstaff-lmx"
 PRIMUS_PREPARED_ROOT_DIR = "data/primusPrepared"
@@ -36,5 +35,5 @@ def display_dataset_img(dataset, index):
         fig, ax = plt.subplots()
         ax.imshow(data.permute(1, 2, 0).numpy())
 
-    fig.suptitle(f"Index: {index} Data dir: {dataset.root_dir}")
+    fig.suptitle(f"Index: {index}")
     plt.show()
