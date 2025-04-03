@@ -1,4 +1,3 @@
-# todo: go through each dataset, calc distr for image sizes
 from datasets import GrandStaffLMXDataset, PreparedDataset, OlimpicDataset, GrandStaffPreTrainWrapper, OlimpicPreTrainWrapper, PreTrainWrapper
 from torchvision.transforms import ToTensor
 from torch.utils.data import DataLoader
@@ -7,6 +6,7 @@ import numpy as np
 from utils import GRAND_STAFF_ROOT_DIR, PRIMUS_PREPARED_ROOT_DIR, DOREMI_PREPARED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
 from pathlib import Path
 import matplotlib.pyplot as plt
+from torch.nn import Identity
 
 GRAND_STAFF = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.train.txt", transform=ToTensor())
 PRIMUS_PREPARED = PreparedDataset(PRIMUS_PREPARED_ROOT_DIR, transform=ToTensor())
@@ -50,17 +50,18 @@ def calc_distrs(dataloader, dataset_stats_dir):
 
 # distorted and undistorted images have different sizes, even for the same sheet
 grand_staff_pretrain_unaugmented = GrandStaffPreTrainWrapper(GRAND_STAFF)
-grand_staff_pretrain_augmented = GrandStaffPreTrainWrapper(GRAND_STAFF)
+# augment_p = 1 and no-op transform to only measure distorted versions
+grand_staff_pretrain_augmented = GrandStaffPreTrainWrapper(GRAND_STAFF, augment_p=1, transform=Identity())
 primus_pretrain = PreTrainWrapper(PRIMUS_PREPARED)
 doremi_pretrain = PreTrainWrapper(DOREMI_PREPARED)
 # only synthetic dataset has training examples
 olimpic_pretrain = OlimpicPreTrainWrapper(OLIMPIC_SYNTHETIC)
 pre_train_dataloaders = {
-    "GrandStaff unaugmented": DataLoader(grand_staff_pretrain_unaugmented), 
+    #"GrandStaff unaugmented": DataLoader(grand_staff_pretrain_unaugmented), 
     "GrandStaff augmented": DataLoader(grand_staff_pretrain_augmented), 
-    "Primus": DataLoader(primus_pretrain), 
-    "DoReMi": DataLoader(doremi_pretrain), 
-    "Olimpic synthetic": DataLoader(olimpic_pretrain),
+    #"Primus": DataLoader(primus_pretrain), 
+    #"DoReMi": DataLoader(doremi_pretrain), 
+    #"Olimpic synthetic": DataLoader(olimpic_pretrain),
     }
 STATS_DIR = Path("data/dataset_stats")
 STATS_DIR.mkdir(exist_ok=True)

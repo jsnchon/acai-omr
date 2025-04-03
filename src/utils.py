@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import torch
+import numpy as np
 
 GRAND_STAFF_ROOT_DIR = "data/grandstaff-lmx.2024-02-12/grandstaff-lmx"
 PRIMUS_PREPARED_ROOT_DIR = "data/primusPrepared"
@@ -37,3 +38,12 @@ def display_dataset_img(dataset, index):
 
     fig.suptitle(f"Index: {index}")
     plt.show()
+    return data
+
+def sample_pre_train_dataset(pre_train_dataset, num_samples, patch_size):
+    sample_indices = np.floor(np.random.rand(num_samples) * len(pre_train_dataset)).astype(int)
+    for i in range(num_samples):
+        idx = sample_indices[i]
+        input_img, _ = display_dataset_img(pre_train_dataset, idx)
+        print(f"Input image shape: {input_img.shape}")
+        print(f"Input image patch count: {(input_img.shape[1] / patch_size) * (input_img.shape[2] / patch_size) }")

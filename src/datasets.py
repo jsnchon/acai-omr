@@ -74,7 +74,7 @@ class OlimpicPreTrainWrapper(PreTrainWrapper):
 so augmenting the data needs different logic. With probability 1 - augment_p, return the original image as the input image.
 Otherwise, apply the transformation to the distorted image retrieved from the dataset"""
 class GrandStaffPreTrainWrapper(PreTrainWrapper):
-    def __init__(self, base_dataset, augment_p=0, transform=None):
+    def __init__(self, base_dataset, augment_p=0.0, transform=None):
         if augment_p > 0:
             assert transform is not None, "Augmentation transform must be specified for non-zero augment_p"
         super().__init__(base_dataset, transform)
