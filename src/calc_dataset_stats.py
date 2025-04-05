@@ -47,6 +47,7 @@ def calc_distrs(dataloader, dataset_stats_dir):
         heights.append(input_img.shape[1])
     
     plot_and_save_stats(widths, heights, dataset_stats_dir)
+    return widths, heights
 
 # distorted and undistorted images have different sizes, even for the same sheet
 grand_staff_pretrain_unaugmented = GrandStaffPreTrainWrapper(GRAND_STAFF)
@@ -57,17 +58,27 @@ doremi_pretrain = PreTrainWrapper(DOREMI_PREPARED)
 # only synthetic dataset has training examples
 olimpic_pretrain = OlimpicPreTrainWrapper(OLIMPIC_SYNTHETIC)
 pre_train_dataloaders = {
-    #"GrandStaff unaugmented": DataLoader(grand_staff_pretrain_unaugmented), 
+    "GrandStaff unaugmented": DataLoader(grand_staff_pretrain_unaugmented), 
     "GrandStaff augmented": DataLoader(grand_staff_pretrain_augmented), 
-    #"Primus": DataLoader(primus_pretrain), 
-    #"DoReMi": DataLoader(doremi_pretrain), 
-    #"Olimpic synthetic": DataLoader(olimpic_pretrain),
+    "Primus": DataLoader(primus_pretrain), 
+    "DoReMi": DataLoader(doremi_pretrain), 
+    "Olimpic synthetic": DataLoader(olimpic_pretrain),
     }
 STATS_DIR = Path("data/dataset_stats")
 STATS_DIR.mkdir(exist_ok=True)
 
+all_distrs_widths = np.array([])
+all_distrs_heights = np.array([])
 for name, dataloader in pre_train_dataloaders.items():
     dataset_stats_dir = STATS_DIR / (name.replace(" ", "_").lower() + "_stats")
     dataset_stats_dir.mkdir(exist_ok=True)
     print(f"Creating image stats distribution for {name} dataset")
-    calc_distrs(dataloader, dataset_stats_dir)
+    widths, heights = calc_distrs(dataloader, dataset_stats_dir)
+    all_distrs_widths = np.concat([all_distrs_widths, widths])
+    all_distrs_heights = np.concat([all_distrs_heights, heights])
+
+all_distrs_dir = STATS_DIR / "pretrain_distr_stats"
+all_distrs_dir.mkdir(exist_ok=True)
+plot_and_save_stats(all_distrs_widths, all_distrs_heights, all_distrs_dir)
+np.save((all_distrs_dir / "image_widths.npy"), all_distrs_widths)
+np.save((all_distrs_dir / "image_heights.npy"), all_distrs_heights)
