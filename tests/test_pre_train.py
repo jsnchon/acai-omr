@@ -1,4 +1,6 @@
-from pre_train import BucketBatchSampler
+from src.utils import BucketBatchSampler
+from src.models import AdaptivePadPatchEmbed
+from src.pre_train import pre_train_collate_fn
 from torch.utils.data import Dataset, DataLoader
 import torch
 import pytest
@@ -20,6 +22,7 @@ test_args = [
     ([torch.rand(10, 10), torch.rand(300, 300), torch.rand(40, 600), torch.rand(40, 300)], 1, False),
     ([torch.rand(10, 10), torch.rand(300, 300), torch.rand(100, 256), torch.rand(60, 40)], 1, False),
     ([torch.rand(10, 10), torch.rand(300, 300), torch.rand(100, 100), torch.rand(600, 600)], 1, True),
+    ([torch.rand(300, 300), torch.rand(600, 600)], 1, True),
     ([torch.rand(10, 10), torch.rand(300, 300), torch.rand(100, 256), torch.rand(60, 40)], 1, True),
     ([torch.rand(10, 10), torch.rand(5, 25), torch.rand(3, 15), torch.rand(20, 2), torch.rand(3, 3),
       torch.rand(256, 256), torch.rand(300, 301), torch.rand(300, 300), torch.rand(100, 100), torch.rand(600, 600)], 2, False),
@@ -35,11 +38,9 @@ def test_bucket_batch_sampler(caplog, mock_data, batch_size, shuffle):
     bucket_boundaries = [(256, 400), (512, 512)]
     dataset = MockDataset(mock_data)
     sampler = BucketBatchSampler(dataset, bucket_boundaries, batch_size, shuffle)
-    # dataloader = DataLoader(dataset, batch_sampler=sampler) can't do dataloader without padding collate fn
-    # for i, batch in enumerate(dataloader):
+    assert len(sampler.buckets) > 0
     for i, indices in enumerate(sampler):
         print(f"Batch {i + 1}: indices returned by sampler: {indices}")
-        #print(f"Batch {i}: {batch} Mock image tensor shape: {batch[0].shape}")
     print(caplog.text)
 
 # tests in main to use if Pytest stdout capturing is being weird
@@ -51,3 +52,23 @@ dataset = MockDataset(test_args[-1][0])
 sampler = BucketBatchSampler(dataset, [(256, 400), (512, 512)], 2, True)
 for i, indices in enumerate(sampler):
     print(f"Batch {i + 1}: indices returned by sampler: {indices}")
+
+test_args = [
+    ([torch.rand(3, 4, 4), torch.rand(3, 4, 6)]),
+    ([torch.rand(3, 4, 4), torch.rand(3, 4, 4)]),
+    ([torch.rand(3, 4, 4), torch.rand(3, 4, 6), torch.rand(3, 2, 4), torch.rand(3, 2, 6)]),
+    ([torch.rand(3, 4, 6), torch.rand(3, 4, 4), torch.rand(3, 2, 4), torch.rand(3, 2, 6), torch.rand(3, 10, 10)]),
+    ([torch.rand(3, 4, 4), torch.rand(3, 4, 6), torch.rand(3, 2, 4), torch.rand(3, 2, 6), torch.rand(3, 10, 10), torch.rand(3, 10, 12), torch.rand(3, 12, 12)]),
+    ]
+@pytest.mark.parametrize("mock_data", test_args)
+def test_embedding(mock_data):
+    bucket_boundaries = [(2, 3), (8, 8)]
+    dataset = MockDataset(mock_data)
+    sampler = BucketBatchSampler(dataset, bucket_boundaries, 2, shuffle=False)
+    dataloader = DataLoader(dataset, batch_sampler=sampler, collate_fn=pre_train_collate_fn) 
+    embed = AdaptivePadPatchEmbed(2, 6)
+    for i, batch in enumerate(dataloader):
+        embeddings, mask = embed(batch[0])
+        print(f"Batch {i + 1} embedding tensor: {embeddings}")
+        print(f"Batch tensor shape: {embeddings.shape}")
+        print(f"Mask tensor: {mask}")

@@ -1,5 +1,6 @@
 import torch
 from torch.utils.data import Dataset
+from torchvision.transforms import v2
 import pandas as pd
 from pathlib import Path
 from PIL import Image
@@ -28,6 +29,9 @@ class GrandStaffLMXDataset(LMXDataset):
         distorted_img_path = self.root_dir / "grandstaff" / (self.id_df.iat[idx, 0] + "_distorted.jpg")
         original_img = Image.open(original_img_path)
         distorted_img = Image.open(distorted_img_path)
+        # distorted versions are larger, but resize them down for simplicity (eg to ensure input img which is potentially
+        # based on distorted img is always the same size as the target img in pre-training)
+        distorted_img = distorted_img.resize(original_img.size, resample=Image.Resampling.BILINEAR)
 
         if self.transform:       
             original_img = self.transform(original_img)
