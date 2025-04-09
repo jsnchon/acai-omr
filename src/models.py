@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import timm.models.vision_transformer as vit
 
 class AdaptivePadPatchEmbed(nn.Module):
     def __init__(self, patch_size, embed_dim):
@@ -22,3 +23,27 @@ class AdaptivePadPatchEmbed(nn.Module):
             mask[i, len(seq):] = 0 # set embedding positions where padding is to 0
         
         return batch, mask
+
+class MaskedAttention(vit.Attention):
+    def forward(self, x, mask):
+        # all just from timm's source implementation
+        B, N, C = x.shape
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv.unbind(0)
+        q, k = self.q_norm(q), self.k_norm(k)
+
+        q = q * self.scale
+        attn = q @ k.transpose(-2, -1)
+
+        mask = (mask.unsqueeze(-1) * mask.unsqueeze(-2)).unsqueeze(1) # convert masks to 2d grids: B x 1 x N x N
+        attn = attn.masked_fill(mask == 0, float("-inf")) # mask out attention to and from padding patch embeddings
+        attn = attn.softmax(dim=-1)
+        attn = torch.nan_to_num(attn, nan=0.0) # if a row is entirely masked, softmax produces nans, so replace those with 0
+
+        attn = self.attn_drop(attn)
+        x = attn @ v
+
+        x = x.transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x

@@ -1,5 +1,5 @@
 from src.utils import BucketBatchSampler
-from src.models import AdaptivePadPatchEmbed
+from src.models import AdaptivePadPatchEmbed, MaskedAttention
 from src.pre_train import pre_train_collate_fn
 from torch.utils.data import Dataset, DataLoader
 import torch
@@ -72,3 +72,18 @@ def test_embedding(mock_data):
         print(f"Batch {i + 1} embedding tensor: {embeddings}")
         print(f"Batch tensor shape: {embeddings.shape}")
         print(f"Mask tensor: {mask}")
+
+# just have to add print statements inside the module class to debug (then remove them for efficiency)
+@pytest.mark.parametrize("mock_data", test_args)
+def test_attention_masking(mock_data):
+    bucket_boundaries = [(2, 3), (8, 8)]
+    dataset = MockDataset(mock_data)
+    sampler = BucketBatchSampler(dataset, bucket_boundaries, 2, shuffle=False)
+    dataloader = DataLoader(dataset, batch_sampler=sampler, collate_fn=pre_train_collate_fn) 
+    embed = AdaptivePadPatchEmbed(2, 6)
+    for i, batch in enumerate(dataloader):
+        embeddings, mask = embed(batch[0])
+        print(f"Batch {i + 1} embedding tensor shape: {embeddings.shape}")
+        print(f"Batch mask tensor: {mask}")
+        attention_layer = MaskedAttention(6, 1)
+        embeddings = attention_layer(embeddings, mask) # test with multiple heads too
