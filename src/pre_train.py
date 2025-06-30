@@ -1,7 +1,7 @@
 import torch
 from datasets import GrandStaffLMXDataset, PreparedDataset, OlimpicDataset, GrandStaffPreTrainWrapper, OlimpicPreTrainWrapper, PreTrainWrapper
 from utils import GRAND_STAFF_ROOT_DIR, PRIMUS_PREPARED_ROOT_DIR, DOREMI_PREPARED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
-from utils import BucketBatchSampler, PatchDivisibleResize
+from utils import DynamicResize
 import timm
 from torch.utils.data import ConcatDataset
 from torchvision.transforms import InterpolationMode
@@ -9,9 +9,11 @@ from torchvision.transforms import v2
 from torchvision.models.vision_transformer import VisionTransformer
 import logging
 
-logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 PATCH_SIZE = 16 # actual patch will be PATCH_SIZE x PATCH_SIZE
+MAX_SEQ_LEN = 512 # max amount of tokens to allow images to be resized to
 AUGMENTATION_P = 0.5 # probability to apply camera augmentation 
 
 # instead of stacking image tensors (which isn't possible since they're likely of different shapes), 
@@ -28,9 +30,9 @@ def pre_train_collate_fn(batch):
 if __name__ == "__main__":
     # base transform for all images: scale to nearest resolution divisible by patch size
     base_transform = v2.Compose([
-        PatchDivisibleResize(PATCH_SIZE),
         v2.ToImage(), # ToTensor is deprecated
         v2.ToDtype(torch.float32, scale=True),
+        DynamicResize(PATCH_SIZE, MAX_SEQ_LEN),
     ])
 
     # base train datasets
@@ -62,6 +64,9 @@ if __name__ == "__main__":
         OlimpicPreTrainWrapper(olimpic, transform=camera_augment),
     ])
 
+    from utils import sample_pre_train_dataset
+    sample_pre_train_dataset(train_dataset, 10, 16)
+
     # validation dataset setup
     grand_staff_validate = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.dev.txt", transform=base_transform)
     olimpic_synthetic_validate = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.dev.txt", transform=base_transform)
@@ -73,10 +78,10 @@ if __name__ == "__main__":
         OlimpicPreTrainWrapper(olimpic_scanned_validate),
     ])
 
-    encoder = timm.create_model("vit_large_patch16_224.orig_in21k", pretrained=True)
+    #encoder = timm.create_model("vit_large_patch16_224.orig_in21k", pretrained=True)
     # pretrained data transfomr: {'input_size': (3, 224, 224), 'interpolation': 'bicubic', 'mean': (0.485, 0.456, 0.406), 'std': (0.229, 0.224, 0.225), 'crop_pct': 0.875, 'crop_mode': 'center'}
     """Image size isn't enforced, and ours is variable so specify a dummy size. As MAE paper states, decoder can 
     be lightweight. Number of attention heads is same as ViT_L but only use 2 blocks and halve
     hidden and MLP dim"""
-    decoder = VisionTransformer(image_size=128, patch_size=PATCH_SIZE, num_layers=2, num_heads=16, hidden_dim=512, mlp_dim=2048)
+    #decoder = VisionTransformer(image_size=128, patch_size=PATCH_SIZE, num_layers=2, num_heads=16, hidden_dim=512, mlp_dim=2048)
     #print(decoder)

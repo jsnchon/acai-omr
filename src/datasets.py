@@ -63,7 +63,7 @@ class PreTrainWrapper(Dataset):
 
         return input_img, target_img
 
-"""Wrapper for MAE pre-training for Olimpic. Some slightly different logic is needed to handl
+"""Wrapper for MAE pre-training for Olimpic. Some slightly different logic is needed to handle
 the lmx files Olimpic datasets have"""
 class OlimpicPreTrainWrapper(PreTrainWrapper):
     def __getitem__(self, idx):

@@ -6,7 +6,9 @@ from torch.utils.data.sampler import BatchSampler
 import numpy as np
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms import v2
+import torchvision.transforms.v2.functional as F
 import logging
+import math
 
 GRAND_STAFF_ROOT_DIR = "data/grandstaff-lmx.2024-02-12/grandstaff-lmx"
 PRIMUS_PREPARED_ROOT_DIR = "data/primusPrepared"
@@ -52,7 +54,9 @@ def sample_pre_train_dataset(pre_train_dataset, num_samples, patch_size):
         idx = sample_indices[i]
         input_img, _ = display_dataset_img(pre_train_dataset, idx)
         print(f"Input image shape: {input_img.shape}")
-        print(f"Input image patch count: {(input_img.shape[1] / patch_size) * (input_img.shape[2] / patch_size) }")
+        width_patches = input_img.shape[1] // patch_size
+        height_patches = input_img.shape[2] // patch_size
+        print(f"Patch dimensions\nWidth: {width_patches} patches, Height: {height_patches}, Total: {width_patches * height_patches} patches")
 
 # musical scores have very small objects that convey important information, so maintaining resolution is very
 # important. Instead of down/upsampling images to get them to fit ViT structure, resize them to a similar size
@@ -78,6 +82,27 @@ class PatchDivisibleResize(nn.Module):
             antialias=True,
         )
         return resize(img)
+
+# resize image to a nearby patch divisible resolution that also, when patchified, has a sequence length
+# within a certain budget (to avoid excessively long input sequences)
+class DynamicResize(nn.Module):
+    def __init__(self, patch_size, max_seq_len):
+        super().__init__()
+        self.patch_size = patch_size
+        self.max_seq_len = max_seq_len
+
+    # img should be a tensor of shape C x H x W
+    def forward(self, img):
+        aspect_ratio = img.shape[-1] // img.shape[-2]
+        target_height = self.patch_size * math.floor(math.sqrt(self.max_seq_len / aspect_ratio))
+        target_width = target_height * aspect_ratio
+        img = F.resize(
+            img,
+            size=(target_height, target_width),
+            interpolation=InterpolationMode.BICUBIC,
+            antialias=True
+        )
+        return img.clamp(0.0, 1.0)
 
 """
 DataLoader batching requires non-ragged batches, ie all examples are of the same length. A collate function to pad based on
