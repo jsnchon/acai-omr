@@ -2,15 +2,11 @@ import torch
 from datasets import GrandStaffLMXDataset, PreparedDataset, OlimpicDataset, GrandStaffPreTrainWrapper, OlimpicPreTrainWrapper, PreTrainWrapper
 from utils import GRAND_STAFF_ROOT_DIR, PRIMUS_PREPARED_ROOT_DIR, DOREMI_PREPARED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
 from utils import DynamicResize
-import timm
 from torch.utils.data import ConcatDataset
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms import v2
-from torchvision.models.vision_transformer import VisionTransformer
+from models import Encoder
 import logging
-
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 PATCH_SIZE = 16 # actual patch will be PATCH_SIZE x PATCH_SIZE
 MAX_SEQ_LEN = 512 # max amount of tokens to allow images to be resized to
@@ -28,6 +24,9 @@ def pre_train_collate_fn(batch):
     return input_img_tensors, target_img_tensors
 
 if __name__ == "__main__":
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)
+
     # base transform for all images: scale to nearest resolution divisible by patch size
     base_transform = v2.Compose([
         v2.ToImage(), # ToTensor is deprecated
@@ -64,9 +63,6 @@ if __name__ == "__main__":
         OlimpicPreTrainWrapper(olimpic, transform=camera_augment),
     ])
 
-    from utils import sample_pre_train_dataset
-    sample_pre_train_dataset(train_dataset, 10, 16)
-
     # validation dataset setup
     grand_staff_validate = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.dev.txt", transform=base_transform)
     olimpic_synthetic_validate = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.dev.txt", transform=base_transform)
@@ -78,10 +74,4 @@ if __name__ == "__main__":
         OlimpicPreTrainWrapper(olimpic_scanned_validate),
     ])
 
-    #encoder = timm.create_model("vit_large_patch16_224.orig_in21k", pretrained=True)
-    # pretrained data transfomr: {'input_size': (3, 224, 224), 'interpolation': 'bicubic', 'mean': (0.485, 0.456, 0.406), 'std': (0.229, 0.224, 0.225), 'crop_pct': 0.875, 'crop_mode': 'center'}
-    """Image size isn't enforced, and ours is variable so specify a dummy size. As MAE paper states, decoder can 
-    be lightweight. Number of attention heads is same as ViT_L but only use 2 blocks and halve
-    hidden and MLP dim"""
-    #decoder = VisionTransformer(image_size=128, patch_size=PATCH_SIZE, num_layers=2, num_heads=16, hidden_dim=512, mlp_dim=2048)
-    #print(decoder)
+    encoder = Encoder(patch_size=PATCH_SIZE)
