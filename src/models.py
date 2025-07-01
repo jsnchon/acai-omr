@@ -1,25 +1,31 @@
 import torch
 from torch import nn
-from torchvision.models.vision_transformer import VisionTransformer
 from typing import List
 
 NUM_CHANNELS = 3
 
-class Encoder(VisionTransformer):
+# no point in subclassing torchvision ViT. Too many structural changes needed
+class Encoder(nn.Module):
     # default arg values are configuration for ViT base w/ 16 patch size. pe_max_width and pe_max_height are the 
     # max dimensions, in patches, for 2d pes this model will support without interpolation
     def __init__(self, patch_size=16, num_layers=12, num_heads=12, hidden_dim=768, mlp_dim=3072, pe_max_width=32, pe_max_height=96):
-        super().__init__(image_size=0, patch_size=patch_size, num_layers=num_layers, num_heads=num_heads,
-                         hidden_dim=hidden_dim, mlp_dim=mlp_dim) # image size doesn't matter, set to 0 to avoid errors
+        super().__init__()
+        self.patch_size = patch_size
         self.pe_max_width = pe_max_width
         self.pe_max_height = pe_max_height
+        self.hidden_dim = hidden_dim
         self.pos_embedding = nn.Parameter(
             torch.zeros(self.pe_max_width, self.pe_max_height, self.hidden_dim)
         ) # overwrite positional embeddings to 2d absolute embeddings
         nn.init.trunc_normal_(self.pos_embedding, std=0.1)
+
         # assume these images all are RGB (3 channels)
         self.projection = nn.Linear(in_features=(NUM_CHANNELS * self.patch_size ** 2), out_features=self.hidden_dim)
-        self.class_token = None # remove class token 
+        self.encoder = nn.TransformerEncoder(
+            encoder_layer=nn.TransformerEncoderLayer(d_model=hidden_dim, nhead=num_heads, dim_feedforward=mlp_dim, activation="gelu", batch_first=True),
+            num_layers=num_layers, 
+            norm=nn.LayerNorm(self.hidden_dim, eps=1e-6) # copied from ViT source code
+        )
 
     def batchify(self, x: List[torch.Tensor]):
         unfold = nn.Unfold(kernel_size=self.patch_size, stride=self.patch_size)
@@ -34,7 +40,7 @@ class Encoder(VisionTransformer):
                 raise ValueError(f"{h_p} x {w_p} image is too large for max positional embedding grid of shape {self.pe_max_height} x {self.pe_max_width}")
 
             t = unfold(t.unsqueeze(0)) # (C x H x W) -> (1 x (CP^2) x L) where P is patch size, L is sequence length (h_p x w_p)
-            seq_lens.append(t.shape[-1])
+            seq_lens.append(t.shape[-1]) 
             pos_embed_slice = self.pos_embedding[:h_p, :w_p, :].reshape(-1, self.hidden_dim) # (h_p x w_p x E) -> ((h_p x w_p) x E) = (L x E)
             pos_embed_slices.append(pos_embed_slice)
             x[i] = t.squeeze(0).transpose(0, 1) # (1 x (CP^2) x L) -> (L x (CP^2)) to prepare for projection
@@ -47,15 +53,22 @@ class Encoder(VisionTransformer):
         # add positional embeddings
         nested_pos_embeds = torch.nested.nested_tensor(pos_embed_slices)
         padded_pos_embeds = nested_pos_embeds.to_padded_tensor(padding=0.0) # (B x L_m x E)
-        #print(padded_pos_embeds)
         embeddings = embeddings + padded_pos_embeds
 
+        # use recorded sequence lenghts to create padding mask for attention
+        arange = torch.arange(end=embeddings.shape[1]).unsqueeze(0) # (1, L_m)
+        seq_lens = torch.tensor(seq_lens).unsqueeze(1) # (B, 1)
+        src_key_padding_mask = arange >= seq_lens
+        return embeddings, src_key_padding_mask # nested tensors not supported by attention during training
+
         # un-pad back into nested tensor
-        nested_batch = torch.nested.narrow(embeddings, dim=1, start=0, length=torch.tensor(seq_lens), layout=torch.jagged) # (B x j1 x E)
-        return nested_batch.contiguous() # force metadata like offsets to be consistent with jaggedness
+        # nested_batch = torch.nested.narrow(embeddings, dim=1, start=0, length=torch.tensor(seq_lens), layout=torch.jagged) # (B x j1 x E)
+        # return nested_batch.contiguous() # force metadata like offsets to be consistent with jaggedness
 
     def forward(self, x: List[torch.Tensor]):
-        x = self.batchify(x)
+        x, src_key_padding_mask = self.batchify(x)
+        x = self.encoder(x, src_key_padding_mask=src_key_padding_mask)
+        return x, src_key_padding_mask # return mask for later use in loss calculation
 
 # class PreTrainDecoder(VisionTransformer):
 # class LMXDecoder(VisionTransformer):
