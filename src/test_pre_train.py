@@ -1,5 +1,6 @@
 import torch
-from models import Encoder
+from torch import nn
+from models import Encoder, MAEEncoder
 
 def test_encoder_batchify():
     encoder = Encoder(patch_size=2)
@@ -21,5 +22,19 @@ def test_encoder_forward():
     print(mask)
     assert x.shape == torch.Size([2, 8, hidden_dim])
 
+def test_mask_sequence():
+    encoder = MAEEncoder(0.50)
+    seq_len = 4
+    x = torch.arange(seq_len).unsqueeze(0).repeat(12, 1).unsqueeze(0)
+    print(f"x before shuffle/mask: {x}, shape: {x.shape}")
+    t_masked, len_keep, seq_mask, ids_restore = encoder.mask_sequence(x)
+    print(f"Output:\nt_masked: {t_masked}, shape: {t_masked.shape}\nlen_keep: {len_keep}\nseq_mask: {seq_mask}\nids_restore: {ids_restore}")
+    assert t_masked.shape == torch.Size([1, 12, 2])
+    assert len_keep == 2
+    t_masked = torch.concat((t_masked, (torch.zeros(1, 12, 3) - 1)), dim=-1)
+    undo = t_masked.index_select(dim=-1, index=ids_restore.squeeze(0)) 
+    print(f"After appending \"mask tokens\" and unshuffling: {undo}")
+    assert undo.shape == x.shape
+
 if __name__ == "__main__":
-    test_encoder_forward()
+    test_mask_sequence()
