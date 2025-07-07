@@ -23,7 +23,7 @@ class Encoder(nn.Module):
         self.encoder = nn.TransformerEncoder(
             encoder_layer=nn.TransformerEncoderLayer(d_model=hidden_dim, nhead=num_heads, dim_feedforward=mlp_dim, activation="gelu", batch_first=True),
             num_layers=num_layers, 
-            norm=nn.LayerNorm(self.hidden_dim, eps=1e-6) # copied from ViT source code
+            norm=nn.LayerNorm(self.hidden_dim, eps=1e-6) # eps copied from ViT source code
         )
 
     def batchify(self, x: list[torch.Tensor]):
@@ -57,7 +57,7 @@ class Encoder(nn.Module):
         # use recorded sequence lengths to create padding mask for attention
         arange = torch.arange(end=embeddings.shape[1]).unsqueeze(0) # (1, L_m)
         seq_lens = torch.tensor(seq_lens).unsqueeze(1) # (B, 1)
-        src_key_padding_mask = arange >= seq_lens
+        src_key_padding_mask = arange >= seq_lens # (B, L_m)
         return embeddings, src_key_padding_mask # nested tensors not supported by attention during training
 
         # un-pad back into nested tensor
@@ -77,67 +77,75 @@ class MAEEncoder(Encoder):
         self.mask_ratio = mask_ratio
 
     # shuffle and mask patchified sequence (based off approach used here: https://github.com/facebookresearch/mae/blob/main/models_mae.py)
-    # return t_masked, len_keep, seq_mask, ids_restore 
-    def mask_sequence(self, t: torch.Tensor) -> tuple[torch.Tensor, int, torch.Tensor, torch.Tensor]:
+    def mask_sequence(self, t: torch.Tensor, h_p: int, w_p: int) -> tuple[torch.Tensor, torch.Tensor, int, torch.Tensor, torch.Tensor]:
+        # shuffle patches
         unmasked_seq_len = t.shape[-1]
         len_keep = int(unmasked_seq_len * (1 - self.mask_ratio)) # how many patches to keep in sequence
-        noise = torch.rand(1, unmasked_seq_len, device=t.device)
-        ids_shuffle = torch.argsort(noise, dim=1)
-        ids_restore = torch.argsort(ids_shuffle, dim=1)
-        ids_keep = ids_shuffle[:, :len_keep] # (1, L) -> (1, L_keep)
+        noise = torch.rand(unmasked_seq_len, device=t.device)
+        ids_shuffle = torch.argsort(noise)
+        ids_restore = torch.argsort(ids_shuffle)
+        ids_keep = ids_shuffle[:len_keep] # (L, ) -> (L_keep, )
+        t_masked = t.index_select(dim=-1, index=ids_keep) # use ids_keep to select L_keep 1 x CP^2 patch tensors. t_masked is (1 x CP^2 x L_keep)
 
-        t_masked = t.index_select(dim=-1, index=ids_keep.squeeze(0)) # use ids_keep to select L_keep 1 x CP^2 patch tensors. t_masked is (1 x CP^2 x L_keep)
-        seq_mask = torch.ones([1, unmasked_seq_len]) # (1 x L), 0 means patch was kept, 1 means patch was masked from original sequence
-        seq_mask[:, :len_keep] = 0 # mask currently applies to the shuffled sequence
-        seq_mask = seq_mask.index_select(dim=1, index=ids_restore.squeeze(0)) # match mask to original sequence order
+        # record which patches in original sequence are masked
+        seq_mask = torch.ones(unmasked_seq_len, dtype=torch.int) # (L, ), 0 means patch was kept, 1 means patch was masked from original sequence
+        seq_mask[:len_keep] = 0
+        seq_mask = seq_mask.index_select(dim=0, index=ids_restore) # match mask to original sequence order (not shuffled sequence order)
 
-        return t_masked, len_keep, seq_mask, ids_restore
+        # slice positional embedding to align with original patch sequence, apply same shuffle/chop to align it to kept sequence
+        pos_embed_slice = self.pos_embedding[:h_p, :w_p, :].reshape(-1, self.hidden_dim) 
+        pos_embed_slice = pos_embed_slice.index_select(dim=0, index=ids_keep) # (L_keep x E), L_keep first since embedding dims will match this order
+
+        return t_masked, pos_embed_slice, len_keep, seq_mask, ids_restore
 
     def batchify(self, x: list[torch.Tensor]):
         unfold = nn.Unfold(kernel_size=self.patch_size, stride=self.patch_size)
 
-        ts_masked = []
         kept_seq_lens = []
         pos_embed_slices = []
         seq_masks = [] # mask tensors for each sequence recording which patches are masked
-        ids_restore = [] # index tensors to later undo shuffling
+        restore_tensors = [] # index tensors to later undo shuffling
         # modify x in place to contain its tensors patchified then shuffled/masked
         for i, t in enumerate(x):
-            h_p = t.shape[-2] // self.patch_size
+            h_p = t.shape[-2] // self.patch_size # record these before unfolding
             w_p = t.shape[-1] // self.patch_size
             if h_p > self.pe_max_height or w_p > self.pe_max_width:
                 raise ValueError(f"{h_p} x {w_p} image is too large for max positional embedding grid of shape {self.pe_max_height} x {self.pe_max_width}")
 
             t = unfold(t) # (C x H x W) -> (1 x (CP^2) x L) where P is patch size, L is sequence length (h_p x w_p)
-            t_masked, len_keep, seq_mask, ids_restore = self.mask_sequence(t)
+            t_masked, pos_embed_slice, len_keep, seq_mask, ids_restore = self.mask_sequence(t, h_p, w_p)
             kept_seq_lens.append(len_keep)
-            # TODO: test mask_sequence, then finish this
-
-            seq_lens.append(t.shape[-1]) 
-            pos_embed_slice = self.pos_embedding[:h_p, :w_p, :].reshape(-1, self.hidden_dim) # (h_p x w_p x E) -> ((h_p x w_p) x E) = (L x E)
+            seq_masks.append(seq_mask)
+            restore_tensors.append(ids_restore)
             pos_embed_slices.append(pos_embed_slice)
-            x[i] = t.squeeze(0).transpose(0, 1) # (1 x (CP^2) x L) -> (L x (CP^2)) to prepare for projection
+
+            x[i] = t_masked.squeeze(0).transpose(0, 1) 
 
         # project tensors to embedding dimension
         nested_batch = torch.nested.nested_tensor(x)
-        padded_batch = nested_batch.to_padded_tensor(padding=0.0) # (B x L_m x (CP^2)) where L_m is max sequence length in batch
-        embeddings = self.projection(padded_batch) # (B x L_m x E) where E is hidden dimension
+        padded_batch = nested_batch.to_padded_tensor(padding=0.0) 
+        embeddings = self.projection(padded_batch) 
 
         # add positional embeddings
         nested_pos_embeds = torch.nested.nested_tensor(pos_embed_slices)
-        padded_pos_embeds = nested_pos_embeds.to_padded_tensor(padding=0.0) # (B x L_m x E)
+        padded_pos_embeds = nested_pos_embeds.to_padded_tensor(padding=0.0) 
         embeddings = embeddings + padded_pos_embeds
 
         # use recorded sequence lengths to create padding mask for attention
-        arange = torch.arange(end=embeddings.shape[1]).unsqueeze(0) # (1, L_m)
-        seq_lens = torch.tensor(seq_lens).unsqueeze(1) # (B, 1)
-        src_key_padding_mask = arange >= seq_lens
-        return embeddings, src_key_padding_mask # nested tensors not supported by attention during training
+        arange = torch.arange(end=embeddings.shape[1]).unsqueeze(0) 
+        kept_seq_lens = torch.tensor(kept_seq_lens).unsqueeze(1) 
+        src_key_padding_mask = arange >= kept_seq_lens
 
+        # create tensors to use later 
+        batch_seq_masks = torch.nested.nested_tensor(seq_masks, layout=torch.jagged) # (N x j1)
+        batch_ids_restore = torch.nested.nested_tensor(restore_tensors, layout=torch.jagged) # (N x j1)
+        return embeddings, src_key_padding_mask, batch_seq_masks, batch_ids_restore
 
-    # shuffles, 
     def forward(self, x: list[torch.Tensor]):
-        pass
+        x, src_key_padding_mask, batch_seq_masks, batch_ids_restore = self.batchify(x)
+        # x now only contains the patches that weren't masked so we only encode visible patches
+        x = self.encoder(x, src_key_padding_mask=src_key_padding_mask)
+        return x, src_key_padding_mask, batch_seq_masks, batch_ids_restore
 
 # MAE decoder needs learnable mask token and also to specify decoder dim (since can be narrower)
 
