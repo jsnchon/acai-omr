@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+from dataclasses import dataclass
 
 NUM_CHANNELS = 3
 
@@ -7,7 +8,7 @@ NUM_CHANNELS = 3
 class Encoder(nn.Module):
     # default arg values are configuration for ViT base w/ 16 patch size. pe_max_width and pe_max_height are the 
     # max dimensions, in patches, for 2d pes this model will support without interpolation
-    def __init__(self, patch_size=16, num_layers=12, num_heads=12, hidden_dim=768, mlp_dim=3072, pe_max_height=32, pe_max_width=96):
+    def __init__(self, patch_size=16, num_layers=12, hidden_dim=768, num_heads=12, mlp_dim=3072, pe_max_height=32, pe_max_width=96):
         super().__init__()
         self.patch_size = patch_size
         self.pe_max_height = pe_max_height
@@ -15,13 +16,13 @@ class Encoder(nn.Module):
         self.hidden_dim = hidden_dim
         self.pos_embedding = nn.Parameter(
             torch.zeros(self.pe_max_height, self.pe_max_width, self.hidden_dim)
-        ) # overwrite positional embeddings to 2d absolute embeddings
+        ) 
         nn.init.trunc_normal_(self.pos_embedding, std=0.1)
 
         # assume these images all are RGB (3 channels)
         self.projection = nn.Linear(in_features=(NUM_CHANNELS * self.patch_size ** 2), out_features=self.hidden_dim)
         self.encoder = nn.TransformerEncoder(
-            encoder_layer=nn.TransformerEncoderLayer(d_model=hidden_dim, nhead=num_heads, dim_feedforward=mlp_dim, activation="gelu", batch_first=True),
+            encoder_layer=nn.TransformerEncoderLayer(d_model=self.hidden_dim, nhead=num_heads, dim_feedforward=mlp_dim, activation="gelu", batch_first=True),
             num_layers=num_layers, 
             norm=nn.LayerNorm(self.hidden_dim, eps=1e-6) # eps copied from ViT source code
         )
@@ -55,14 +56,15 @@ class Encoder(nn.Module):
         embeddings = embeddings + padded_pos_embeds
 
         # use recorded sequence lengths to create padding mask for attention
-        arange = torch.arange(end=embeddings.shape[1]).unsqueeze(0) # (1, L_m)
-        seq_lens = torch.tensor(seq_lens).unsqueeze(1) # (B, 1)
-        src_key_padding_mask = arange >= seq_lens # (B, L_m)
+        src_key_padding_mask = self.create_attention_mask(seq_lens, embeddings.shape[1])
         return embeddings, src_key_padding_mask # nested tensors not supported by attention during training
 
-        # un-pad back into nested tensor
-        # nested_batch = torch.nested.narrow(embeddings, dim=1, start=0, length=torch.tensor(seq_lens), layout=torch.jagged) # (B x j1 x E)
-        # return nested_batch.contiguous() # force metadata like offsets to be consistent with jaggedness
+    # takes a list of batch sequence lengths seq_lens where the ith entry is the ith example's sequence length and a max sequence 
+    # length in the batch max_len and returns a (B, L_m) src key attention mask indicating what embeddings to ignore according to seq_lens
+    def create_attention_mask(self, seq_lens: list[int], max_len: int):
+        arange = torch.arange(end=max_len).unsqueeze(0) # (1, L_m)
+        seq_lens = torch.tensor(seq_lens).unsqueeze(1) # (B, 1)
+        return arange >= seq_lens # (B, L_m)
 
     def forward(self, x: list[torch.Tensor]):
         x, src_key_padding_mask = self.batchify(x)
@@ -73,11 +75,11 @@ class Encoder(nn.Module):
 # pre-training. This subclass just modifies the forward logic to include MAE logic (patching -> shuffling -> masking -> encoding)
 class MAEEncoder(Encoder):
     def __init__(self, mask_ratio, patch_size=16, num_layers=12, num_heads=12, hidden_dim=768, mlp_dim=3072, pe_max_height=32, pe_max_width=96):
-        super().__init__(patch_size, num_layers, num_heads, hidden_dim, mlp_dim, pe_max_height, pe_max_width)
+        super().__init__(patch_size, num_layers, hidden_dim, num_heads, mlp_dim, pe_max_height, pe_max_width)
         self.mask_ratio = mask_ratio
 
     # shuffle and mask patchified sequence (based off approach used here: https://github.com/facebookresearch/mae/blob/main/models_mae.py)
-    def mask_sequence(self, t: torch.Tensor, h_p: int, w_p: int) -> tuple[torch.Tensor, torch.Tensor, int, torch.Tensor, torch.Tensor]:
+    def mask_sequence(self, t: torch.Tensor, h_p: int, w_p: int) -> tuple[torch.Tensor, torch.Tensor, int, int, torch.Tensor, torch.Tensor]:
         # shuffle patches
         unmasked_seq_len = t.shape[-1]
         len_keep = int(unmasked_seq_len * (1 - self.mask_ratio)) # how many patches to keep in sequence
@@ -96,11 +98,13 @@ class MAEEncoder(Encoder):
         pos_embed_slice = self.pos_embedding[:h_p, :w_p, :].reshape(-1, self.hidden_dim) 
         pos_embed_slice = pos_embed_slice.index_select(dim=0, index=ids_keep) # (L_keep x E), L_keep first since embedding dims will match this order
 
-        return t_masked, pos_embed_slice, len_keep, seq_mask, ids_restore
+        return t_masked, pos_embed_slice, unmasked_seq_len, len_keep, seq_mask, ids_restore
 
     def batchify(self, x: list[torch.Tensor]):
         unfold = nn.Unfold(kernel_size=self.patch_size, stride=self.patch_size)
 
+        unmasked_seq_lens = []
+        max_unmasked_seq_len = float("-inf")
         kept_seq_lens = []
         pos_embed_slices = []
         seq_masks = [] # mask tensors for each sequence recording which patches are masked
@@ -113,7 +117,11 @@ class MAEEncoder(Encoder):
                 raise ValueError(f"{h_p} x {w_p} image is too large for max positional embedding grid of shape {self.pe_max_height} x {self.pe_max_width}")
 
             t = unfold(t) # (C x H x W) -> (1 x (CP^2) x L) where P is patch size, L is sequence length (h_p x w_p)
-            t_masked, pos_embed_slice, len_keep, seq_mask, ids_restore = self.mask_sequence(t, h_p, w_p)
+            t_masked, pos_embed_slice, unmasked_seq_len, len_keep, seq_mask, ids_restore = self.mask_sequence(t, h_p, w_p)
+            unmasked_seq_lens.append(unmasked_seq_len)
+            if unmasked_seq_len > max_unmasked_seq_len: # track max here so don't have to call max() later for efficiency
+                max_unmasked_seq_len = unmasked_seq_len
+
             kept_seq_lens.append(len_keep)
             seq_masks.append(seq_mask)
             restore_tensors.append(ids_restore)
@@ -131,21 +139,78 @@ class MAEEncoder(Encoder):
         padded_pos_embeds = nested_pos_embeds.to_padded_tensor(padding=0.0) 
         embeddings = embeddings + padded_pos_embeds
 
-        # use recorded sequence lengths to create padding mask for attention
-        arange = torch.arange(end=embeddings.shape[1]).unsqueeze(0) 
-        kept_seq_lens = torch.tensor(kept_seq_lens).unsqueeze(1) 
-        src_key_padding_mask = arange >= kept_seq_lens
+        # attention masks differ between encoder and decoder since encoder only operates on visible patches. Decoder
+        # needs a mask for the original sequence lengths since will operate on visible and masked patches
+        encoder_attention_mask = self.create_attention_mask(kept_seq_lens, embeddings.shape[1])
+        decoder_attention_mask = self.create_attention_mask(unmasked_seq_lens, max_unmasked_seq_len)
 
         # create tensors to use later 
-        batch_seq_masks = torch.nested.nested_tensor(seq_masks, layout=torch.jagged) # (N x j1)
+        batch_seq_masks = torch.nested.nested_tensor(seq_masks, layout=torch.jagged) # (N x j1). nested_tensor automatically adds batch dimension
         batch_ids_restore = torch.nested.nested_tensor(restore_tensors, layout=torch.jagged) # (N x j1)
-        return embeddings, src_key_padding_mask, batch_seq_masks, batch_ids_restore
+        return embeddings, encoder_attention_mask, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore
 
     def forward(self, x: list[torch.Tensor]):
-        x, src_key_padding_mask, batch_seq_masks, batch_ids_restore = self.batchify(x)
+        x, encoder_attention_mask, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore = self.batchify(x)
         # x now only contains the patches that weren't masked so we only encode visible patches
-        x = self.encoder(x, src_key_padding_mask=src_key_padding_mask)
-        return x, src_key_padding_mask, batch_seq_masks, batch_ids_restore
+        x = self.encoder(x, src_key_padding_mask=encoder_attention_mask)
+        return x, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore
+
+class Decoder(nn.Module):
+    # these default args are for the best performing MAE decoder in the paper
+    def __init__(self, num_layers=8, hidden_dim=512, num_heads=12, mlp_dim=3072, pe_max_height=32, pe_max_width=96):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.decoder = nn.TransformerEncoder( # nn.TransformerEncoder works fine here since just self-attending to one sequence
+            encoder_layer=nn.TransformerEncoderLayer(d_model=hidden_dim, nhead=num_heads, dim_feedforward=mlp_dim, activation="gelu", batch_first=True),
+            num_layers=num_layers,
+            norm=nn.LayerNorm(self.hidden_dim, eps=1e-6)
+        )
+
+    # for MAE, assume x is already positionally embedded (so mask tokens have positional info). Don't do it here because
+    # positional embeddings aren't needed after pre-training when encoding entire images
+    def forward(self, x: torch.Tensor, attention_mask: torch.Tensor):
+        return self.decoder(x, src_key_padding_mask=attention_mask)
+
+class MAE(nn.Module):
+    def __init__(self, mask_ratio, patch_size, encoder_hidden_dim=768, decoder_hidden_dim=512, pe_max_height=32, pe_max_width=96, encoder_kwargs={}, decoder_kwargs={}):
+        super().__init__()
+        self.encoder = MAEEncoder(mask_ratio, patch_size, hidden_dim=encoder_hidden_dim, pe_max_height=pe_max_height, pe_max_width=pe_max_width, **encoder_kwargs)
+        self.decoder = Decoder(hidden_dim=decoder_hidden_dim, pe_max_height=pe_max_height, pe_max_width=pe_max_width, **decoder_kwargs)
+        self.decoder_embed = nn.Linear(encoder_hidden_dim, decoder_hidden_dim)
+        self.mask_token = nn.Parameter(
+            torch.zeros(1, 1, decoder_hidden_dim)
+        )
+        self.decoder_pos_embedding = nn.Parameter(
+            torch.zeros(pe_max_height, pe_max_width, decoder_hidden_dim)
+        )
+        nn.init.trunc_normal_(self.mask_token, std=0.1)
+        nn.init.trunc_normal_(self.decoder_pos_embedding, std=0.1)
+
+    # takes latent tensor projected to decoder dimension and for each sequence appends mask tokens and unshuffles
+    # returns a padded batch tensor
+    def reconstruct_sequences(self, latent: torch.Tensor, kept_seq_lens: list[int], unmasked_seq_lens: list[int], batch_ids_restore: torch.Tensor):
+        # use kept lens to create nested tensor from latent, then iterate through, appending masked tokens according to diff with unmasked_seq_lens,
+        # finally converting that into padded tensor?
+        append_amounts = (torch.tensor(unmasked_seq_lens) - torch.tensor(kept_seq_lens)).tolist()
+        reconstructed_sequences = []
+        for i, sequence in enumerate(latent.unbind()):
+            # remove padding
+            sequence = sequence[:kept_seq_lens[i], :]
+            # append the sequence's needed amount of mask tokens
+            sequence = torch.cat([sequence.unsqueeze(0), self.mask_token.repeat(1, append_amounts[i], 1)], dim=1)
+            # unshuffle
+            sequence = sequence.index_select(dim=1, index=batch_ids_restore[i, :])
+            reconstructed_sequences.append(sequence.squeeze(0)) # remove batch dim value of 1 since nested tensor infers batch dim
+
+        reconstructed_sequences = torch.nested.as_nested_tensor(reconstructed_sequences, layout=torch.jagged)
+        return reconstructed_sequences.to_padded_tensor(padding=0.0)
+
+    def forward(self, x: list[torch.Tensor]):
+        latent, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore = self.encoder(x)
+        latent = self.decoder_embed(latent) # project to decoder embedding space
+
+        latent = self.reconstruct_sequences(latent, kept_seq_lens, unmasked_seq_lens, batch_ids_restore)
+
 
 # MAE decoder needs learnable mask token and also to specify decoder dim (since can be narrower)
 

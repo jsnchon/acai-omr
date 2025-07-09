@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from models import Encoder, MAEEncoder
+from models import Encoder, MAEEncoder, MAE
 
 def test_encoder_batchify():
     encoder = Encoder(patch_size=2)
@@ -32,9 +32,10 @@ def test_mask_sequence():
         torch.cat((pe_num_grid, pe_filler), dim=1).unsqueeze(-1)
     )
     print(f"Unsliced positional embedding grid: {encoder.pos_embedding}")
-    t_masked, pos_embed_slice, len_keep, seq_mask, ids_restore = encoder.mask_sequence(x, 2, 2)
-    print(f"Output:\nt_masked: {t_masked}, shape: {t_masked.shape}\npos_embed_slice: {pos_embed_slice}, shape: {pos_embed_slice.shape}\nlen_keep: {len_keep}\nseq_mask: {seq_mask}\nids_restore: {ids_restore}")
+    t_masked, pos_embed_slice, unmasked_seq_len, len_keep, seq_mask, ids_restore = encoder.mask_sequence(x, 2, 2)
+    print(f"Output:\nt_masked: {t_masked}, shape: {t_masked.shape}\npos_embed_slice: {pos_embed_slice}, shape: {pos_embed_slice.shape}\nunmasked_seq_len: {unmasked_seq_len}\nlen_keep: {len_keep}\nseq_mask: {seq_mask}\nids_restore: {ids_restore}")
     assert t_masked.shape == torch.Size([1, 12, 2])
+    assert unmasked_seq_len == SEQ_LEN
     assert len_keep == 2
     t_masked = torch.concat((t_masked, (torch.zeros(1, 12, 3) - 1)), dim=-1) # append mask tokens of -1 tensors
     undo = t_masked.index_select(dim=-1, index=ids_restore.squeeze(0)) 
@@ -44,19 +45,67 @@ def test_mask_sequence():
 def test_masked_encoder_batchify():
     encoder = MAEEncoder(0.50, patch_size=2)
     x = [torch.rand(3, 4, 4), torch.rand(3, 4, 6)]
-    batch, attn_mask, seq_masks, ids_restores = encoder.batchify(x)
-    print(f"Output:\nEmbeddings {batch}\nAttention mask: {attn_mask}\nSequence masks: {seq_masks}\nRestore tensor: {ids_restores}")
+    batch, encoder_attn_mask, decoder_attn_mask, seq_masks, ids_restores = encoder.batchify(x)
+    print(f"Output:\nEmbeddings {batch}\nEncoder attention mask: {encoder_attn_mask}\nDecoder attention mask: {decoder_attn_mask}\\nSequence masks: {seq_masks}\nRestore tensor: {ids_restores}")
+    # verify encoder attention mask
     first_ex_mask = (torch.arange(3) >= 2).unsqueeze(0)
     second_ex_mask = (torch.arange(3) >= 3).unsqueeze(0)
-    assert torch.equal(attn_mask, torch.cat((first_ex_mask, second_ex_mask)))
+    assert torch.equal(encoder_attn_mask, torch.cat((first_ex_mask, second_ex_mask)))
+    # verify decoder attention mask
+    first_ex_mask = (torch.arange(6) >= 4).unsqueeze(0)
+    second_ex_mask = (torch.arange(6) >= 6).unsqueeze(0)
+    assert torch.equal(decoder_attn_mask, torch.cat((first_ex_mask, second_ex_mask)))
 
 def test_masked_encoder_forward():
     hidden_dim = 200
     encoder = MAEEncoder(0.50, num_layers=2, num_heads=2, hidden_dim=hidden_dim, mlp_dim=500, patch_size=2)
     x = [torch.rand(3, 4, 4), torch.rand(3, 4, 8)]
-    x, attn_mask, seq_masks, ids_restores = encoder(x)
+    x, attn_mask, _, seq_masks, ids_restores = encoder(x)
     print(f"Output:\nEmbeddings {x}\nAttention mask: {attn_mask}\nSequence masks: {seq_masks}\nRestore tensor: {ids_restores}")
     assert x.shape == torch.Size([2, 4, hidden_dim])
 
+def test_reconstruct_sequences():
+    encoder_kwargs = {"num_heads": 1}
+    decoder_kwargs = {"num_heads": 1}
+    encoder_hidden_dim = 2
+    mae = MAE(0.5, 1, encoder_hidden_dim=encoder_hidden_dim, decoder_hidden_dim=1, encoder_kwargs=encoder_kwargs, decoder_kwargs=decoder_kwargs)
+    # simulate latent of two sequences, one with length 2 + padding and other with length 3. First needs 1 mask token appended, second
+    # needs 2 mask tokens appended. When unshuffled, mask tokens should be in front, labeled patches should be in ascending order
+    mae.mask_token = nn.Parameter(torch.zeros(1, 1, 1) + 100)
+    first_latent_seq = torch.cat([(torch.arange(2) + 1).unsqueeze(-1).unsqueeze(0), torch.zeros(1, 1, 1) - 1], dim=1) 
+    second_latent_seq = (torch.arange(3) + 1).unsqueeze(-1).unsqueeze(0)
+    # shuffle
+    first_latent_seq = first_latent_seq.index_select(dim=1, index=torch.tensor([1, 0, 2]))
+    second_latent_seq = second_latent_seq.index_select(dim=1, index=torch.tensor([2, 0, 1]))
+    kept_seq_lens = [2, 3]
+    unmasked_seq_lens = [3, 5]
+    batch_ids_restore = torch.nested.nested_tensor([torch.tensor([2, 1, 0]), torch.tensor([3, 4, 1, 2, 0])])
+    latent = torch.cat([first_latent_seq, second_latent_seq])
+    print(f"Latent before reconstruction (shuffled and padded from encoder): {latent}, {latent.shape}")
+    reconstructed_seq = mae.reconstruct_sequences(latent, kept_seq_lens, unmasked_seq_lens, batch_ids_restore)
+    print(f"Latent after reconstruction: {reconstructed_seq}, {reconstructed_seq.shape}")
+    first_target_seq = torch.tensor([100, 1, 2, 0, 0]).unsqueeze(-1).unsqueeze(0)
+    second_target_seq = torch.tensor([100, 100, 1, 2, 3]).unsqueeze(-1).unsqueeze(0)
+    assert torch.equal(reconstructed_seq, torch.cat([first_target_seq, second_target_seq]))
+
+def test_MAE():
+    encoder_kwargs = {"num_heads": 1}
+    decoder_kwargs = {"num_heads": 1}
+    encoder_hidden_dim = 2
+    mae = MAE(0.5, 1, encoder_hidden_dim=encoder_hidden_dim, decoder_hidden_dim=1, encoder_kwargs=encoder_kwargs, decoder_kwargs=decoder_kwargs)
+    SEQ_LEN = 4
+    x = [torch.arange(SEQ_LEN, dtype=torch.float).reshape(2, 2).unsqueeze(0).repeat(3, 1, 1)] 
+    print(x[0].shape)
+    print(f"x before mae forward: {x}")
+    pe_num_grid = torch.arange(4, dtype=torch.float).reshape(2, 2) # pes labeled in order to check alignment with shuffle
+    pe_filler = torch.zeros(2, 4) - 1 # should not appear in final slice to be added to embeddings
+    mae.encoder.pos_embedding = nn.Parameter(
+        torch.cat((pe_num_grid, pe_filler), dim=1).unsqueeze(-1).repeat(1, 1, encoder_hidden_dim)
+    )
+    mae.decoder_pos_embedding = nn.Parameter(
+        torch.cat((pe_num_grid, pe_filler), dim=1).unsqueeze(-1)
+    )
+    x = mae(x)
+
 if __name__ == "__main__":
-    test_masked_encoder_forward()
+    test_reconstruct_sequences()
