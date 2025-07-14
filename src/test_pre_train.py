@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from models import Encoder, MAEEncoder, MAE
+from models import Encoder, MAEEncoder, MAE, MAELoss
 
 def test_encoder_batchify():
     encoder = Encoder(patch_size=2)
@@ -117,7 +117,34 @@ def test_MAE():
     mae.decoder_pos_embedding = nn.Parameter(
         torch.cat((pe_num_grid, pe_filler), dim=1).unsqueeze(-1).repeat(1, 1, decoder_hidden_dim)
     )
-    x = mae(x)
+    pred, loss_mask, target = mae(x)
+    print(f"Prediction: {pred}\nLoss mask: {loss_mask}")
+
+    x= [torch.arange(SEQ_LEN, dtype=torch.float).reshape(2, 2).unsqueeze(0).repeat(3, 1, 1),
+        torch.arange(SEQ_LEN * 2, dtype=torch.float).reshape(2, -1).unsqueeze(0).repeat(3, 1, 1)]
+    print(f"x before mae forward: {x}")
+    pred, loss_mask, _ = mae(x)
+    print(f"Prediction: {pred}\nLoss mask: {loss_mask}")
+    first_seq_loss_mask = loss_mask[0, :]
+    second_seq_loss_mask = loss_mask[1, :]
+
+    assert torch.sum(first_seq_loss_mask[SEQ_LEN:]) == 0 # last half should definitely be False since it was padding for attention
+    # half of original sequence length should be True
+    assert torch.sum(first_seq_loss_mask) == SEQ_LEN / 2
+    assert torch.sum(second_seq_loss_mask) == SEQ_LEN 
+
+def test_MAE_loss():
+    loss = MAELoss()
+    target = torch.cat([
+        torch.tensor([[1, 1, 1], [2, 2, 2]], dtype=torch.float).unsqueeze(-1).repeat(1, 1, 6),
+        torch.tensor([[2, 2, 2], [3, 3, 3]], dtype=torch.float).unsqueeze(-1).repeat(1, 1, 6),
+        ], dim=-1)
+    pred = torch.tensor([[2, 2, 2], [3, 3, 4]], dtype=torch.float).unsqueeze(-1).repeat(1, 1, 12)
+    loss_mask = torch.tensor([[1, 0, 0], [1, 0, 1]], dtype=torch.float)
+    print(f"Target:\n{target}\nPrediction:\n{pred}\nLoss mask\n{loss_mask}")
+    loss = loss(pred, loss_mask, target)
+    print(f"Loss:\n{loss}")
+    assert loss == 10.583329200744629
 
 if __name__ == "__main__":
-    test_MAE()
+    test_MAE_loss()
