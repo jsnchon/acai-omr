@@ -28,6 +28,18 @@ def test_grand_staff_dataset(mocker):
         last_ex_lmx = f.read()
     assert lmx == last_ex_lmx
 
+def test_grayscale():
+    transform = ToTensor()
+    for dataset in [GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.train.txt"),
+                    OlimpicDataset(OLIMPIC_SCANNED_ROOT_DIR, "samples.test.txt"),
+                    OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.train.txt")]:
+        print(f"Current dataset: {dataset}")
+        assert transform(dataset[0][0]).shape[0] == 1
+    
+    for dataset in [PreparedDataset(PRIMUS_PREPARED_ROOT_DIR), PreparedDataset(DOREMI_PREPARED_ROOT_DIR)]:
+        print(f"Current dataset: {dataset}")
+        assert transform(dataset[0]).shape[0] == 1
+
 @pytest.mark.parametrize("root_dir", [PRIMUS_PREPARED_ROOT_DIR, DOREMI_PREPARED_ROOT_DIR])
 def test_prepared_datasets(mocker, root_dir):
     # verify dataset retrieval works

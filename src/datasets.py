@@ -27,8 +27,8 @@ class GrandStaffLMXDataset(LMXDataset):
     def __getitem__(self, idx):
         original_img_path = self.root_dir / "grandstaff" / (self.id_df.iat[idx, 0] + ".jpg") 
         distorted_img_path = self.root_dir / "grandstaff" / (self.id_df.iat[idx, 0] + "_distorted.jpg")
-        original_img = Image.open(original_img_path)
-        distorted_img = Image.open(distorted_img_path)
+        original_img = Image.open(original_img_path).convert("L")
+        distorted_img = Image.open(distorted_img_path).convert("L")
         # distorted versions are larger, but resize them down for simplicity (eg to ensure input img which is potentially
         # based on distorted img is always the same size as the target img in pre-training)
         distorted_img = distorted_img.resize(original_img.size, resample=Image.Resampling.BILINEAR)
@@ -107,7 +107,7 @@ class PreparedDataset(Dataset):
     def __getitem__(self, idx):
         img_id = self.id_df.at[idx, "id"]
         img_path = self.root_dir / "images" / (img_id + ".png")
-        img = Image.open(img_path).convert("RGB")
+        img = Image.open(img_path)
 
         if self.transform:
             img = self.transform(img)
@@ -118,7 +118,7 @@ class PreparedDataset(Dataset):
 class OlimpicDataset(LMXDataset):
     def __getitem__(self, idx):
         img_path = self.root_dir / (self.id_df.iat[idx, 0] + ".png")
-        img = Image.open(img_path).convert("RGB")
+        img = Image.open(img_path)
 
         if self.transform:
             img = self.transform(img)
@@ -128,15 +128,3 @@ class OlimpicDataset(LMXDataset):
             lmx = f.read()
 
         return img, lmx
-
-# TODO: olimpic dataset (scanned + synthetic)
-
-# TODO: create pretrain wrapper for grandstaff that always returns original image as target and then
-# either returns original image is input image to mask, returns the distorted image as input image,
-# or phone augments the original image to be input image (should this be a custom transformation?)
-
-
-# all pre train datasets shoudl return a potentially augmented image to mask and then the target image 
-# which should always be un augmented
-# honestly for grandstaff may not need to separate distorted from camera augmentation. distortion could just
-# be start of camera augmentation (and then maybe just add perspective shift, brightness, color jitter)

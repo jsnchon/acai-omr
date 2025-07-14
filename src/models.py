@@ -2,13 +2,13 @@ import torch
 from torch import nn
 from dataclasses import dataclass
 
-NUM_CHANNELS = 3 # assume these images all are RGB (3 channels)
+NUM_CHANNELS = 1 # assume these images all are grayscale
 
 # no point in subclassing torchvision ViT. Too many structural changes needed
 class Encoder(nn.Module):
     # default arg values are configuration for ViT base w/ 16 patch size. pe_max_width and pe_max_height are the 
     # max dimensions, in patches, for 2d pes this model will support without interpolation
-    def __init__(self, patch_size=16, num_layers=12, hidden_dim=768, num_heads=12, mlp_dim=3072, pe_max_height=32, pe_max_width=96):
+    def __init__(self, patch_size=16, num_layers=12, hidden_dim=768, num_heads=12, mlp_dim=3072, pe_max_height=32, pe_max_width=96, transformer_dropout=0.1):
         super().__init__()
         self.patch_size = patch_size
         self.pe_max_height = pe_max_height
@@ -21,7 +21,7 @@ class Encoder(nn.Module):
 
         self.projection = nn.Linear(in_features=(NUM_CHANNELS * self.patch_size ** 2), out_features=self.hidden_dim)
         self.encoder_blocks = nn.TransformerEncoder(
-            encoder_layer=nn.TransformerEncoderLayer(d_model=self.hidden_dim, nhead=num_heads, dim_feedforward=mlp_dim, activation="gelu", batch_first=True),
+            encoder_layer=nn.TransformerEncoderLayer(d_model=self.hidden_dim, nhead=num_heads, dim_feedforward=mlp_dim, dropout=transformer_dropout, activation="gelu", batch_first=True),
             num_layers=num_layers, 
             norm=nn.LayerNorm(self.hidden_dim, eps=1e-6) # eps copied from ViT source code
         )
@@ -65,6 +65,7 @@ class Encoder(nn.Module):
         seq_lens = torch.tensor(seq_lens).unsqueeze(1) # (B, 1)
         return arange >= seq_lens # (B, L_m)
 
+    # x is a list of C x H x W image tensors
     def forward(self, x: list[torch.Tensor]):
         x, src_key_padding_mask = self.batchify(x)
         x = self.encoder_blocks(x, src_key_padding_mask=src_key_padding_mask)
@@ -74,7 +75,7 @@ class Encoder(nn.Module):
 # pre-training. This subclass just modifies the forward logic to include MAE logic (patching -> shuffling -> masking -> encoding)
 class MAEEncoder(Encoder):
     def __init__(self, mask_ratio, patch_size=16, num_layers=12, num_heads=12, hidden_dim=768, mlp_dim=3072, pe_max_height=32, pe_max_width=96):
-        super().__init__(patch_size, num_layers, hidden_dim, num_heads, mlp_dim, pe_max_height, pe_max_width)
+        super().__init__(patch_size, num_layers, hidden_dim, num_heads, mlp_dim, pe_max_height, pe_max_width, transformer_dropout=0.0)
         self.mask_ratio = mask_ratio
 
     # shuffle and mask patchified sequence (based off approach used here: https://github.com/facebookresearch/mae/blob/main/models_mae.py)
@@ -109,15 +110,17 @@ class MAEEncoder(Encoder):
         patchified_dims = [] # list of (h_p, w_p) tuples for each image. Needed later for decoder positional embedding
         seq_masks = [] # mask tensors for each sequence recording which patches are masked
         restore_tensors = [] # index tensors to later undo shuffling
-        # modify x in place to contain its tensors patchified then shuffled/masked
-        for i, t in enumerate(x):
+        masked_tensors = [] 
+        unfolded_targets = []
+        for t in x:
             h_p = t.shape[-2] // self.patch_size # record these before unfolding
             w_p = t.shape[-1] // self.patch_size
             if h_p > self.pe_max_height or w_p > self.pe_max_width:
                 raise ValueError(f"{h_p} x {w_p} image is too large for max positional embedding grid of shape {self.pe_max_height} x {self.pe_max_width}")
             patchified_dims.append((h_p, w_p))
 
-            t = unfold(t) # (C x H x W) -> (1 x (CP^2) x L) where P is patch size, L is sequence length (h_p x w_p)
+            t = unfold(t.unsqueeze(0)) # (1 x C x H x W) -> (1 x (CP^2) x L) where P is patch size, L is sequence length (h_p x w_p)
+            unfolded_targets.append(t.squeeze(0).transpose(0, 1)) # make t (L x CP^2) (nesting will add batch dimension later)
             t_masked, pos_embed_slice, unmasked_seq_len, len_keep, seq_mask, ids_restore = self.mask_sequence(t, h_p, w_p)
             unmasked_seq_lens.append(unmasked_seq_len)
             if unmasked_seq_len > max_unmasked_seq_len: # track max here so don't have to call max() later for efficiency
@@ -128,10 +131,10 @@ class MAEEncoder(Encoder):
             restore_tensors.append(ids_restore)
             pos_embed_slices.append(pos_embed_slice)
 
-            x[i] = t_masked.squeeze(0).transpose(0, 1) 
+            masked_tensors.append(t_masked.squeeze(0).transpose(0, 1))
 
         # project tensors to embedding dimension
-        nested_batch = torch.nested.nested_tensor(x, layout=torch.jagged)
+        nested_batch = torch.nested.nested_tensor(masked_tensors, layout=torch.jagged)
         padded_batch = nested_batch.to_padded_tensor(padding=0.0) 
         embeddings = self.projection(padded_batch) 
 
@@ -148,21 +151,24 @@ class MAEEncoder(Encoder):
         # create tensors to use later 
         batch_seq_masks = torch.nested.nested_tensor(seq_masks, layout=torch.jagged) # (N x j1). nested_tensor automatically adds batch dimension
         batch_ids_restore = torch.nested.nested_tensor(restore_tensors, layout=torch.jagged) # (N x j1)
-        return embeddings, encoder_attention_mask, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore, patchified_dims, padded_batch
+        target_nested = torch.nested.nested_tensor(unfolded_targets, layout=torch.jagged) # (N x j2 x CP^2)
+        target_padded = target_nested.to_padded_tensor(padding=0.0)
+
+        return embeddings, encoder_attention_mask, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore, patchified_dims, target_padded
 
     def forward(self, x: list[torch.Tensor]):
-        x, encoder_attention_mask, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore, patchified_dims, padded_batch = self.batchify(x)
+        x, encoder_attention_mask, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore, patchified_dims, target_padded = self.batchify(x)
         # x now only contains the patches that weren't masked so we only encode visible patches
         x = self.encoder_blocks(x, src_key_padding_mask=encoder_attention_mask)
-        return x, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore, patchified_dims, padded_batch
+        return x, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore, patchified_dims, target_padded
 
 class Decoder(nn.Module):
-    # these default args are for the best performing MAE decoder in the paper
-    def __init__(self, num_layers=8, hidden_dim=512, num_heads=12, mlp_dim=3072):
+    # these default args are for the best performing MAE decoder in the paper (excluding dropout which is just PyTorch transformer default)
+    def __init__(self, num_layers=8, hidden_dim=512, num_heads=12, mlp_dim=3072, transformer_dropout=0.1):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.decoder_blocks = nn.TransformerEncoder( # nn.TransformerEncoder works fine here since just self-attending to one sequence
-            encoder_layer=nn.TransformerEncoderLayer(d_model=hidden_dim, nhead=num_heads, dim_feedforward=mlp_dim, activation="gelu", batch_first=True),
+            encoder_layer=nn.TransformerEncoderLayer(d_model=hidden_dim, nhead=num_heads, dim_feedforward=mlp_dim, dropout=transformer_dropout, activation="gelu", batch_first=True),
             num_layers=num_layers,
             norm=nn.LayerNorm(self.hidden_dim, eps=1e-6)
         )
@@ -178,7 +184,7 @@ class MAE(nn.Module):
         self.patch_size = patch_size
         self.encoder = MAEEncoder(mask_ratio, self.patch_size, hidden_dim=encoder_hidden_dim, pe_max_height=pe_max_height, pe_max_width=pe_max_width, **encoder_kwargs)
         self.decoder_hidden_dim = decoder_hidden_dim
-        self.decoder = Decoder(hidden_dim=self.decoder_hidden_dim, **decoder_kwargs)
+        self.decoder = Decoder(hidden_dim=self.decoder_hidden_dim, transformer_dropout=0.0, **decoder_kwargs)
         self.decoder_embed = nn.Linear(encoder_hidden_dim, self.decoder_hidden_dim)
         self.decoder_unembed = nn.Linear(self.decoder_hidden_dim, NUM_CHANNELS * patch_size ** 2) # project from decoder embedding space to pixel predictions
         self.mask_token = nn.Parameter(
@@ -216,8 +222,9 @@ class MAE(nn.Module):
         padded_pos_embeds = nested_pos_embeds.to_padded_tensor(padding=0.0)
         return reconstructed_sequences + padded_pos_embeds
 
+    # x is a list of C x H x W image tensors
     def forward(self, x: list[torch.Tensor]):
-        latent, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore, patchified_dims, padded_batch = self.encoder(x)
+        latent, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore, patchified_dims, target_padded = self.encoder(x)
         latent = self.decoder_embed(latent) # project to decoder embedding space
 
         latent = self.prepare_for_decoder(latent, kept_seq_lens, unmasked_seq_lens, batch_ids_restore, patchified_dims)
@@ -227,11 +234,7 @@ class MAE(nn.Module):
         loss_mask = torch.logical_and(~decoder_attention_mask, batch_seq_masks) # 1 = not padding for attention (False in attn mask) and a mask token
         loss_mask = loss_mask.to_padded_tensor(padding=False) # True = use patch in loss calculation, False = ignore patch
         
-        # padded_batch is original images batchified into padded tensor, so can be used as loss target
-        unfold = nn.Unfold(kernel_size=self.patch_size, stride=self.patch_size)
-        padded_batch = unfold(padded_batch) # patchify for loss calculations
-
-        return pred, loss_mask, padded_batch 
+        return pred, loss_mask, target_padded 
 
 class MAELoss(nn.Module):
     # reconstruction target: pixel values (normalized per patch) of portions that were masked

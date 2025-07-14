@@ -1,10 +1,10 @@
 import torch
 from torch import nn
-from models import Encoder, MAEEncoder, MAE, MAELoss
+from models import Encoder, MAEEncoder, MAE, MAELoss, NUM_CHANNELS
 
 def test_encoder_batchify():
     encoder = Encoder(patch_size=2)
-    x = [torch.rand(3, 4, 4), torch.rand(3, 4, 8)]
+    x = [torch.rand(NUM_CHANNELS, 4, 4), torch.rand(NUM_CHANNELS, 4, 8)]
     batch, mask = encoder.batchify(x)
     print(batch)
     print(mask)
@@ -15,7 +15,7 @@ def test_encoder_batchify():
 def test_encoder_forward():
     hidden_dim = 200
     encoder = Encoder(num_layers=2, num_heads=2, hidden_dim=hidden_dim, mlp_dim=500, patch_size=2)
-    x = [torch.rand(3, 4, 4), torch.rand(3, 4, 8)]
+    x = [torch.rand(NUM_CHANNELS, 4, 4), torch.rand(NUM_CHANNELS, 4, 8)]
     x, mask = encoder(x)
     print(x)
     print(mask)
@@ -24,7 +24,7 @@ def test_encoder_forward():
 def test_mask_sequence():
     encoder = MAEEncoder(0.50, num_heads=1, hidden_dim=1)
     SEQ_LEN = 4
-    x = torch.arange(SEQ_LEN).unsqueeze(0).repeat(12, 1).unsqueeze(0) # simulate patch size 2 (so CP^2 = 12) w/ sequence of length 4, label patches to check shuffle/unshuffle
+    x = torch.arange(SEQ_LEN).unsqueeze(0).repeat(12, 1).unsqueeze(0) # simulate 3 channels, patch size 2 (so CP^2 = 12) w/ sequence of length 4, label patches to check shuffle/unshuffle
     print(f"x before shuffle/mask: {x}, shape: {x.shape}")
     pe_num_grid = torch.arange(4, dtype=torch.float).reshape(2, 2) # pes labeled in order to check alignment with shuffle
     pe_filler = torch.zeros(2, 4) - 1 # should not appear in final slice to be added to embeddings
@@ -44,8 +44,8 @@ def test_mask_sequence():
 
 def test_masked_encoder_batchify():
     encoder = MAEEncoder(0.50, patch_size=2)
-    x = [torch.rand(3, 4, 4), torch.rand(3, 4, 6)]
-    batch, encoder_attn_mask, decoder_attn_mask, seq_masks, ids_restores = encoder.batchify(x)
+    x = [torch.rand(NUM_CHANNELS, 4, 4), torch.rand(NUM_CHANNELS, 4, 6)]
+    batch, encoder_attn_mask, decoder_attn_mask, kept_seq_lens, unmasked_seq_lens, seq_masks, ids_restores, patchified_dims, padded_batch = encoder.batchify(x)
     print(f"Output:\nEmbeddings {batch}\nEncoder attention mask: {encoder_attn_mask}\nDecoder attention mask: {decoder_attn_mask}\\nSequence masks: {seq_masks}\nRestore tensor: {ids_restores}")
     # verify encoder attention mask
     first_ex_mask = (torch.arange(3) >= 2).unsqueeze(0)
@@ -59,8 +59,8 @@ def test_masked_encoder_batchify():
 def test_masked_encoder_forward():
     hidden_dim = 200
     encoder = MAEEncoder(0.50, num_layers=2, num_heads=2, hidden_dim=hidden_dim, mlp_dim=500, patch_size=2)
-    x = [torch.rand(3, 4, 4), torch.rand(3, 4, 8)]
-    x, attn_mask, _, seq_masks, ids_restores = encoder(x)
+    x = [torch.rand(NUM_CHANNELS, 4, 4), torch.rand(NUM_CHANNELS, 4, 8)]
+    x, attn_mask, kept_seq_lens, unmasked_seq_lens, seq_masks, ids_restores, patchified_dims, padded_batch = encoder(x)
     print(f"Output:\nEmbeddings {x}\nAttention mask: {attn_mask}\nSequence masks: {seq_masks}\nRestore tensor: {ids_restores}")
     assert x.shape == torch.Size([2, 4, hidden_dim])
 
@@ -80,7 +80,7 @@ def test_prepare_for_decoder():
     kept_seq_lens = [2, 3]
     unmasked_seq_lens = [4, 6]
     patchified_dims = [(2, 2), (2, 3)] # simulate original images being 2 x 2, 2 x 3 patches
-    batch_ids_restore = torch.nested.nested_tensor([torch.tensor([2, 3, 1, 0]), torch.tensor([3, 4, 5, 1, 2, 0])])
+    batch_ids_restore = torch.nested.nested_tensor([torch.tensor([2, 3, 1, 0]), torch.tensor([3, 4, 5, 1, 2, 0])], layout=torch.jagged)
     latent = torch.cat([first_latent_seq, second_latent_seq])
     print(f"Latent before reconstruction (shuffled and padded from encoder): {latent}, {latent.shape}")
 
@@ -104,9 +104,10 @@ def test_MAE():
     decoder_kwargs = {"num_heads": 1, "num_layers": 2}
     encoder_hidden_dim = 6
     decoder_hidden_dim = 4
-    mae = MAE(0.5, 1, encoder_hidden_dim=encoder_hidden_dim, decoder_hidden_dim=decoder_hidden_dim, encoder_kwargs=encoder_kwargs, decoder_kwargs=decoder_kwargs)
+    patch_size = 1
+    mae = MAE(0.5, patch_size, encoder_hidden_dim=encoder_hidden_dim, decoder_hidden_dim=decoder_hidden_dim, encoder_kwargs=encoder_kwargs, decoder_kwargs=decoder_kwargs)
     SEQ_LEN = 4
-    x = [torch.arange(SEQ_LEN, dtype=torch.float).reshape(2, 2).unsqueeze(0).repeat(3, 1, 1)] 
+    x = [torch.arange(SEQ_LEN, dtype=torch.float).reshape(2, 2).unsqueeze(0).repeat(NUM_CHANNELS, 1, 1)] 
     print(x[0].shape)
     print(f"x before mae forward: {x}")
     pe_num_grid = torch.arange(4, dtype=torch.float).reshape(2, 2) # pes labeled in order to check alignment with shuffle
@@ -118,13 +119,13 @@ def test_MAE():
         torch.cat((pe_num_grid, pe_filler), dim=1).unsqueeze(-1).repeat(1, 1, decoder_hidden_dim)
     )
     pred, loss_mask, target = mae(x)
-    print(f"Prediction: {pred}\nLoss mask: {loss_mask}")
+    print(f"Prediction: {pred}\nLoss mask: {loss_mask}\nUnfolded target: {target}")
 
-    x= [torch.arange(SEQ_LEN, dtype=torch.float).reshape(2, 2).unsqueeze(0).repeat(3, 1, 1),
-        torch.arange(SEQ_LEN * 2, dtype=torch.float).reshape(2, -1).unsqueeze(0).repeat(3, 1, 1)]
+    x = [torch.arange(SEQ_LEN, dtype=torch.float).reshape(2, 2).unsqueeze(0).repeat(1, 1, 1),
+        torch.arange(SEQ_LEN * 2, dtype=torch.float).reshape(2, -1).unsqueeze(0).repeat(1, 1, 1)]
     print(f"x before mae forward: {x}")
-    pred, loss_mask, _ = mae(x)
-    print(f"Prediction: {pred}\nLoss mask: {loss_mask}")
+    pred, loss_mask, target = mae(x)
+    print(f"Prediction: {pred}\nLoss mask: {loss_mask}\nUnfolded target: {target}")
     first_seq_loss_mask = loss_mask[0, :]
     second_seq_loss_mask = loss_mask[1, :]
 
@@ -132,14 +133,20 @@ def test_MAE():
     # half of original sequence length should be True
     assert torch.sum(first_seq_loss_mask) == SEQ_LEN / 2
     assert torch.sum(second_seq_loss_mask) == SEQ_LEN 
+    unfold = nn.Unfold(kernel_size=patch_size, stride=patch_size)
+    unfolded_targets = []
+    for t in x:
+        unfolded_targets.append(unfold(t.unsqueeze(0)).squeeze(0).transpose(0,1))
+    target_nested = torch.nested.as_nested_tensor(unfolded_targets, layout=torch.jagged)
+    assert torch.equal(target, target_nested.to_padded_tensor(padding=0.0))
 
 def test_MAE_loss():
     loss = MAELoss()
     target = torch.cat([
-        torch.tensor([[1, 1, 1], [2, 2, 2]], dtype=torch.float).unsqueeze(-1).repeat(1, 1, 6),
-        torch.tensor([[2, 2, 2], [3, 3, 3]], dtype=torch.float).unsqueeze(-1).repeat(1, 1, 6),
+        torch.tensor([[1, 1, 1], [2, 2, 2]], dtype=torch.float).unsqueeze(-1).repeat(NUM_CHANNELS, 1, 6),
+        torch.tensor([[2, 2, 2], [3, 3, 3]], dtype=torch.float).unsqueeze(-1).repeat(NUM_CHANNELS, 1, 6),
         ], dim=-1)
-    pred = torch.tensor([[2, 2, 2], [3, 3, 4]], dtype=torch.float).unsqueeze(-1).repeat(1, 1, 12)
+    pred = torch.tensor([[2, 2, 2], [3, 3, 4]], dtype=torch.float).unsqueeze(-1).repeat(NUM_CHANNELS, 1, 12)
     loss_mask = torch.tensor([[1, 0, 0], [1, 0, 1]], dtype=torch.float)
     print(f"Target:\n{target}\nPrediction:\n{pred}\nLoss mask\n{loss_mask}")
     loss = loss(pred, loss_mask, target)
@@ -147,4 +154,4 @@ def test_MAE_loss():
     assert loss == 10.583329200744629
 
 if __name__ == "__main__":
-    test_MAE_loss()
+    test_MAE()

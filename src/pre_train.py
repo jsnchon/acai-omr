@@ -10,7 +10,7 @@ import logging
 
 PATCH_SIZE = 16 # actual patch will be PATCH_SIZE x PATCH_SIZE
 MAX_SEQ_LEN = 512 # max amount of tokens to allow images to be resized to
-AUGMENTATION_P = 0.5 # probability to apply camera augmentation 
+AUGMENTATION_P = 0.3 # probability to apply camera augmentation 
 
 # instead of stacking image tensors (which isn't possible since they're likely of different shapes), 
 # return a list of input img tensors, a list of target img tensors, and deal with the embedding/stacking 
@@ -42,17 +42,17 @@ if __name__ == "__main__":
 
     # augmentation to make image look like it was taken with a phone camera with AUGMENTATION_P probability
     camera_augment = v2.RandomApply(transforms=[
-        v2.GaussianBlur(kernel_size=15, sigma=1.2),
-        v2.GaussianNoise(sigma=0.05),
+        v2.GaussianBlur(kernel_size=15, sigma=1),
+        v2.GaussianNoise(sigma=0.03),
         v2.RandomRotation(degrees=(-1, 1), interpolation=InterpolationMode.BILINEAR),
-        v2.RandomPerspective(distortion_scale=0.08, p=1),
-        v2.ColorJitter(brightness=0.3, saturation=0.2, contrast=0.2, hue=0.1),
+        v2.RandomPerspective(distortion_scale=0.06, p=1),
+        v2.ColorJitter(brightness=0.2, saturation=0.2, contrast=0.2, hue=0),
     ], p=AUGMENTATION_P)
 
     # grandstaff specific camera augmentation (since dataset already has partially-augmented variants)
     grandstaff_camera_augment = v2.Compose([
         v2.RandomPerspective(distortion_scale=0.08, p=1),
-        v2.ColorJitter(brightness=0.3, saturation=0.2, contrast=0.25, hue=0.1),
+        v2.ColorJitter(brightness=0.2, saturation=0.2, contrast=0.2, hue=0),
     ])
 
     # initialize concatenated pre-train dataset of all the wrappers
