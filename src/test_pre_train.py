@@ -3,11 +3,19 @@ from torch import nn
 from models import Encoder, MAEEncoder, MAE, MAELoss, NUM_CHANNELS
 
 def test_encoder_batchify():
-    encoder = Encoder(patch_size=2)
-    x = [torch.rand(NUM_CHANNELS, 4, 4), torch.rand(NUM_CHANNELS, 4, 8)]
-    batch, mask = encoder.batchify(x)
-    print(batch)
-    print(mask)
+    patch_size = 2
+    hidden_dim = NUM_CHANNELS * patch_size ** 2
+    encoder = Encoder(patch_size=2, hidden_dim=hidden_dim, num_heads=1)
+    encoder.projection = nn.Identity()
+    encoder.pos_embedding = nn.Parameter(torch.ones(50, 50, hidden_dim))
+
+    x = [torch.ones(NUM_CHANNELS, 4, 4), torch.ones(NUM_CHANNELS, 4, 8)]
+    embeddings, mask = encoder.batchify(x)
+    print(f"Output:\nEmbeddings:\n{embeddings}\nMask:\n{mask}")
+    first_embedding_seq = torch.cat([torch.ones(NUM_CHANNELS, 4, hidden_dim) + 1, torch.zeros(NUM_CHANNELS, 4, hidden_dim)], dim=1)
+    second_embedding_seq = torch.ones(NUM_CHANNELS, 8, hidden_dim) + 1
+    embeddings_target = torch.cat([first_embedding_seq, second_embedding_seq])
+    assert torch.equal(embeddings_target, embeddings)
     first_ex_mask = (torch.arange(8) >= 4).unsqueeze(0)
     second_ex_mask = (torch.arange(8) >= 8).unsqueeze(0)
     assert torch.equal(mask, torch.cat((first_ex_mask, second_ex_mask)))
@@ -43,10 +51,20 @@ def test_mask_sequence():
     assert undo.shape == x.shape
 
 def test_masked_encoder_batchify():
-    encoder = MAEEncoder(0.50, patch_size=2)
-    x = [torch.rand(NUM_CHANNELS, 4, 4), torch.rand(NUM_CHANNELS, 4, 6)]
-    batch, encoder_attn_mask, decoder_attn_mask, kept_seq_lens, unmasked_seq_lens, seq_masks, ids_restores, patchified_dims, padded_batch = encoder.batchify(x)
-    print(f"Output:\nEmbeddings {batch}\nEncoder attention mask: {encoder_attn_mask}\nDecoder attention mask: {decoder_attn_mask}\\nSequence masks: {seq_masks}\nRestore tensor: {ids_restores}")
+    patch_size = 2
+    hidden_dim = NUM_CHANNELS * patch_size ** 2 # has to match CP^2 if using Identity for projection
+    encoder = MAEEncoder(0.50, patch_size=patch_size, hidden_dim=hidden_dim, num_heads=1)
+    encoder.projection = nn.Identity()
+    encoder.pos_embedding = nn.Parameter(torch.ones(50, 50, hidden_dim))
+
+    x = [torch.ones(NUM_CHANNELS, 4, 4), torch.ones(NUM_CHANNELS, 4, 6)]
+    embeddings, encoder_attn_mask, decoder_attn_mask, kept_seq_lens, unmasked_seq_lens, seq_masks, ids_restores, patchified_dims, padded_batch = encoder.batchify(x)
+    print(f"Output:\nEmbeddings: {embeddings}\nEncoder attention mask: {encoder_attn_mask}\nDecoder attention mask: {decoder_attn_mask}\\nSequence masks: {seq_masks}\nRestore tensor: {ids_restores}")
+    # verify embeddings (should be padded tensor with non padded patches having only 2's)
+    first_embedding_seq = torch.cat([torch.ones(NUM_CHANNELS, 2, hidden_dim) + 1, torch.zeros(NUM_CHANNELS, 1, hidden_dim)], dim=1)
+    second_embedding_seq = torch.ones(NUM_CHANNELS, 3, hidden_dim) + 1
+    embeddings_target = torch.cat([first_embedding_seq, second_embedding_seq])
+    assert torch.equal(embeddings_target, embeddings)
     # verify encoder attention mask
     first_ex_mask = (torch.arange(3) >= 2).unsqueeze(0)
     second_ex_mask = (torch.arange(3) >= 3).unsqueeze(0)
@@ -130,7 +148,7 @@ def test_MAE():
     second_seq_loss_mask = loss_mask[1, :]
 
     assert torch.sum(first_seq_loss_mask[SEQ_LEN:]) == 0 # last half should definitely be False since it was padding for attention
-    # half of original sequence length should be True
+    # amount of Trues should sum to half of the original sequence length for each sequence
     assert torch.sum(first_seq_loss_mask) == SEQ_LEN / 2
     assert torch.sum(second_seq_loss_mask) == SEQ_LEN 
     unfold = nn.Unfold(kernel_size=patch_size, stride=patch_size)
@@ -154,4 +172,4 @@ def test_MAE_loss():
     assert loss == 10.583329200744629
 
 if __name__ == "__main__":
-    test_MAE()
+    test_encoder_batchify()

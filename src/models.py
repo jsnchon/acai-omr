@@ -30,22 +30,23 @@ class Encoder(nn.Module):
         unfold = nn.Unfold(kernel_size=self.patch_size, stride=self.patch_size)
         seq_lens = []
         pos_embed_slices = []
-        # modify x in place to contain its tensors patchified. Also keep track of created sequence lengths and 
+        patchified_tensors = []
+        # patchify tensors to group later. Also keep track of created sequence lengths and 
         # positional embeddings to add later
-        for i, t in enumerate(x):
+        for t in x:
             h_p = t.shape[-2] // self.patch_size
             w_p = t.shape[-1] // self.patch_size
             if h_p > self.pe_max_height or w_p > self.pe_max_width:
                 raise ValueError(f"{h_p} x {w_p} image is too large for max positional embedding grid of shape {self.pe_max_height} x {self.pe_max_width}")
 
-            t = unfold(t.unsqueeze(0)) # (C x H x W) -> (1 x (CP^2) x L) where P is patch size, L is sequence length (h_p x w_p)
+            t = unfold(t.unsqueeze(0)) # (1 x C x H x W) -> (1 x (CP^2) x L) where P is patch size, L is sequence length (h_p x w_p)
             seq_lens.append(t.shape[-1]) 
             pos_embed_slice = self.pos_embedding[:h_p, :w_p, :].reshape(-1, self.hidden_dim) # (h_p x w_p x E) -> ((h_p x w_p) x E) = (L x E)
             pos_embed_slices.append(pos_embed_slice)
-            x[i] = t.squeeze(0).transpose(0, 1) # (1 x (CP^2) x L) -> (L x (CP^2)) to prepare for projection
+            patchified_tensors.append(t.squeeze(0).transpose(0, 1)) # (1 x (CP^2) x L) -> (L x (CP^2)) to prepare for projection
 
         # project tensors to embedding dimension
-        nested_batch = torch.nested.nested_tensor(x, layout=torch.jagged)
+        nested_batch = torch.nested.nested_tensor(patchified_tensors, layout=torch.jagged)
         padded_batch = nested_batch.to_padded_tensor(padding=0.0) # (B x L_m x (CP^2)) where L_m is max sequence length in batch
         embeddings = self.projection(padded_batch) # (B x L_m x E) where E is hidden dimension
 
@@ -65,7 +66,7 @@ class Encoder(nn.Module):
         seq_lens = torch.tensor(seq_lens).unsqueeze(1) # (B, 1)
         return arange >= seq_lens # (B, L_m)
 
-    # x is a list of C x H x W image tensors
+    # x is a list of (C x H x W) image tensors
     def forward(self, x: list[torch.Tensor]):
         x, src_key_padding_mask = self.batchify(x)
         x = self.encoder_blocks(x, src_key_padding_mask=src_key_padding_mask)
@@ -94,12 +95,13 @@ class MAEEncoder(Encoder):
         seq_mask[:len_keep] = 0
         seq_mask = seq_mask.index_select(dim=0, index=ids_restore) # match mask to original sequence order (not shuffled sequence order)
 
-        # slice positional embedding to align with original patch sequence, apply same shuffle/chop to align it to kept sequence
+        # slice positional embedding to align with original patch sequence, apply same index select to align it to kept sequence
         pos_embed_slice = self.pos_embedding[:h_p, :w_p, :].reshape(-1, self.hidden_dim) 
-        pos_embed_slice = pos_embed_slice.index_select(dim=0, index=ids_keep) # (L_keep x E), L_keep first since embedding dims will match this order
+        pos_embed_slice = pos_embed_slice.index_select(dim=0, index=ids_keep) # (L_keep x E), L_keep dim first since embedding dims will match this order
 
         return t_masked, pos_embed_slice, unmasked_seq_len, len_keep, seq_mask, ids_restore
 
+    # x is a list of (C x H x W) image tensors
     def batchify(self, x: list[torch.Tensor]):
         unfold = nn.Unfold(kernel_size=self.patch_size, stride=self.patch_size)
 
@@ -120,7 +122,7 @@ class MAEEncoder(Encoder):
             patchified_dims.append((h_p, w_p))
 
             t = unfold(t.unsqueeze(0)) # (1 x C x H x W) -> (1 x (CP^2) x L) where P is patch size, L is sequence length (h_p x w_p)
-            unfolded_targets.append(t.squeeze(0).transpose(0, 1)) # make t (L x CP^2) (nesting will add batch dimension later)
+            unfolded_targets.append(t.squeeze(0).transpose(0, 1)) # append (L x CP^2) tensor (nesting will add batch dimension later)
             t_masked, pos_embed_slice, unmasked_seq_len, len_keep, seq_mask, ids_restore = self.mask_sequence(t, h_p, w_p)
             unmasked_seq_lens.append(unmasked_seq_len)
             if unmasked_seq_len > max_unmasked_seq_len: # track max here so don't have to call max() later for efficiency
@@ -156,6 +158,7 @@ class MAEEncoder(Encoder):
 
         return embeddings, encoder_attention_mask, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore, patchified_dims, target_padded
 
+    # x is a list of (C x H x W) image tensors
     def forward(self, x: list[torch.Tensor]):
         x, encoder_attention_mask, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore, patchified_dims, target_padded = self.batchify(x)
         # x now only contains the patches that weren't masked so we only encode visible patches

@@ -1,6 +1,5 @@
 from pathlib import Path
 import pandas as pd
-import shutil
 from tqdm import tqdm
 from PIL import Image, ImageOps
 
