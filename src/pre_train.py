@@ -2,19 +2,34 @@ import torch
 from datasets import GrandStaffLMXDataset, PreparedDataset, OlimpicDataset, GrandStaffPreTrainWrapper, OlimpicPreTrainWrapper, PreTrainWrapper
 from utils import GRAND_STAFF_ROOT_DIR, PRIMUS_PREPARED_ROOT_DIR, DOREMI_PREPARED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
 from utils import DynamicResize
-from torch.utils.data import ConcatDataset
+from torch.utils.data import ConcatDataset, DataLoader
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms import v2
-from models import Encoder
+from models import MAE, MAELoss
 import logging
 
-PATCH_SIZE = 16 # actual patch will be PATCH_SIZE x PATCH_SIZE
-MAX_SEQ_LEN = 512 # max amount of tokens to allow images to be resized to
-AUGMENTATION_P = 0.3 # probability to apply camera augmentation 
+# TODO: trace out lr with scheduler to make sure it looks good, write a test for it
+# TODO: in utils create function that reshapes prediction into image and displays it using matplot
+# TODO: ensure (with a little model surgery) can transfer state dicts between MAEEncoder and Encoder
 
-# instead of stacking image tensors (which isn't possible since they're likely of different shapes), 
-# return a list of input img tensors, a list of target img tensors, and deal with the embedding/stacking 
-# in the MAE forward method
+# MAE constants
+PATCH_SIZE = 16 # actual patch will be PATCH_SIZE x PATCH_SIZE
+MASK_RATIO = 0.75
+MAX_SEQ_LEN = 512 # max amount of tokens to allow images to be resized to
+
+# data constants
+AUGMENTATION_P = 0.3 # probability to apply camera augmentation 
+NUM_WORKERS = 24
+
+# training hyperparameters
+EPOCHS = 500
+CHECKPOINT_FREQ = 50
+BASE_LR = 0.01 # max lr, used as annealing phase start and in warm-up phase lambda calculation
+MIN_LR = 1e-6 # min lr of annealing phase 
+WARMUP_EPOCHS = 25 
+BATCH_SIZE = 32
+
+# collate ragged batch into a list of tensors for the MAE logic to handle
 def pre_train_collate_fn(batch):
     input_img_tensors = []
     target_img_tensors = []
@@ -24,6 +39,7 @@ def pre_train_collate_fn(batch):
     return input_img_tensors, target_img_tensors
 
 if __name__ == "__main__":
+    logging.basicConfig()
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.DEBUG)
 
@@ -74,4 +90,13 @@ if __name__ == "__main__":
         OlimpicPreTrainWrapper(olimpic_scanned_validate),
     ])
 
-    encoder = Encoder(patch_size=PATCH_SIZE)
+    logger.info(f"Setting up MAE with mask ratio {MASK_RATIO} and patch size {PATCH_SIZE}")
+    mae = MAE(MASK_RATIO, PATCH_SIZE)
+    for name, module in mae.named_modules():
+        pass
+        # logger.debug(name, module)
+    logger.info("Compiling MAE model")
+    compiled_mae = torch.compile(mae, fullgraph=True)
+    # dataloader = DataLoader(train_dataset, batch_size=1, shuffle=True, num_workers=1, collate_fn=pre_train_collate_fn, pin_memory=True)
+
+    # make sure to step scheduler at epoch start so lr starts at bottom of warmup instead of optim base lr

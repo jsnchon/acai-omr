@@ -46,12 +46,12 @@ class Encoder(nn.Module):
             patchified_tensors.append(t.squeeze(0).transpose(0, 1)) # (1 x (CP^2) x L) -> (L x (CP^2)) to prepare for projection
 
         # project tensors to embedding dimension
-        nested_batch = torch.nested.nested_tensor(patchified_tensors, layout=torch.jagged)
+        nested_batch = torch.nested.as_nested_tensor(patchified_tensors, layout=torch.jagged)
         padded_batch = nested_batch.to_padded_tensor(padding=0.0) # (B x L_m x (CP^2)) where L_m is max sequence length in batch
         embeddings = self.projection(padded_batch) # (B x L_m x E) where E is hidden dimension
 
         # add positional embeddings
-        nested_pos_embeds = torch.nested.nested_tensor(pos_embed_slices, layout=torch.jagged)
+        nested_pos_embeds = torch.nested.as_nested_tensor(pos_embed_slices, layout=torch.jagged)
         padded_pos_embeds = nested_pos_embeds.to_padded_tensor(padding=0.0) # (B x L_m x E)
         embeddings = embeddings + padded_pos_embeds
 
@@ -113,7 +113,6 @@ class MAEEncoder(Encoder):
         seq_masks = [] # mask tensors for each sequence recording which patches are masked
         restore_tensors = [] # index tensors to later undo shuffling
         masked_tensors = [] 
-        unfolded_targets = []
         for t in x:
             h_p = t.shape[-2] // self.patch_size # record these before unfolding
             w_p = t.shape[-1] // self.patch_size
@@ -122,7 +121,6 @@ class MAEEncoder(Encoder):
             patchified_dims.append((h_p, w_p))
 
             t = unfold(t.unsqueeze(0)) # (1 x C x H x W) -> (1 x (CP^2) x L) where P is patch size, L is sequence length (h_p x w_p)
-            unfolded_targets.append(t.squeeze(0).transpose(0, 1)) # append (L x CP^2) tensor (nesting will add batch dimension later)
             t_masked, pos_embed_slice, unmasked_seq_len, len_keep, seq_mask, ids_restore = self.mask_sequence(t, h_p, w_p)
             unmasked_seq_lens.append(unmasked_seq_len)
             if unmasked_seq_len > max_unmasked_seq_len: # track max here so don't have to call max() later for efficiency
@@ -136,12 +134,12 @@ class MAEEncoder(Encoder):
             masked_tensors.append(t_masked.squeeze(0).transpose(0, 1))
 
         # project tensors to embedding dimension
-        nested_batch = torch.nested.nested_tensor(masked_tensors, layout=torch.jagged)
+        nested_batch = torch.nested.as_nested_tensor(masked_tensors, layout=torch.jagged)
         padded_batch = nested_batch.to_padded_tensor(padding=0.0) 
         embeddings = self.projection(padded_batch) 
 
         # add positional embeddings
-        nested_pos_embeds = torch.nested.nested_tensor(pos_embed_slices, layout=torch.jagged)
+        nested_pos_embeds = torch.nested.as_nested_tensor(pos_embed_slices, layout=torch.jagged)
         padded_pos_embeds = nested_pos_embeds.to_padded_tensor(padding=0.0) 
         embeddings = embeddings + padded_pos_embeds
 
@@ -151,23 +149,21 @@ class MAEEncoder(Encoder):
         decoder_attention_mask = self.create_attention_mask(unmasked_seq_lens, max_unmasked_seq_len)
 
         # create tensors to use later 
-        batch_seq_masks = torch.nested.nested_tensor(seq_masks, layout=torch.jagged) # (N x j1). nested_tensor automatically adds batch dimension
-        batch_ids_restore = torch.nested.nested_tensor(restore_tensors, layout=torch.jagged) # (N x j1)
-        target_nested = torch.nested.nested_tensor(unfolded_targets, layout=torch.jagged) # (N x j2 x CP^2)
-        target_padded = target_nested.to_padded_tensor(padding=0.0)
+        batch_seq_masks = torch.nested.as_nested_tensor(seq_masks, layout=torch.jagged) # (N x j1). nested_tensor automatically adds batch dimension
+        batch_ids_restore = torch.nested.as_nested_tensor(restore_tensors, layout=torch.jagged) # (N x j1)
 
-        return embeddings, encoder_attention_mask, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore, patchified_dims, target_padded
+        return embeddings, encoder_attention_mask, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore, patchified_dims
 
     # x is a list of (C x H x W) image tensors
     def forward(self, x: list[torch.Tensor]):
-        x, encoder_attention_mask, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore, patchified_dims, target_padded = self.batchify(x)
+        x, encoder_attention_mask, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore, patchified_dims = self.batchify(x)
         # x now only contains the patches that weren't masked so we only encode visible patches
         x = self.encoder_blocks(x, src_key_padding_mask=encoder_attention_mask)
-        return x, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore, patchified_dims, target_padded
+        return x, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore, patchified_dims
 
 class Decoder(nn.Module):
     # these default args are for the best performing MAE decoder in the paper (excluding dropout which is just PyTorch transformer default)
-    def __init__(self, num_layers=8, hidden_dim=512, num_heads=12, mlp_dim=3072, transformer_dropout=0.1):
+    def __init__(self, num_layers=8, hidden_dim=512, num_heads=16, mlp_dim=3072, transformer_dropout=0.1):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.decoder_blocks = nn.TransformerEncoder( # nn.TransformerEncoder works fine here since just self-attending to one sequence
@@ -217,26 +213,32 @@ class MAE(nn.Module):
             h_p, w_p = patchified_dims[i]
             pos_embed_slices.append(self.decoder_pos_embedding[:h_p, :w_p, :].reshape(-1, self.decoder_hidden_dim))
 
-        reconstructed_sequences = torch.nested.nested_tensor(reconstructed_sequences, layout=torch.jagged)
+        reconstructed_sequences = torch.nested.as_nested_tensor(reconstructed_sequences, layout=torch.jagged)
         reconstructed_sequences = reconstructed_sequences.to_padded_tensor(padding=0.0)
 
         # positionally embed decoder inputs
-        nested_pos_embeds = torch.nested.nested_tensor(pos_embed_slices, layout=torch.jagged)
+        nested_pos_embeds = torch.nested.as_nested_tensor(pos_embed_slices, layout=torch.jagged)
         padded_pos_embeds = nested_pos_embeds.to_padded_tensor(padding=0.0)
         return reconstructed_sequences + padded_pos_embeds
 
-    # x is a list of C x H x W image tensors
-    def forward(self, x: list[torch.Tensor]):
-        latent, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore, patchified_dims, target_padded = self.encoder(x)
+    # x is a list of C x H x W input image tensors, y is a list of C x H x W corresponding target image tensors
+    def forward(self, x: list[torch.Tensor], y: list[torch.Tensor]):
+        latent, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore, patchified_dims = self.encoder(x)
         latent = self.decoder_embed(latent) # project to decoder embedding space
 
         latent = self.prepare_for_decoder(latent, kept_seq_lens, unmasked_seq_lens, batch_ids_restore, patchified_dims)
         decoder_hidden_state = self.decoder(latent, decoder_attention_mask)
         pred = self.decoder_unembed(decoder_hidden_state) # (N x L_m x CP^2)
 
-        loss_mask = torch.logical_and(~decoder_attention_mask, batch_seq_masks) # 1 = not padding for attention (False in attn mask) and a mask token
+        loss_mask = torch.logical_and(~decoder_attention_mask, batch_seq_masks) # True = patch is not padding for attention (False in attn mask) and is a mask token
         loss_mask = loss_mask.to_padded_tensor(padding=False) # True = use patch in loss calculation, False = ignore patch
         
+        # prepare target images for loss calculation (may be different from inputs) by patchifying, changing shape to (L, CP^2), padding
+        unfold = nn.Unfold(kernel_size=self.patch_size, stride=self.patch_size)
+        unfolded_targets = [unfold(t.unsqueeze(0)).squeeze(0).transpose(0, 1) for t in y]
+        target_nested = torch.nested.as_nested_tensor(unfolded_targets, layout=torch.jagged)
+        target_padded = target_nested.to_padded_tensor(padding=0.0)
+
         return pred, loss_mask, target_padded 
 
 class MAELoss(nn.Module):

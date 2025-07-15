@@ -1,6 +1,9 @@
 import torch
 from torch import nn
 from models import Encoder, MAEEncoder, MAE, MAELoss, NUM_CHANNELS
+from pre_train import BASE_LR, MIN_LR, WARMUP_EPOCHS, EPOCHS
+import copy
+from utils import cosine_anneal_with_warmup, plot_lr_schedule
 
 def test_encoder_batchify():
     patch_size = 2
@@ -58,7 +61,7 @@ def test_masked_encoder_batchify():
     encoder.pos_embedding = nn.Parameter(torch.ones(50, 50, hidden_dim))
 
     x = [torch.ones(NUM_CHANNELS, 4, 4), torch.ones(NUM_CHANNELS, 4, 6)]
-    embeddings, encoder_attn_mask, decoder_attn_mask, kept_seq_lens, unmasked_seq_lens, seq_masks, ids_restores, patchified_dims, padded_batch = encoder.batchify(x)
+    embeddings, encoder_attn_mask, decoder_attn_mask, kept_seq_lens, unmasked_seq_lens, seq_masks, ids_restores, patchified_dims = encoder.batchify(x)
     print(f"Output:\nEmbeddings: {embeddings}\nEncoder attention mask: {encoder_attn_mask}\nDecoder attention mask: {decoder_attn_mask}\\nSequence masks: {seq_masks}\nRestore tensor: {ids_restores}")
     # verify embeddings (should be padded tensor with non padded patches having only 2's)
     first_embedding_seq = torch.cat([torch.ones(NUM_CHANNELS, 2, hidden_dim) + 1, torch.zeros(NUM_CHANNELS, 1, hidden_dim)], dim=1)
@@ -78,7 +81,7 @@ def test_masked_encoder_forward():
     hidden_dim = 200
     encoder = MAEEncoder(0.50, num_layers=2, num_heads=2, hidden_dim=hidden_dim, mlp_dim=500, patch_size=2)
     x = [torch.rand(NUM_CHANNELS, 4, 4), torch.rand(NUM_CHANNELS, 4, 8)]
-    x, attn_mask, kept_seq_lens, unmasked_seq_lens, seq_masks, ids_restores, patchified_dims, padded_batch = encoder(x)
+    x, attn_mask, kept_seq_lens, unmasked_seq_lens, seq_masks, ids_restores, patchified_dims = encoder(x)
     print(f"Output:\nEmbeddings {x}\nAttention mask: {attn_mask}\nSequence masks: {seq_masks}\nRestore tensor: {ids_restores}")
     assert x.shape == torch.Size([2, 4, hidden_dim])
 
@@ -117,7 +120,7 @@ def test_prepare_for_decoder():
     second_target_seq = torch.tensor([100, 100, 100, 1, 2, 3]).unsqueeze(-1).unsqueeze(0) + 500
     assert torch.equal(reconstructed_seq, torch.cat([first_target_seq, second_target_seq]))
 
-def test_MAE():
+def test_MAE_forward():
     encoder_kwargs = {"num_heads": 1, "num_layers": 4}
     decoder_kwargs = {"num_heads": 1, "num_layers": 2}
     encoder_hidden_dim = 6
@@ -126,8 +129,9 @@ def test_MAE():
     mae = MAE(0.5, patch_size, encoder_hidden_dim=encoder_hidden_dim, decoder_hidden_dim=decoder_hidden_dim, encoder_kwargs=encoder_kwargs, decoder_kwargs=decoder_kwargs)
     SEQ_LEN = 4
     x = [torch.arange(SEQ_LEN, dtype=torch.float).reshape(2, 2).unsqueeze(0).repeat(NUM_CHANNELS, 1, 1)] 
+    y = copy.deepcopy(x)
     print(x[0].shape)
-    print(f"x before mae forward: {x}")
+    print(f"x before mae forward (target list y is also the same): {x}")
     pe_num_grid = torch.arange(4, dtype=torch.float).reshape(2, 2) # pes labeled in order to check alignment with shuffle
     pe_filler = torch.zeros(2, 4) - 1 # should not appear in final slice to be added to embeddings
     mae.encoder.pos_embedding = nn.Parameter(
@@ -136,13 +140,14 @@ def test_MAE():
     mae.decoder_pos_embedding = nn.Parameter(
         torch.cat((pe_num_grid, pe_filler), dim=1).unsqueeze(-1).repeat(1, 1, decoder_hidden_dim)
     )
-    pred, loss_mask, target = mae(x)
+    pred, loss_mask, target = mae(x, y)
     print(f"Prediction: {pred}\nLoss mask: {loss_mask}\nUnfolded target: {target}")
 
     x = [torch.arange(SEQ_LEN, dtype=torch.float).reshape(2, 2).unsqueeze(0).repeat(1, 1, 1),
         torch.arange(SEQ_LEN * 2, dtype=torch.float).reshape(2, -1).unsqueeze(0).repeat(1, 1, 1)]
-    print(f"x before mae forward: {x}")
-    pred, loss_mask, target = mae(x)
+    y = copy.deepcopy(x)
+    print(f"x before mae forward (target list y is also the same): {x}")
+    pred, loss_mask, target = mae(x, y)
     print(f"Prediction: {pred}\nLoss mask: {loss_mask}\nUnfolded target: {target}")
     first_seq_loss_mask = loss_mask[0, :]
     second_seq_loss_mask = loss_mask[1, :]
@@ -153,7 +158,7 @@ def test_MAE():
     assert torch.sum(second_seq_loss_mask) == SEQ_LEN 
     unfold = nn.Unfold(kernel_size=patch_size, stride=patch_size)
     unfolded_targets = []
-    for t in x:
+    for t in y:
         unfolded_targets.append(unfold(t.unsqueeze(0)).squeeze(0).transpose(0,1))
     target_nested = torch.nested.as_nested_tensor(unfolded_targets, layout=torch.jagged)
     assert torch.equal(target, target_nested.to_padded_tensor(padding=0.0))
@@ -171,5 +176,30 @@ def test_MAE_loss():
     print(f"Loss:\n{loss}")
     assert loss == 10.583329200744629
 
+def test_MAE_gradient_flow():
+    input = [torch.rand(NUM_CHANNELS, 16, 16)]
+    target = [torch.rand(NUM_CHANNELS, 16, 16)]
+    mae = MAE(0.5, 2)
+    optimizer = torch.optim.AdamW(mae.parameters(), lr=0.01)
+    loss_fn = MAELoss()
+    before = mae.encoder.pos_embedding.clone().detach()
+
+    pred, mask, target = mae(input, target)
+    loss = loss_fn(pred, mask, target)
+    loss.backward()
+    grad = mae.encoder.pos_embedding.grad.clone().detach()
+    optimizer.step()
+    optimizer.zero_grad()
+    after = mae.encoder.pos_embedding
+
+    print(f"MAE output:\nPrediction:\n{pred}\nLoss mask:\n{mask}\nTarget:\n{target}\n")
+    print(f"Loss value: {loss}\nEncoder PE gradient:\n{grad}\nEncoder PE before step:\n{before}\nEncoder PE after step:\n{after}")
+    assert not torch.equal(before, after) 
+    assert torch.sum(grad[9:, 9:, :]) == 0 # ensure PE gradient is 0 for non-used portions on this input
+
+def test_lr_scheduler():
+    scheduler = cosine_anneal_with_warmup(torch.optim.SGD(lr=BASE_LR), WARMUP_EPOCHS, EPOCHS, BASE_LR, MIN_LR)
+    plot_lr_schedule(scheduler, EPOCHS)
+
 if __name__ == "__main__":
-    test_encoder_batchify()
+    test_MAE_gradient_flow()
