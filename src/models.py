@@ -106,7 +106,6 @@ class MAEEncoder(Encoder):
         unfold = nn.Unfold(kernel_size=self.patch_size, stride=self.patch_size)
 
         unmasked_seq_lens = []
-        max_unmasked_seq_len = float("-inf")
         kept_seq_lens = []
         pos_embed_slices = []
         patchified_dims = [] # list of (h_p, w_p) tuples for each image. Needed later for decoder positional embedding
@@ -123,8 +122,6 @@ class MAEEncoder(Encoder):
             t = unfold(t.unsqueeze(0)) # (1 x C x H x W) -> (1 x (CP^2) x L) where P is patch size, L is sequence length (h_p x w_p)
             t_masked, pos_embed_slice, unmasked_seq_len, len_keep, seq_mask, ids_restore = self.mask_sequence(t, h_p, w_p)
             unmasked_seq_lens.append(unmasked_seq_len)
-            if unmasked_seq_len > max_unmasked_seq_len: # track max here so don't have to call max() later for efficiency
-                max_unmasked_seq_len = unmasked_seq_len
 
             kept_seq_lens.append(len_keep)
             seq_masks.append(seq_mask)
@@ -146,7 +143,7 @@ class MAEEncoder(Encoder):
         # attention masks differ between encoder and decoder since encoder only operates on visible patches. Decoder
         # needs a mask for the original sequence lengths since will operate on visible and masked patches
         encoder_attention_mask = self.create_attention_mask(kept_seq_lens, embeddings.shape[1])
-        decoder_attention_mask = self.create_attention_mask(unmasked_seq_lens, max_unmasked_seq_len)
+        decoder_attention_mask = self.create_attention_mask(unmasked_seq_lens, max(unmasked_seq_lens))
 
         # create tensors to use later 
         batch_seq_masks = torch.nested.as_nested_tensor(seq_masks, layout=torch.jagged) # (N x j1). nested_tensor automatically adds batch dimension
@@ -221,8 +218,14 @@ class MAE(nn.Module):
         padded_pos_embeds = nested_pos_embeds.to_padded_tensor(padding=0.0)
         return reconstructed_sequences + padded_pos_embeds
 
-    # x is a list of C x H x W input image tensors, y is a list of C x H x W corresponding target image tensors
-    def forward(self, x: list[torch.Tensor], y: list[torch.Tensor]):
+    # batch is a list of (input, target) tuples where each input is a C x H x W image tensor and each target is a corresponding C x H x W target image tensor
+    def forward(self, batch: list[tuple[torch.Tensor, torch.Tensor]]):
+        x = []
+        y = []
+        for ex in batch:
+            x.append(ex[0])
+            y.append(ex[1])
+
         latent, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore, patchified_dims = self.encoder(x)
         latent = self.decoder_embed(latent) # project to decoder embedding space
 

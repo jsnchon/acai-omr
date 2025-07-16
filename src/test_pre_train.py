@@ -4,6 +4,7 @@ from models import Encoder, MAEEncoder, MAE, MAELoss, NUM_CHANNELS
 from pre_train import BASE_LR, MIN_LR, WARMUP_EPOCHS, EPOCHS
 import copy
 from utils import cosine_anneal_with_warmup, plot_lr_schedule
+import time
 
 def test_encoder_batchify():
     patch_size = 2
@@ -140,14 +141,16 @@ def test_MAE_forward():
     mae.decoder_pos_embedding = nn.Parameter(
         torch.cat((pe_num_grid, pe_filler), dim=1).unsqueeze(-1).repeat(1, 1, decoder_hidden_dim)
     )
-    pred, loss_mask, target = mae(x, y)
+    batch = zip(x, y)
+    pred, loss_mask, target = mae(batch)
     print(f"Prediction: {pred}\nLoss mask: {loss_mask}\nUnfolded target: {target}")
 
     x = [torch.arange(SEQ_LEN, dtype=torch.float).reshape(2, 2).unsqueeze(0).repeat(1, 1, 1),
         torch.arange(SEQ_LEN * 2, dtype=torch.float).reshape(2, -1).unsqueeze(0).repeat(1, 1, 1)]
     y = copy.deepcopy(x)
     print(f"x before mae forward (target list y is also the same): {x}")
-    pred, loss_mask, target = mae(x, y)
+    batch = zip(x, y)
+    pred, loss_mask, target = mae(batch)
     print(f"Prediction: {pred}\nLoss mask: {loss_mask}\nUnfolded target: {target}")
     first_seq_loss_mask = loss_mask[0, :]
     second_seq_loss_mask = loss_mask[1, :]
@@ -179,12 +182,13 @@ def test_MAE_loss():
 def test_MAE_gradient_flow():
     input = [torch.rand(NUM_CHANNELS, 16, 16)]
     target = [torch.rand(NUM_CHANNELS, 16, 16)]
+    batch = zip(input, target)
     mae = MAE(0.5, 2)
     optimizer = torch.optim.AdamW(mae.parameters(), lr=0.01)
     loss_fn = MAELoss()
     before = mae.encoder.pos_embedding.clone().detach()
 
-    pred, mask, target = mae(input, target)
+    pred, mask, target = mae(batch)
     loss = loss_fn(pred, mask, target)
     loss.backward()
     grad = mae.encoder.pos_embedding.grad.clone().detach()
@@ -198,8 +202,28 @@ def test_MAE_gradient_flow():
     assert torch.sum(grad[9:, 9:, :]) == 0 # ensure PE gradient is 0 for non-used portions on this input
 
 def test_lr_scheduler():
-    scheduler = cosine_anneal_with_warmup(torch.optim.SGD(lr=BASE_LR), WARMUP_EPOCHS, EPOCHS, BASE_LR, MIN_LR)
+    scheduler = cosine_anneal_with_warmup(torch.optim.SGD([nn.Parameter(torch.zeros(1))], lr=BASE_LR), WARMUP_EPOCHS, EPOCHS, BASE_LR, MIN_LR)
     plot_lr_schedule(scheduler, EPOCHS)
 
+def basic_performance_test():
+    deltas = []
+    NUM_TRIALS = 10
+    BATCH_SIZE = 32
+    x = []
+    for _ in range(BATCH_SIZE):
+        x.append(torch.rand(1, 16, 16))
+
+    y = copy.deepcopy(x)
+
+    for i in range(NUM_TRIALS):
+        print(f"Trial {i + 1}")
+        mae = MAE(0.5, 2)
+        start = time.perf_counter()
+        _ = mae(x, y)
+        end = time.perf_counter()
+        deltas.append(end - start)
+
+    print(f"Average delta: {sum(deltas) / len(deltas):0.6f}")
+
 if __name__ == "__main__":
-    test_MAE_gradient_flow()
+    basic_performance_test()

@@ -8,7 +8,7 @@ from torchvision.transforms import v2
 from models import MAE, MAELoss
 import logging
 
-# TODO: trace out lr with scheduler to make sure it looks good, write a test for it
+# TODO: finish training loop logic
 # TODO: in utils create function that reshapes prediction into image and displays it using matplot
 # TODO: ensure (with a little model surgery) can transfer state dicts between MAEEncoder and Encoder
 
@@ -24,19 +24,19 @@ NUM_WORKERS = 24
 # training hyperparameters
 EPOCHS = 500
 CHECKPOINT_FREQ = 50
-BASE_LR = 0.01 # max lr, used as annealing phase start and in warm-up phase lambda calculation
+BASE_LR = 2e-4 # max lr, used as annealing phase start and in warm-up phase lambda calculation
 MIN_LR = 1e-6 # min lr of annealing phase 
+ADAMW_BETAS = (0.9, 0.95) # lr/AdamW settings basically copied from the paper
+ADAMW_WEIGHT_DECAY = 0.05
 WARMUP_EPOCHS = 25 
 BATCH_SIZE = 32
 
-# collate ragged batch into a list of tensors for the MAE logic to handle
+# collate ragged batch into a list of (input, target) tensors for the MAE logic to handle
 def pre_train_collate_fn(batch):
-    input_img_tensors = []
-    target_img_tensors = []
+    collated_batch = []
     for example in batch:
-        input_img_tensors.append(example[0])
-        target_img_tensors.append(example[1])
-    return input_img_tensors, target_img_tensors
+        collated_batch.append((example[0], example[1]))
+    return collated_batch
 
 if __name__ == "__main__":
     logging.basicConfig()
@@ -98,5 +98,6 @@ if __name__ == "__main__":
     logger.info("Compiling MAE model")
     compiled_mae = torch.compile(mae, fullgraph=True)
     # dataloader = DataLoader(train_dataset, batch_size=1, shuffle=True, num_workers=1, collate_fn=pre_train_collate_fn, pin_memory=True)
+    optimizer = torch.optim.AdamW(compiled_mae.parameters(), lr=BASE_LR, betas=ADAMW_BETAS, weight_decay=ADAMW_WEIGHT_DECAY)
 
     # make sure to step scheduler at epoch start so lr starts at bottom of warmup instead of optim base lr
