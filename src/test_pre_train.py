@@ -198,12 +198,13 @@ def test_MAE_gradient_flow():
 
     print(f"MAE output:\nPrediction:\n{pred}\nLoss mask:\n{mask}\nTarget:\n{target}\n")
     print(f"Loss value: {loss}\nEncoder PE gradient:\n{grad}\nEncoder PE before step:\n{before}\nEncoder PE after step:\n{after}")
-    assert not torch.equal(before, after) 
+    assert not torch.equal(before, after) # expect some update (even in zero gradient areas because of how AdamW works)
     assert torch.sum(grad[9:, 9:, :]) == 0 # ensure PE gradient is 0 for non-used portions on this input
 
 def test_lr_scheduler():
-    scheduler = cosine_anneal_with_warmup(torch.optim.SGD([nn.Parameter(torch.zeros(1))], lr=BASE_LR), WARMUP_EPOCHS, EPOCHS, BASE_LR, MIN_LR)
-    plot_lr_schedule(scheduler, EPOCHS)
+    optimizer = torch.optim.SGD([nn.Parameter(torch.zeros(1))], lr=BASE_LR)
+    scheduler = cosine_anneal_with_warmup(optimizer, WARMUP_EPOCHS, EPOCHS, MIN_LR)
+    plot_lr_schedule(scheduler, optimizer, EPOCHS)
 
 def basic_performance_test():
     deltas = []
@@ -215,15 +216,15 @@ def basic_performance_test():
 
     y = copy.deepcopy(x)
 
+    mae = MAE(0.5, 2)
     for i in range(NUM_TRIALS):
         print(f"Trial {i + 1}")
-        mae = MAE(0.5, 2)
         start = time.perf_counter()
-        _ = mae(x, y)
+        _ = mae(zip(x, y))
         end = time.perf_counter()
         deltas.append(end - start)
 
     print(f"Average delta: {sum(deltas) / len(deltas):0.6f}")
 
 if __name__ == "__main__":
-    basic_performance_test()
+    test_lr_scheduler()

@@ -1,16 +1,19 @@
 import torch
 from datasets import GrandStaffLMXDataset, PreparedDataset, OlimpicDataset, GrandStaffPreTrainWrapper, OlimpicPreTrainWrapper, PreTrainWrapper
 from utils import GRAND_STAFF_ROOT_DIR, PRIMUS_PREPARED_ROOT_DIR, DOREMI_PREPARED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
-from utils import DynamicResize
+from utils import DynamicResize, cosine_anneal_with_warmup
 from torch.utils.data import ConcatDataset, DataLoader
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms import v2
 from models import MAE, MAELoss
 import logging
+from pathlib import Path
 
 # TODO: finish training loop logic
 # TODO: in utils create function that reshapes prediction into image and displays it using matplot
 # TODO: ensure (with a little model surgery) can transfer state dicts between MAEEncoder and Encoder
+
+MODEL_DIR = "mae_pre_train"
 
 # MAE constants
 PATCH_SIZE = 16 # actual patch will be PATCH_SIZE x PATCH_SIZE
@@ -84,7 +87,7 @@ if __name__ == "__main__":
     olimpic_synthetic_validate = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.dev.txt", transform=base_transform)
     olimpic_scanned_validate = OlimpicDataset(OLIMPIC_SCANNED_ROOT_DIR, "samples.dev.txt", transform=base_transform)
 
-    validate_datest = ConcatDataset([
+    validation_dataset = ConcatDataset([
         GrandStaffPreTrainWrapper(grand_staff_validate),
         OlimpicPreTrainWrapper(olimpic_synthetic_validate),
         OlimpicPreTrainWrapper(olimpic_scanned_validate),
@@ -92,12 +95,28 @@ if __name__ == "__main__":
 
     logger.info(f"Setting up MAE with mask ratio {MASK_RATIO} and patch size {PATCH_SIZE}")
     mae = MAE(MASK_RATIO, PATCH_SIZE)
-    for name, module in mae.named_modules():
-        pass
-        # logger.debug(name, module)
-    logger.info("Compiling MAE model")
-    compiled_mae = torch.compile(mae, fullgraph=True)
-    # dataloader = DataLoader(train_dataset, batch_size=1, shuffle=True, num_workers=1, collate_fn=pre_train_collate_fn, pin_memory=True)
-    optimizer = torch.optim.AdamW(compiled_mae.parameters(), lr=BASE_LR, betas=ADAMW_BETAS, weight_decay=ADAMW_WEIGHT_DECAY)
+    logger.info(f"Setting up DataLoaders with batch size {BATCH_SIZE}, shuffle, {NUM_WORKERS} workers, pre train collate function, pinned memory")
+    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=pre_train_collate_fn, pin_memory=True)
+    validation_dataloader = DataLoader(validation_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=pre_train_collate_fn, pin_memory=True)
+    logger.info(f"Setting up AdamW with base learning rate {BASE_LR}, betas {ADAMW_BETAS}, weight decay {ADAMW_WEIGHT_DECAY}")
+    optimizer = torch.optim.AdamW(mae.parameters(), lr=BASE_LR, betas=ADAMW_BETAS, weight_decay=ADAMW_WEIGHT_DECAY)
+    logger.info(f"Setting up scheduler with {WARMUP_EPOCHS} warm-up epochs, {EPOCHS} total epochs, {MIN_LR} minimum learning rate")
+    scheduler = cosine_anneal_with_warmup(optimizer, WARMUP_EPOCHS, EPOCHS, MIN_LR)
+    loss_fn = MAELoss()
 
-    # make sure to step scheduler at epoch start so lr starts at bottom of warmup instead of optim base lr
+    model_dir_path = Path(MODEL_DIR)
+    checkpoints_path = MODEL_DIR / "checkpoints"
+    stats_dir = MODEL_DIR / "stats"
+    model_dir_path.mkdir(exist_ok=True)
+    checkpoints_path.mkdir(exist_ok=True)
+    stats_dir.mkdir(exist_ok=True)
+    logger.info(f"Created directories {model_dir_path}, {checkpoints_path}, {stats_dir}")
+
+    device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
+    logger.info(f"Using device {device}")
+
+    for i in range(EPOCHS):
+        logger.info(f"Epoch {i + 1}\n--------------------")
+        # train_loop(model, train_dataloader, loss_fn, optimizer, scheduler, device)
+        # validation_loop(model, validation_dataloader, loss_fn, device)
+        # checkpoint(i)

@@ -17,30 +17,32 @@ DOREMI_PREPARED_ROOT_DIR = "data/doReMiPrepared"
 OLIMPIC_SYNTHETIC_ROOT_DIR = "data/olimpic-1.0-synthetic.2024-02-12/olimpic-1.0-synthetic"
 OLIMPIC_SCANNED_ROOT_DIR = "data/olimpic-1.0-scanned.2024-02-12/olimpic-1.0-scanned"
 
-def cosine_anneal_with_warmup(optimizer, warmup_epochs, total_epochs, base_lr, final_lr):
+def cosine_anneal_with_warmup(optimizer, warmup_epochs, total_epochs, final_lr):
+    base_lr = optimizer.param_groups[0]["lr"]
     def calc_lambda(curr_epoch):
         if curr_epoch < warmup_epochs:
             return (1 + curr_epoch) / warmup_epochs # linearly increase from lr * 1 / warmup_epochs -> lr * 1
         else:
             progress = (curr_epoch - warmup_epochs) / float(max(1, total_epochs - warmup_epochs))
-            # when multiplied by base_lr, this gives expression given in PyTorch docs for cosine annealing
+            # when this return value is multiplied by the optimizer's base_lr (which LambdaLR does), this 
+            # gives the expression given in PyTorch docs for cosine annealing
             return final_lr / base_lr + 0.5 * (1 - final_lr / base_lr) * (1 + math.cos(math.pi * progress))
     
     return LambdaLR(optimizer, calc_lambda)
 
-def plot_lr_schedule(scheduler, num_epochs):
+def plot_lr_schedule(scheduler, optimizer, num_epochs):
     lrs = []
     for _ in range(num_epochs):
+        lrs.append(optimizer.param_groups[0]["lr"])
         scheduler.step()
         # train code would go here
-        lrs.append(scheduler.get_last_lr()[0])
     
     plt.plot(lrs)
     plt.title("Learning rate over time using scheduler")
     plt.xlabel("Epoch")
     plt.ylabel("Learning rate")
     plt.grid(True)
-    plt.show()
+    plt.savefig("lr_over_epochs.jpeg")
 
 # dataset should be initialized with a ToTensor transformation for any images
 def display_dataset_img(dataset, index): 
