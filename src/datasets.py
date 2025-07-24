@@ -1,6 +1,5 @@
 import torch
 from torch.utils.data import Dataset
-from torchvision.transforms import v2
 import pandas as pd
 from pathlib import Path
 from PIL import Image

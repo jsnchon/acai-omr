@@ -1,6 +1,5 @@
 import torch
 from torch import nn
-from dataclasses import dataclass
 
 NUM_CHANNELS = 1 # assume these images all are grayscale
 

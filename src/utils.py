@@ -42,7 +42,7 @@ def plot_lr_schedule(scheduler, optimizer, num_epochs):
     plt.xlabel("Epoch")
     plt.ylabel("Learning rate")
     plt.grid(True)
-    plt.savefig("lr_over_epochs.jpeg")
+    plt.savefig("lr_over_epochs.png")
 
 # dataset should be initialized with a ToTensor transformation for any images
 def display_dataset_img(dataset, index): 
