@@ -218,6 +218,11 @@ class MAE(nn.Module):
         return reconstructed_sequences + padded_pos_embeds
 
     # batch is a list of (input, target) tuples where each input is a C x H x W image tensor and each target is a corresponding C x H x W target image tensor
+    """
+    Output
+        pred, target_padded: (N x L_m x CP^2)
+        loss_mask: (N x L_m)
+    """
     def forward(self, batch: list[tuple[torch.Tensor, torch.Tensor]]):
         x = []
         y = []

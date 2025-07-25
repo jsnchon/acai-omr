@@ -12,11 +12,6 @@ import pandas as pd
 import time
 import numpy as np
 
-# TODO: finish implementing plotting logic
-# TODO: some test to make sure all this training logic is correct. Small one layer mae model, low number of epochs
-# TODO: in utils create function that reshapes prediction into image and displays it using matplot
-# TODO: ensure (with a little model surgery) can transfer state dicts between MAEEncoder and Encoder
-
 MODEL_DIR_PATH = Path("mae_pre_train")
 CHECKPOINTS_DIR_PATH = MODEL_DIR_PATH / "checkpoints"
 STATS_DIR_PATH = MODEL_DIR_PATH / "stats"
