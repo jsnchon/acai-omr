@@ -1,6 +1,5 @@
 import torch
 from torch.utils.data import Dataset
-from torchvision.transforms import v2
 import pandas as pd
 from pathlib import Path
 from PIL import Image
@@ -107,7 +106,7 @@ class PreparedDataset(Dataset):
     def __getitem__(self, idx):
         img_id = self.id_df.at[idx, "id"]
         img_path = self.root_dir / "images" / (img_id + ".png")
-        img = Image.open(img_path)
+        img = Image.open(img_path).convert("L")
 
         if self.transform:
             img = self.transform(img)
@@ -118,7 +117,7 @@ class PreparedDataset(Dataset):
 class OlimpicDataset(LMXDataset):
     def __getitem__(self, idx):
         img_path = self.root_dir / (self.id_df.iat[idx, 0] + ".png")
-        img = Image.open(img_path)
+        img = Image.open(img_path).convert("L")
 
         if self.transform:
             img = self.transform(img)

@@ -9,12 +9,67 @@ from torchvision.transforms import v2
 import torchvision.transforms.v2.functional as F
 import logging
 import math
+from torch.optim.lr_scheduler import LambdaLR
+from models import MAELoss
 
 GRAND_STAFF_ROOT_DIR = "data/grandstaff-lmx.2024-02-12/grandstaff-lmx"
 PRIMUS_PREPARED_ROOT_DIR = "data/primusPrepared"
 DOREMI_PREPARED_ROOT_DIR = "data/doReMiPrepared"
 OLIMPIC_SYNTHETIC_ROOT_DIR = "data/olimpic-1.0-synthetic.2024-02-12/olimpic-1.0-synthetic"
 OLIMPIC_SCANNED_ROOT_DIR = "data/olimpic-1.0-scanned.2024-02-12/olimpic-1.0-scanned"
+
+def cosine_anneal_with_warmup(optimizer, warmup_epochs, total_epochs, final_lr):
+    base_lr = optimizer.param_groups[0]["lr"]
+    def calc_lambda(curr_epoch):
+        if curr_epoch < warmup_epochs:
+            return (1 + curr_epoch) / warmup_epochs # linearly increase from lr * 1 / warmup_epochs -> lr * 1
+        else:
+            progress = (curr_epoch - warmup_epochs) / float(max(1, total_epochs - warmup_epochs))
+            # when this return value is multiplied by the optimizer's base_lr (which LambdaLR does), this 
+            # gives the expression given in PyTorch docs for cosine annealing
+            return final_lr / base_lr + 0.5 * (1 - final_lr / base_lr) * (1 + math.cos(math.pi * progress))
+    
+    return LambdaLR(optimizer, calc_lambda)
+
+def plot_lr_schedule(scheduler, optimizer, num_epochs):
+    lrs = []
+    for _ in range(num_epochs):
+        lrs.append(optimizer.param_groups[0]["lr"])
+        scheduler.step()
+        # train code would go here
+    
+    plt.plot(lrs)
+    plt.title("Learning rate over time using scheduler")
+    plt.xlabel("Epoch")
+    plt.ylabel("Learning rate")
+    plt.grid(True)
+    plt.savefig("lr_over_epochs.png")
+
+# shows the input, mae's reconstruction, and target images using one example ex side by side
+def show_prediction(mae, ex, patch_size):
+    loss_fn = MAELoss()
+    pred, loss_mask, loss_target = mae([ex])
+    loss = loss_fn(pred, loss_mask, loss_target)
+    input = ex[0]
+    target = ex[1]
+    fold = nn.Fold(output_size=(input.shape[1], input.shape[2]), kernel_size=patch_size, stride=patch_size)
+    pred = fold(pred.transpose(1, 2)) # fold back into 1 x C x H x W image
+
+    num_channels = pred.shape[1]
+    if num_channels == 1:
+        fig, axs = plt.subplots(1, 3)
+        fig.set_figheight(2)
+        fig.set_figwidth(16)
+        fig.suptitle(f"Loss: {loss}")
+        axs[0].imshow(input.squeeze(0), cmap="gray")
+        axs[0].set_title("Input image")
+        axs[1].imshow(pred.detach().squeeze(0).squeeze(0), cmap="gray")
+        axs[1].set_title("MAE reconstruction prediction")
+        axs[2].imshow(target.squeeze(0), cmap="gray")
+        axs[2].set_title("Target image")
+        fig.savefig("mae_prediction.png")
+    else:
+        raise NotImplementedError("Images are assumed to be grayscale")
 
 # dataset should be initialized with a ToTensor transformation for any images
 def display_dataset_img(dataset, index): 

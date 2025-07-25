@@ -2,6 +2,7 @@ from datasets import GrandStaffLMXDataset, PreparedDataset, OlimpicDataset, PreT
 from utils import display_dataset_img, GRAND_STAFF_ROOT_DIR, PRIMUS_PREPARED_ROOT_DIR, DOREMI_PREPARED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
 from torchvision.transforms import ToTensor
 import pytest
+import matplotlib.pyplot as plt
 
 def test_grand_staff_dataset(mocker):
     # verify dataset retrieval works
@@ -30,15 +31,22 @@ def test_grand_staff_dataset(mocker):
 
 def test_grayscale():
     transform = ToTensor()
-    for dataset in [GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.train.txt"),
-                    OlimpicDataset(OLIMPIC_SCANNED_ROOT_DIR, "samples.test.txt"),
-                    OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.train.txt")]:
+    for name, dataset in {"grandstaff": GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.train.txt"),
+                    "olimpic_scanned": OlimpicDataset(OLIMPIC_SCANNED_ROOT_DIR, "samples.test.txt"),
+                    "olimpic_synthetic": OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.train.txt")}.items():
         print(f"Current dataset: {dataset}")
-        assert transform(dataset[0][0]).shape[0] == 1
+        img_t = transform(dataset[0][0])
+        assert img_t.shape[0] == 1
+        plt.imshow(img_t.squeeze(0), cmap="gray")
+        plt.savefig(f"{name}.png")
     
-    for dataset in [PreparedDataset(PRIMUS_PREPARED_ROOT_DIR), PreparedDataset(DOREMI_PREPARED_ROOT_DIR)]:
+    for name, dataset in {"primus": PreparedDataset(PRIMUS_PREPARED_ROOT_DIR), 
+                          "doremi": PreparedDataset(DOREMI_PREPARED_ROOT_DIR)}.items():
         print(f"Current dataset: {dataset}")
-        assert transform(dataset[0]).shape[0] == 1
+        img_t = transform(dataset[0])
+        assert img_t.shape[0] == 1
+        plt.imshow(img_t.squeeze(0), cmap="gray")
+        plt.savefig(f"{name}.png")
 
 @pytest.mark.parametrize("root_dir", [PRIMUS_PREPARED_ROOT_DIR, DOREMI_PREPARED_ROOT_DIR])
 def test_prepared_datasets(mocker, root_dir):

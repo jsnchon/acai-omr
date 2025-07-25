@@ -4,3 +4,5 @@ data-zips/
 __pycache__/
 tests/__pycache__/
 .pytest_cache/
+debug_pretrained_mae.pth
+mae_pre_train/
