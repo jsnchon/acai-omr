@@ -55,7 +55,7 @@ class Encoder(nn.Module):
         embeddings = embeddings + padded_pos_embeds
 
         # use recorded sequence lengths to create padding mask for attention
-        src_key_padding_mask = self.create_attention_mask(seq_lens, embeddings.shape[1])
+        src_key_padding_mask = self.create_attention_mask(seq_lens, embeddings.shape[1]).to(embeddings.device)
         return embeddings, src_key_padding_mask # nested tensors not supported by attention during training
 
     # takes a list of batch sequence lengths seq_lens where the ith entry is the ith example's sequence length and a max sequence 
@@ -90,7 +90,7 @@ class MAEEncoder(Encoder):
         t_masked = t.index_select(dim=-1, index=ids_keep) # use ids_keep to select L_keep 1 x CP^2 patch tensors. t_masked is (1 x CP^2 x L_keep)
 
         # record which patches in original sequence are masked
-        seq_mask = torch.ones(unmasked_seq_len, dtype=torch.int) # (L, ), 0 means patch was kept, 1 means patch was masked from original sequence
+        seq_mask = torch.ones(unmasked_seq_len, device=t.device, dtype=torch.int) # (L, ), 0 means patch was kept, 1 means patch was masked from original sequence
         seq_mask[:len_keep] = 0
         seq_mask = seq_mask.index_select(dim=0, index=ids_restore) # match mask to original sequence order (not shuffled sequence order)
 
@@ -141,8 +141,8 @@ class MAEEncoder(Encoder):
 
         # attention masks differ between encoder and decoder since encoder only operates on visible patches. Decoder
         # needs a mask for the original sequence lengths since will operate on visible and masked patches
-        encoder_attention_mask = self.create_attention_mask(kept_seq_lens, embeddings.shape[1])
-        decoder_attention_mask = self.create_attention_mask(unmasked_seq_lens, max(unmasked_seq_lens))
+        encoder_attention_mask = self.create_attention_mask(kept_seq_lens, embeddings.shape[1]).to(embeddings.device)
+        decoder_attention_mask = self.create_attention_mask(unmasked_seq_lens, max(unmasked_seq_lens)).to(embeddings.device)
 
         # create tensors to use later 
         batch_seq_masks = torch.nested.as_nested_tensor(seq_masks, layout=torch.jagged) # (N x j1). nested_tensor automatically adds batch dimension
@@ -157,9 +157,9 @@ class MAEEncoder(Encoder):
         x = self.encoder_blocks(x, src_key_padding_mask=encoder_attention_mask)
         return x, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore, patchified_dims
 
-class Decoder(nn.Module):
-    # these default args are for the best performing MAE decoder in the paper (excluding dropout which is just PyTorch transformer default)
-    def __init__(self, num_layers=8, hidden_dim=512, num_heads=16, mlp_dim=3072, transformer_dropout=0.1):
+class MAEDecoder(nn.Module):
+    # these default args are for the best performing MAE decoder in the paper 
+    def __init__(self, num_layers=8, hidden_dim=512, num_heads=16, mlp_dim=3072, transformer_dropout=0.0):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.decoder_blocks = nn.TransformerEncoder( # nn.TransformerEncoder works fine here since just self-attending to one sequence
@@ -173,13 +173,17 @@ class Decoder(nn.Module):
     def forward(self, x: torch.Tensor, attention_mask: torch.Tensor):
         return self.decoder_blocks(x, src_key_padding_mask=attention_mask)
 
+# TODO
+class LMXDecoder(nn.Module):
+    pass
+
 class MAE(nn.Module):
-    def __init__(self, mask_ratio, patch_size, encoder_hidden_dim=768, decoder_hidden_dim=512, pe_max_height=32, pe_max_width=96, encoder_kwargs={}, decoder_kwargs={}):
+    def __init__(self, mask_ratio, patch_size, encoder_hidden_dim=768, decoder_hidden_dim=512, pe_max_height=22, pe_max_width=100, encoder_kwargs={}, decoder_kwargs={}):
         super().__init__()
         self.patch_size = patch_size
         self.encoder = MAEEncoder(mask_ratio, self.patch_size, hidden_dim=encoder_hidden_dim, pe_max_height=pe_max_height, pe_max_width=pe_max_width, **encoder_kwargs)
         self.decoder_hidden_dim = decoder_hidden_dim
-        self.decoder = Decoder(hidden_dim=self.decoder_hidden_dim, transformer_dropout=0.0, **decoder_kwargs)
+        self.decoder = MAEDecoder(hidden_dim=self.decoder_hidden_dim, **decoder_kwargs)
         self.decoder_embed = nn.Linear(encoder_hidden_dim, self.decoder_hidden_dim)
         self.decoder_unembed = nn.Linear(self.decoder_hidden_dim, NUM_CHANNELS * patch_size ** 2) # project from decoder embedding space to pixel predictions
         self.mask_token = nn.Parameter(
