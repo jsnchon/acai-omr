@@ -148,7 +148,7 @@ class DynamicResize(nn.Module):
 
     # img should be a tensor of shape C x H x W
     def forward(self, img):
-        aspect_ratio = img.shape[-1] // img.shape[-2]
+        aspect_ratio = max(img.shape[-1] // img.shape[-2], 1) # basically all images should be wider than longer
         target_height = self.patch_size * math.floor(math.sqrt(self.max_seq_len / aspect_ratio))
         target_width = target_height * aspect_ratio
         img = F.resize(
