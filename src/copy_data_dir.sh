@@ -5,10 +5,11 @@
 # can include user@host: at the start for remote transfers). rsync needs this root directory to already exist
 # -r flag will make rsync use compression to help speed up the network transfer (since the GPU machines are far away)
 send_to_remote=false
-while getopts "r" opt; do
+while getopts "r:" opt; do
     case "$opt" in
         r)
             send_to_remote=true
+            private_key_path="$OPTARG"
             ;;
         *)
             echo "Invalid argumnet"
@@ -32,8 +33,8 @@ readarray -t data_subdirs <<< "$(cd $HOME/acai-omr/data; ls -d */)"
 for subdir in "${data_subdirs[@]}"; do
     echo "Starting $subdir transfer"
     if [[ "$send_to_remote" == true ]]; then
-        rsync_opts="-az"
-        rsync -az --progress "$HOME/acai-omr/data/$subdir" "$dest$subdir" &
+        echo "Sending to remote using private key at $private_key_path"
+        rsync -az --progress -e "ssh -i $private_key_path" "$HOME/acai-omr/data/$subdir" "$dest$subdir" &
     else
         rsync -a --progress "$HOME/acai-omr/data/$subdir" "$dest$subdir" &
     fi

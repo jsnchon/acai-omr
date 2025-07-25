@@ -146,6 +146,8 @@ def validation_loop(mae, dataloader, loss_fn, device):
     return avg_loss
 
 def pre_train(mae, train_dataset, validation_dataset):
+    print("Model architecture\n--------------------")
+    print(mae)
     params_count = sum(p.numel() for p in mae.parameters() if p.requires_grad)
     print(f"Trainable parameters count: {params_count}") 
     print(f"Setting up DataLoaders with batch size {BATCH_SIZE}, shuffle, {NUM_WORKERS} workers, pre train collate function, pinned memory")
