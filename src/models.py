@@ -55,8 +55,7 @@ class Encoder(nn.Module):
         embeddings = embeddings + padded_pos_embeds
 
         # use recorded sequence lengths to create padding mask for attention
-        src_key_padding_mask = self.create_attention_mask(seq_lens, embeddings.shape[1])
-        # src_key_padding_mask = src_key_padding_mask.to(embeddings.device)
+        src_key_padding_mask = self.create_attention_mask(seq_lens, embeddings.shape[1]).to(embeddings.device)
         return embeddings, src_key_padding_mask # nested tensors not supported by attention during training
 
     # takes a list of batch sequence lengths seq_lens where the ith entry is the ith example's sequence length and a max sequence 
