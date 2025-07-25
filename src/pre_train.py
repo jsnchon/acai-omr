@@ -167,6 +167,7 @@ def pre_train(mae, train_dataset, validation_dataset):
     device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
     print(f"Using device {device}")
 
+    mae = mae.to(device)
     epoch_training_losses = []
     epoch_validation_losses = []
     epoch_lrs = []
