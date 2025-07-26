@@ -50,4 +50,4 @@ def test_show_prediction():
     show_prediction(mae, debug_dataset[0], patch_size)
 
 if __name__ == "__main__":
-    test_show_prediction()
+    test_pre_train()

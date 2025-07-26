@@ -83,9 +83,6 @@ def calc_patchify_stats(stats_dir, patch_size):
     fig.savefig(stats_dir / "patchified_stats_plot.png")
 
 if __name__ == "__main__":
-    calc_patchify_stats(Path("data/dataset_stats/pretrain_distr_stats"), 16)
-    exit()
-
     # distorted and undistorted images have different sizes, even for the same sheet
     grand_staff_pretrain_unaugmented = GrandStaffPreTrainWrapper(GRAND_STAFF)
     # augment_p = 1 and no-op transform to only measure distorted versions

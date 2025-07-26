@@ -26,18 +26,18 @@ PE_MAX_HEIGHT = 60
 PE_MAX_WIDTH = 200
 
 # data constants
-AUGMENTATION_P = 0.3 # probability to apply camera augmentation 
+AUGMENTATION_P = 0.2 # probability to apply camera augmentation 
 NUM_WORKERS = 24
 
 # training hyperparameters
 EPOCHS = 500
 CHECKPOINT_FREQ = 50
-BASE_LR = 2e-4 # max lr, used as annealing phase start and in warm-up phase lambda calculation
+BASE_LR = 1.5e-4 # max lr, used as annealing phase start and in warm-up phase lambda calculation
 MIN_LR = 1e-6 # min lr of annealing phase 
 ADAMW_BETAS = (0.9, 0.95) # lr/AdamW settings basically copied from the paper
 ADAMW_WEIGHT_DECAY = 0.05
 WARMUP_EPOCHS = 25 
-BATCH_SIZE = 32
+BATCH_SIZE = 64
 
 # collate ragged batch into a list of (input, target) tensors for the MAE logic to handle
 def pre_train_collate_fn(batch):
@@ -214,7 +214,7 @@ if __name__ == "__main__":
     base_transform = v2.Compose([
         v2.ToImage(), # ToTensor is deprecated
         v2.ToDtype(torch.float32, scale=True),
-        DynamicResize(PATCH_SIZE, MAX_SEQ_LEN),
+        DynamicResize(PATCH_SIZE, MAX_SEQ_LEN, PE_MAX_HEIGHT, PE_MAX_WIDTH),
     ])
 
     # base train datasets

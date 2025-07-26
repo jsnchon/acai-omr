@@ -9,7 +9,7 @@ from torchvision.transforms import v2
 import torchvision.transforms.v2.functional as F
 import logging
 import math
-from torch.optim.lr_scheduler import LambdaLR
+from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
 from models import MAELoss
 
 GRAND_STAFF_ROOT_DIR = "data/grandstaff-lmx.2024-02-12/grandstaff-lmx"
@@ -19,17 +19,9 @@ OLIMPIC_SYNTHETIC_ROOT_DIR = "data/olimpic-1.0-synthetic.2024-02-12/olimpic-1.0-
 OLIMPIC_SCANNED_ROOT_DIR = "data/olimpic-1.0-scanned.2024-02-12/olimpic-1.0-scanned"
 
 def cosine_anneal_with_warmup(optimizer, warmup_epochs, total_epochs, final_lr):
-    base_lr = optimizer.param_groups[0]["lr"]
-    def calc_lambda(curr_epoch):
-        if curr_epoch < warmup_epochs:
-            return (1 + curr_epoch) / warmup_epochs # linearly increase from lr * 1 / warmup_epochs -> lr * 1
-        else:
-            progress = (curr_epoch - warmup_epochs) / float(max(1, total_epochs - warmup_epochs))
-            # when this return value is multiplied by the optimizer's base_lr (which LambdaLR does), this 
-            # gives the expression given in PyTorch docs for cosine annealing
-            return final_lr / base_lr + 0.5 * (1 - final_lr / base_lr) * (1 + math.cos(math.pi * progress))
-    
-    return LambdaLR(optimizer, calc_lambda)
+    warmup = LinearLR(optimizer, start_factor=5e-3, end_factor=1.0, total_iters=warmup_epochs)
+    anneal = CosineAnnealingLR(optimizer, T_max=total_epochs - warmup_epochs, eta_min=final_lr)
+    return SequentialLR(optimizer, schedulers=[warmup, anneal], milestones=[warmup_epochs])
 
 def plot_lr_schedule(scheduler, optimizer, num_epochs):
     lrs = []
