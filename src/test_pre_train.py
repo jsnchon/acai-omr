@@ -1,16 +1,15 @@
-from pre_train import pre_train
+from pre_train import pre_train, PE_MAX_HEIGHT, PE_MAX_WIDTH
 from models import MAE, Encoder
 from torch.utils.data import Dataset
 from utils import show_prediction, PRIMUS_PREPARED_ROOT_DIR, PatchDivisibleResize
 from torchvision.transforms import v2
 from datasets import PreparedDataset, PreTrainWrapper
-import matplotlib.pyplot as plt
 import torch
 
 # for debug purposes, hidden dims are also 1
 DEBUG_KWARGS = {"num_layers": 1, "num_heads": 1, "mlp_dim": 1}
 DEBUG_PATCH_SIZE = 2
-DEBUG_MAE = MAE(0.75, DEBUG_PATCH_SIZE, encoder_hidden_dim=1, decoder_hidden_dim=1, encoder_kwargs=DEBUG_KWARGS, decoder_kwargs=DEBUG_KWARGS)
+DEBUG_MAE = MAE(0.75, DEBUG_PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH, encoder_hidden_dim=1, decoder_hidden_dim=1, encoder_kwargs=DEBUG_KWARGS, decoder_kwargs=DEBUG_KWARGS)
 
 class DebugDataset(Dataset):
     def __len__(self):
@@ -38,7 +37,7 @@ def test_encoder_transfer():
 
 def test_show_prediction():
     patch_size = 16
-    mae = MAE(0.75, 16)
+    mae = MAE(0.75, 16, PE_MAX_HEIGHT, PE_MAX_WIDTH)
 
     base_transform = v2.Compose([
         v2.ToImage(), # ToTensor is deprecated

@@ -1,7 +1,8 @@
 from datasets import GrandStaffLMXDataset, PreparedDataset, OlimpicDataset, PreTrainWrapper, OlimpicPreTrainWrapper, GrandStaffPreTrainWrapper
-from utils import display_dataset_img, GRAND_STAFF_ROOT_DIR, PRIMUS_PREPARED_ROOT_DIR, DOREMI_PREPARED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
+from utils import display_dataset_img, DynamicResize, GRAND_STAFF_ROOT_DIR, PRIMUS_PREPARED_ROOT_DIR, DOREMI_PREPARED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
 from torchvision.transforms import ToTensor
 import pytest
+import torch
 import matplotlib.pyplot as plt
 
 def test_grand_staff_dataset(mocker):
@@ -121,3 +122,19 @@ def test_grand_staff_pre_train_wrapper(mocker):
     input_img, target_img = dataset[0]
     mock_transform.assert_called()
     assert input_img == "transformed_img" and target_img != "transformed_img"
+
+def test_dynamic_resize():
+    patch_size = 2
+    max_seq_len = 10
+    pe_max_height = 4
+    pe_max_width = 8 
+    resize = DynamicResize(patch_size, max_seq_len, pe_max_height, pe_max_width)
+
+    img = resize(torch.rand(1, 6, 10))
+    assert (img.shape[-1] / patch_size) * (img.shape[-2] / patch_size) <= 10
+
+    img = resize(torch.rand(1, 10, 6))
+    assert (img.shape[-1] / patch_size) * (img.shape[-2] / patch_size) <= 10
+
+    img = resize(torch.rand(1, 100, 200))
+    assert img.shape[-1] / patch_size < pe_max_width and img.shape[-2] / patch_size < pe_max_height

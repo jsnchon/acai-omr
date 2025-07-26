@@ -113,21 +113,6 @@ def sample_pre_train_dataset(pre_train_dataset, num_samples, patch_size):
         height_patches = input_img.shape[2] // patch_size
         print(f"Patch dimensions\nWidth: {width_patches} patches, Height: {height_patches}, Total: {width_patches * height_patches} patches")
 
-def calc_dataset_patchify_stats(dataset, patch_size):
-    aspect_ratios = []
-    patchified_heights = []
-    patchified_widths = []
-    from tqdm import tqdm
-    for ex in tqdm(dataset):
-        img = ex[0]
-        height = img.shape[-2]
-        width = img.shape[-1]
-        aspect_ratios.append(width / height)
-        patchified_heights.append(height // patch_size) 
-        patchified_widths.append(width // patch_size)
-    
-    print(f"Aspect ratio\nmax: {max(aspect_ratios)}, min: {min(aspect_ratios)}\nPatchified heights\nmax: {max(patchified_heights)}, min: {min(patchified_heights)}\nPatchified widths\nmax: {max(patchified_widths)}, min: {min(patchified_widths)}")
-
 # musical scores have very small objects that convey important information, so maintaining resolution is very
 # important. Instead of down/upsampling images to get them to fit ViT structure, resize them to a similar size
 class PatchDivisibleResize(nn.Module):
@@ -156,22 +141,39 @@ class PatchDivisibleResize(nn.Module):
 # resize image to a nearby patch divisible resolution that also, when patchified, has a sequence length
 # within a certain budget (to avoid excessively long input sequences)
 class DynamicResize(nn.Module):
-    def __init__(self, patch_size, max_seq_len):
+    def __init__(self, patch_size, max_seq_len, pe_max_height, pe_max_width):
         super().__init__()
         self.patch_size = patch_size
         self.max_seq_len = max_seq_len
+        self.pe_max_height = pe_max_height
+        self.pe_max_width = pe_max_width
 
     # img should be a tensor of shape C x H x W
     def forward(self, img):
-        aspect_ratio = max(img.shape[-1] // img.shape[-2], 1) # basically all images should be wider than longer
-        target_height = self.patch_size * math.floor(math.sqrt(self.max_seq_len / aspect_ratio))
-        target_width = target_height * aspect_ratio
+        height = img.shape[-2]
+        width = img.shape[-1]
+        if width > height:
+            aspect_ratio = width // height
+            target_height = self.patch_size * math.floor(math.sqrt(self.max_seq_len / aspect_ratio))
+            target_width = target_height * aspect_ratio
+        else:
+            aspect_ratio = height // width
+            target_width = self.patch_size * math.floor(math.sqrt(self.max_seq_len / aspect_ratio))
+            target_height = target_width * aspect_ratio
+
         img = F.resize(
             img,
             size=(target_height, target_width),
             interpolation=InterpolationMode.BICUBIC,
             antialias=True
         )
+
+        # center crop each of height and/or width if they're too large for the positional embedding
+        if target_height / self.patch_size > self.pe_max_height:
+            img = v2.functional.center_crop(img, (self.pe_max_height * self.patch_size, img.shape[-1]))
+        if target_width / self.patch_size > self.pe_max_width:
+            img = v2.functional.center_crop(img, (img.shape[-2], self.pe_max_width * self.patch_size))
+
         return img.clamp(0.0, 1.0)
 
 """

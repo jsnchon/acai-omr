@@ -20,6 +20,10 @@ STATS_DIR_PATH = MODEL_DIR_PATH / "stats"
 PATCH_SIZE = 16 # actual patch will be PATCH_SIZE x PATCH_SIZE
 MASK_RATIO = 0.75
 MAX_SEQ_LEN = 512 # max amount of tokens to allow images to be resized to
+# in patches, positional embed dimensions. Larger images during pre-training will be center-cropped to fit. This can 
+# be interpolated during inference after pre-training
+PE_MAX_HEIGHT = 60 
+PE_MAX_WIDTH = 200
 
 # data constants
 AUGMENTATION_P = 0.3 # probability to apply camera augmentation 
@@ -254,6 +258,6 @@ if __name__ == "__main__":
     ])
 
     print(f"Setting up MAE with mask ratio {MASK_RATIO} and patch size {PATCH_SIZE}")
-    mae = MAE(MASK_RATIO, PATCH_SIZE)
+    mae = MAE(MASK_RATIO, PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH)
 
     pre_train(mae, train_dataset, validation_dataset)

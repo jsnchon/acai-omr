@@ -7,7 +7,7 @@ NUM_CHANNELS = 1 # assume these images all are grayscale
 class Encoder(nn.Module):
     # default arg values are configuration for ViT base w/ 16 patch size. pe_max_width and pe_max_height are the 
     # max dimensions, in patches, for 2d pes this model will support without interpolation
-    def __init__(self, patch_size=16, num_layers=12, hidden_dim=768, num_heads=12, mlp_dim=3072, pe_max_height=32, pe_max_width=96, transformer_dropout=0.1):
+    def __init__(self, patch_size, pe_max_height, pe_max_width, num_layers=12, hidden_dim=768, num_heads=12, mlp_dim=3072, transformer_dropout=0.1):
         super().__init__()
         self.patch_size = patch_size
         self.pe_max_height = pe_max_height
@@ -74,8 +74,8 @@ class Encoder(nn.Module):
 # identical model architecture to standard encoder superclass so learned state dict can be transferred to it after
 # pre-training. This subclass just modifies the forward logic to include MAE logic (patching -> shuffling -> masking -> encoding)
 class MAEEncoder(Encoder):
-    def __init__(self, mask_ratio, patch_size=16, num_layers=12, num_heads=12, hidden_dim=768, mlp_dim=3072, pe_max_height=32, pe_max_width=96):
-        super().__init__(patch_size, num_layers, hidden_dim, num_heads, mlp_dim, pe_max_height, pe_max_width, transformer_dropout=0.0)
+    def __init__(self, mask_ratio, patch_size, pe_max_height, pe_max_width, num_layers=12, num_heads=12, hidden_dim=768, mlp_dim=3072):
+        super().__init__(patch_size, pe_max_height, pe_max_width, num_layers, hidden_dim, num_heads, mlp_dim, transformer_dropout=0.0)
         self.mask_ratio = mask_ratio
 
     # shuffle and mask patchified sequence (based off approach used here: https://github.com/facebookresearch/mae/blob/main/models_mae.py)
@@ -178,10 +178,10 @@ class LMXDecoder(nn.Module):
     pass
 
 class MAE(nn.Module):
-    def __init__(self, mask_ratio, patch_size, encoder_hidden_dim=768, decoder_hidden_dim=512, pe_max_height=22, pe_max_width=100, encoder_kwargs={}, decoder_kwargs={}):
+    def __init__(self, mask_ratio, patch_size, pe_max_height, pe_max_width, encoder_hidden_dim=768, decoder_hidden_dim=512, encoder_kwargs={}, decoder_kwargs={}):
         super().__init__()
         self.patch_size = patch_size
-        self.encoder = MAEEncoder(mask_ratio, self.patch_size, hidden_dim=encoder_hidden_dim, pe_max_height=pe_max_height, pe_max_width=pe_max_width, **encoder_kwargs)
+        self.encoder = MAEEncoder(mask_ratio, self.patch_size, pe_max_height, pe_max_width, hidden_dim=encoder_hidden_dim, **encoder_kwargs)
         self.decoder_hidden_dim = decoder_hidden_dim
         self.decoder = MAEDecoder(hidden_dim=self.decoder_hidden_dim, **decoder_kwargs)
         self.decoder_embed = nn.Linear(encoder_hidden_dim, self.decoder_hidden_dim)

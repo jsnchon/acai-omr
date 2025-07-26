@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from models import Encoder, MAEEncoder, MAE, MAELoss, NUM_CHANNELS
-from pre_train import BASE_LR, MIN_LR, WARMUP_EPOCHS, EPOCHS
+from pre_train import BASE_LR, MIN_LR, WARMUP_EPOCHS, EPOCHS, PE_MAX_HEIGHT, PE_MAX_WIDTH
 import copy
 from utils import cosine_anneal_with_warmup, plot_lr_schedule
 import time
@@ -9,7 +9,7 @@ import time
 def test_encoder_batchify():
     patch_size = 2
     hidden_dim = NUM_CHANNELS * patch_size ** 2
-    encoder = Encoder(patch_size=2, hidden_dim=hidden_dim, num_heads=1)
+    encoder = Encoder(patch_size, PE_MAX_HEIGHT, PE_MAX_WIDTH, hidden_dim=hidden_dim, num_heads=1)
     encoder.projection = nn.Identity()
     encoder.pos_embedding = nn.Parameter(torch.ones(50, 50, hidden_dim))
 
@@ -26,7 +26,7 @@ def test_encoder_batchify():
 
 def test_encoder_forward():
     hidden_dim = 200
-    encoder = Encoder(num_layers=2, num_heads=2, hidden_dim=hidden_dim, mlp_dim=500, patch_size=2)
+    encoder = Encoder(2, PE_MAX_HEIGHT, PE_MAX_WIDTH, num_layers=2, num_heads=2, hidden_dim=hidden_dim, mlp_dim=500)
     x = [torch.rand(NUM_CHANNELS, 4, 4), torch.rand(NUM_CHANNELS, 4, 8)]
     x, mask = encoder(x)
     print(x)
@@ -34,7 +34,7 @@ def test_encoder_forward():
     assert x.shape == torch.Size([2, 8, hidden_dim])
 
 def test_mask_sequence():
-    encoder = MAEEncoder(0.50, num_heads=1, hidden_dim=1)
+    encoder = MAEEncoder(0.50, 2, PE_MAX_HEIGHT, PE_MAX_WIDTH, num_heads=1, hidden_dim=1)
     SEQ_LEN = 4
     x = torch.arange(SEQ_LEN).unsqueeze(0).repeat(12, 1).unsqueeze(0) # simulate 3 channels, patch size 2 (so CP^2 = 12) w/ sequence of length 4, label patches to check shuffle/unshuffle
     print(f"x before shuffle/mask: {x}, shape: {x.shape}")
@@ -57,7 +57,7 @@ def test_mask_sequence():
 def test_masked_encoder_batchify():
     patch_size = 2
     hidden_dim = NUM_CHANNELS * patch_size ** 2 # has to match CP^2 if using Identity for projection
-    encoder = MAEEncoder(0.50, patch_size=patch_size, hidden_dim=hidden_dim, num_heads=1)
+    encoder = MAEEncoder(0.50, patch_size, PE_MAX_HEIGHT, PE_MAX_WIDTH, hidden_dim=hidden_dim, num_heads=1)
     encoder.projection = nn.Identity()
     encoder.pos_embedding = nn.Parameter(torch.ones(50, 50, hidden_dim))
 
@@ -80,7 +80,7 @@ def test_masked_encoder_batchify():
 
 def test_masked_encoder_forward():
     hidden_dim = 200
-    encoder = MAEEncoder(0.50, num_layers=2, num_heads=2, hidden_dim=hidden_dim, mlp_dim=500, patch_size=2)
+    encoder = MAEEncoder(0.50, 2, PE_MAX_HEIGHT, PE_MAX_WIDTH, num_layers=2, num_heads=2, hidden_dim=hidden_dim, mlp_dim=500)
     x = [torch.rand(NUM_CHANNELS, 4, 4), torch.rand(NUM_CHANNELS, 4, 8)]
     x, attn_mask, kept_seq_lens, unmasked_seq_lens, seq_masks, ids_restores, patchified_dims = encoder(x)
     print(f"Output:\nEmbeddings {x}\nAttention mask: {attn_mask}\nSequence masks: {seq_masks}\nRestore tensor: {ids_restores}")
@@ -90,7 +90,7 @@ def test_prepare_for_decoder():
     encoder_kwargs = {"num_heads": 1}
     decoder_kwargs = {"num_heads": 1}
     encoder_hidden_dim = 2
-    mae = MAE(0.5, 1, encoder_hidden_dim=encoder_hidden_dim, decoder_hidden_dim=1, encoder_kwargs=encoder_kwargs, decoder_kwargs=decoder_kwargs)
+    mae = MAE(0.5, 1, PE_MAX_HEIGHT, PE_MAX_WIDTH, encoder_hidden_dim=encoder_hidden_dim, decoder_hidden_dim=1, encoder_kwargs=encoder_kwargs, decoder_kwargs=decoder_kwargs)
     # simulate latent of two sequences, one with length 2 + padding and other with length 3. First needs 2 mask tokens appended, second
     # needs 3 mask tokens appended. When unshuffled, mask tokens should be in front, labeled patches should be in ascending order
     mae.mask_token = nn.Parameter(torch.zeros(1, 1, 1) + 100)
@@ -127,7 +127,7 @@ def test_MAE_forward():
     encoder_hidden_dim = 6
     decoder_hidden_dim = 4
     patch_size = 1
-    mae = MAE(0.5, patch_size, encoder_hidden_dim=encoder_hidden_dim, decoder_hidden_dim=decoder_hidden_dim, encoder_kwargs=encoder_kwargs, decoder_kwargs=decoder_kwargs)
+    mae = MAE(0.5, patch_size, PE_MAX_HEIGHT, PE_MAX_WIDTH, encoder_hidden_dim=encoder_hidden_dim, decoder_hidden_dim=decoder_hidden_dim, encoder_kwargs=encoder_kwargs, decoder_kwargs=decoder_kwargs)
     SEQ_LEN = 4
     x = [torch.arange(SEQ_LEN, dtype=torch.float).reshape(2, 2).unsqueeze(0).repeat(NUM_CHANNELS, 1, 1)] 
     y = copy.deepcopy(x)
@@ -183,7 +183,7 @@ def test_MAE_gradient_flow():
     input = [torch.rand(NUM_CHANNELS, 16, 16)]
     target = [torch.rand(NUM_CHANNELS, 16, 16)]
     batch = zip(input, target)
-    mae = MAE(0.5, 2)
+    mae = MAE(0.5, 2, PE_MAX_HEIGHT, PE_MAX_WIDTH)
     optimizer = torch.optim.AdamW(mae.parameters(), lr=0.01)
     loss_fn = MAELoss()
     before = mae.encoder.pos_embedding.clone().detach()
@@ -216,7 +216,7 @@ def basic_performance_test():
 
     y = copy.deepcopy(x)
 
-    mae = MAE(0.5, 2)
+    mae = MAE(0.5, 2, PE_MAX_HEIGHT, PE_MAX_WIDTH)
     for i in range(NUM_TRIALS):
         print(f"Trial {i + 1}")
         start = time.perf_counter()
