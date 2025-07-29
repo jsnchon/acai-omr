@@ -36,7 +36,7 @@ BASE_LR = 1.5e-4 # max lr, used as annealing phase start and in warm-up phase la
 MIN_LR = 1e-6 # min lr of annealing phase 
 ADAMW_BETAS = (0.9, 0.95) # lr/AdamW settings basically copied from the paper
 ADAMW_WEIGHT_DECAY = 0.05
-WARMUP_EPOCHS = 25 
+WARMUP_EPOCHS = 50 
 BATCH_SIZE = 64
 
 # collate ragged batch into a list of (input, target) tensors for the MAE logic to handle
@@ -120,11 +120,11 @@ def train_loop(mae, dataloader, loss_fn, optimizer, scheduler, device):
 
         if batch_idx % 100 == 0:
             current_ex = batch_idx * batch_size + len(batch)
-            print(f"[{current_ex:>5d}/{len_dataset:>5d}]")
+            print(f"[{current_ex:>6d}/{len_dataset:>6d}]")
     
     scheduler.step()
     avg_loss = epoch_loss / num_batches
-    print(f"Average loss over this epoch: {avg_loss}")
+    print(f"Average training loss over this epoch: {avg_loss}")
     return avg_loss
 
 def validation_loop(mae, dataloader, loss_fn, device):
@@ -157,6 +157,7 @@ def pre_train(mae, train_dataset, validation_dataset):
     print(f"Setting up DataLoaders with batch size {BATCH_SIZE}, shuffle, {NUM_WORKERS} workers, pre train collate function, pinned memory")
     train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=pre_train_collate_fn, pin_memory=True)
     validation_dataloader = DataLoader(validation_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=pre_train_collate_fn, pin_memory=True)
+    print(f"Dataset augmentation probability: {AUGMENTATION_P}")
     print(f"Setting up AdamW with base learning rate {BASE_LR}, betas {ADAMW_BETAS}, weight decay {ADAMW_WEIGHT_DECAY}")
     optimizer = torch.optim.AdamW(mae.parameters(), lr=BASE_LR, betas=ADAMW_BETAS, weight_decay=ADAMW_WEIGHT_DECAY)
     print(f"Setting up scheduler with {WARMUP_EPOCHS} warm-up epochs, {EPOCHS} total epochs, {MIN_LR} minimum learning rate")
@@ -180,7 +181,7 @@ def pre_train(mae, train_dataset, validation_dataset):
     for i in range(EPOCHS):
         print(f"Epoch {i + 1}\n--------------------")
         epoch_start_lr = optimizer.param_groups[0]["lr"]
-        print(f"Learning rate at epoch start: {epoch_start_lr:>0.6f}")
+        print(f"Learning rate at epoch start: {epoch_start_lr:>0.8f}")
         epoch_lrs.append(epoch_start_lr)
 
         train_start_time = time.perf_counter()
@@ -209,14 +210,17 @@ def pre_train(mae, train_dataset, validation_dataset):
     print(f"Saving final model state dict separately to {model_path}")
     torch.save(mae.state_dict(), model_path)
 
-if __name__ == "__main__":
-    # base transform for all images: scale to nearest resolution divisible by patch size
-    base_transform = v2.Compose([
-        v2.ToImage(), # ToTensor is deprecated
-        v2.ToDtype(torch.float32, scale=True),
-        DynamicResize(PATCH_SIZE, MAX_SEQ_LEN, PE_MAX_HEIGHT, PE_MAX_WIDTH),
-    ])
+print(f"Setting up MAE with mask ratio {MASK_RATIO} and patch size {PATCH_SIZE}")
+mae = MAE(MASK_RATIO, PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH)
 
+# base transform for all images: convert to tensor, scale to patch divisible size within token budget
+base_transform = v2.Compose([
+    v2.ToImage(), # ToTensor is deprecated
+    v2.ToDtype(torch.float32, scale=True),
+    DynamicResize(PATCH_SIZE, MAX_SEQ_LEN, PE_MAX_HEIGHT, PE_MAX_WIDTH),
+])
+
+if __name__ == "__main__":
     # base train datasets
     grand_staff = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.train.txt", transform=base_transform)
     primus = PreparedDataset(PRIMUS_PREPARED_ROOT_DIR, transform=base_transform)
@@ -256,8 +260,5 @@ if __name__ == "__main__":
         OlimpicPreTrainWrapper(olimpic_synthetic_validate),
         OlimpicPreTrainWrapper(olimpic_scanned_validate),
     ])
-
-    print(f"Setting up MAE with mask ratio {MASK_RATIO} and patch size {PATCH_SIZE}")
-    mae = MAE(MASK_RATIO, PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH)
 
     pre_train(mae, train_dataset, validation_dataset)

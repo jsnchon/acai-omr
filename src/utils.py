@@ -38,9 +38,11 @@ def plot_lr_schedule(scheduler, optimizer, num_epochs):
     plt.savefig("lr_over_epochs.png")
 
 # shows the input, mae's reconstruction, and target images using one example ex side by side
-def show_prediction(mae, ex, patch_size):
+def show_prediction(mae, ex, patch_size, save_path):
     loss_fn = MAELoss()
-    pred, loss_mask, loss_target = mae([ex])
+    mae.eval()
+    with torch.no_grad():
+        pred, loss_mask, loss_target = mae([ex])
     loss = loss_fn(pred, loss_mask, loss_target)
     input = ex[0]
     target = ex[1]
@@ -50,7 +52,7 @@ def show_prediction(mae, ex, patch_size):
     num_channels = pred.shape[1]
     if num_channels == 1:
         fig, axs = plt.subplots(1, 3)
-        fig.set_figheight(2)
+        fig.set_figheight(4)
         fig.set_figwidth(16)
         fig.suptitle(f"Loss: {loss}")
         axs[0].imshow(input.squeeze(0), cmap="gray")
@@ -59,7 +61,8 @@ def show_prediction(mae, ex, patch_size):
         axs[1].set_title("MAE reconstruction prediction")
         axs[2].imshow(target.squeeze(0), cmap="gray")
         axs[2].set_title("Target image")
-        fig.savefig("mae_prediction.png")
+        print(f"Saving prediction to {save_path}")
+        fig.savefig(save_path)
     else:
         raise NotImplementedError("Images are assumed to be grayscale")
 

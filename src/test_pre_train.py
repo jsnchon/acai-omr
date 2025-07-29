@@ -1,14 +1,15 @@
-from pre_train import pre_train, PE_MAX_HEIGHT, PE_MAX_WIDTH
+from pre_train import pre_train, PE_MAX_HEIGHT, PE_MAX_WIDTH, base_transform
 from models import MAE, Encoder
 from torch.utils.data import Dataset
 from utils import show_prediction, PRIMUS_PREPARED_ROOT_DIR, PatchDivisibleResize
 from torchvision.transforms import v2
 from datasets import PreparedDataset, PreTrainWrapper
 import torch
+from pre_train import mae as pre_train_mae
 
 # for debug purposes, hidden dims are also 1
 DEBUG_KWARGS = {"num_layers": 1, "num_heads": 1, "mlp_dim": 1}
-DEBUG_PATCH_SIZE = 2
+DEBUG_PATCH_SIZE = 16
 DEBUG_MAE = MAE(0.75, DEBUG_PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH, encoder_hidden_dim=1, decoder_hidden_dim=1, encoder_kwargs=DEBUG_KWARGS, decoder_kwargs=DEBUG_KWARGS)
 
 class DebugDataset(Dataset):
@@ -16,7 +17,7 @@ class DebugDataset(Dataset):
         return 64
 
     def __getitem__(self, idx):
-        return torch.rand(1, 4, 4), torch.rand(1, 4, 4)
+        return torch.rand(1, 32, 32), torch.rand(1, 32, 32)
 
 def test_pre_train():
     debug_train_dataset = DebugDataset()
@@ -39,15 +40,21 @@ def test_show_prediction():
     patch_size = 16
     mae = MAE(0.75, 16, PE_MAX_HEIGHT, PE_MAX_WIDTH)
 
-    base_transform = v2.Compose([
-        v2.ToImage(), # ToTensor is deprecated
-        v2.ToDtype(torch.float32, scale=True),
-        PatchDivisibleResize(patch_size),
-    ])
-
     primus = PreparedDataset(PRIMUS_PREPARED_ROOT_DIR, transform=base_transform)
     debug_dataset = PreTrainWrapper(primus)
     show_prediction(mae, debug_dataset[0], patch_size)
 
+# qualitatively evaluate the model is learning to do what it needs to. scp a checkpoint file then pass it in here
+# assumes will run the image on cpu
+def basic_prediction_test(checkpoint_path):
+    checkpoint = torch.load(checkpoint_path, map_location=torch.device("cpu"))
+    mae_state_dict = checkpoint["mae_state_dict"]
+    pre_train_mae.load_state_dict(mae_state_dict)
+
+    primus = PreparedDataset(PRIMUS_PREPARED_ROOT_DIR, transform=base_transform)
+    debug_dataset = PreTrainWrapper(primus)
+    sample = torch.randint(0, len(debug_dataset), (1, )).item()
+    show_prediction(pre_train_mae, debug_dataset[sample], 16, "prediction.png")
+
 if __name__ == "__main__":
-    test_pre_train()
+    basic_prediction_test("epoch_150_checkpoint.pth")
