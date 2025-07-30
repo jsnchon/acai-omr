@@ -217,7 +217,7 @@ mae = MAE(MASK_RATIO, PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH)
 base_transform = v2.Compose([
     v2.ToImage(), # ToTensor is deprecated
     v2.ToDtype(torch.float32, scale=True),
-    DynamicResize(PATCH_SIZE, MAX_SEQ_LEN, PE_MAX_HEIGHT, PE_MAX_WIDTH),
+    DynamicResize(PATCH_SIZE, MAX_SEQ_LEN, PE_MAX_HEIGHT, PE_MAX_WIDTH, True),
 ])
 
 if __name__ == "__main__":

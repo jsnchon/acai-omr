@@ -5,9 +5,9 @@ NUM_CHANNELS = 1 # assume these images all are grayscale
 
 # no point in subclassing torchvision ViT. Too many structural changes needed
 class Encoder(nn.Module):
-    # default arg values are configuration for ViT base w/ 16 patch size. pe_max_width and pe_max_height are the 
-    # max dimensions, in patches, for 2d pes this model will support without interpolation
-    def __init__(self, patch_size, pe_max_height, pe_max_width, num_layers=12, hidden_dim=768, num_heads=12, mlp_dim=3072, transformer_dropout=0.1):
+    # default arg values are configuration for ViT base w/ 16 patch size (except for 0 dropout since freezing pre-trained encoder). 
+    # pe_max_width and pe_max_height are the max dimensions, in patches, for 2d pes this model will support without interpolation
+    def __init__(self, patch_size, pe_max_height, pe_max_width, num_layers=12, hidden_dim=768, num_heads=12, mlp_dim=3072, transformer_dropout=0.0):
         super().__init__()
         self.patch_size = patch_size
         self.pe_max_height = pe_max_height
@@ -69,7 +69,7 @@ class Encoder(nn.Module):
     def forward(self, x: list[torch.Tensor]):
         x, src_key_padding_mask = self.batchify(x)
         x = self.encoder_blocks(x, src_key_padding_mask=src_key_padding_mask)
-        return x, src_key_padding_mask # return mask for later use in loss calculation
+        return x, src_key_padding_mask # return mask for later use in loss calculation and cross-attention masking
 
 # identical model architecture to standard encoder superclass so learned state dict can be transferred to it after
 # pre-training. This subclass just modifies the forward logic to include MAE logic (patching -> shuffling -> masking -> encoding)
@@ -161,11 +161,10 @@ class MAEDecoder(nn.Module):
     # these default args are for the best performing MAE decoder in the paper 
     def __init__(self, num_layers=8, hidden_dim=512, num_heads=16, mlp_dim=3072, transformer_dropout=0.0):
         super().__init__()
-        self.hidden_dim = hidden_dim
         self.decoder_blocks = nn.TransformerEncoder( # nn.TransformerEncoder works fine here since just self-attending to one sequence
             encoder_layer=nn.TransformerEncoderLayer(d_model=hidden_dim, nhead=num_heads, dim_feedforward=mlp_dim, dropout=transformer_dropout, activation="gelu", batch_first=True),
             num_layers=num_layers,
-            norm=nn.LayerNorm(self.hidden_dim, eps=1e-6)
+            norm=nn.LayerNorm(hidden_dim, eps=1e-6)
         )
 
     # for MAE, assume x is already positionally embedded (so mask tokens have positional info). Don't do it here because
@@ -173,9 +172,6 @@ class MAEDecoder(nn.Module):
     def forward(self, x: torch.Tensor, attention_mask: torch.Tensor):
         return self.decoder_blocks(x, src_key_padding_mask=attention_mask)
 
-# TODO
-class LMXDecoder(nn.Module):
-    pass
 
 class MAE(nn.Module):
     def __init__(self, mask_ratio, patch_size, pe_max_height, pe_max_width, encoder_hidden_dim=768, decoder_hidden_dim=512, encoder_kwargs={}, decoder_kwargs={}):
@@ -270,3 +266,84 @@ class MAELoss(nn.Module):
 
         loss = (loss * loss_mask).sum() / loss_mask.sum() # mean loss for desired patches
         return loss
+
+# TODO: test this encoder works fine, including with images requiring interpolation
+class OMREncoder(Encoder):
+    def interpolate_pe(self, h_p, w_p):
+        # reshape to (1 x E x h_old x w_old) for interpolation
+        pos_embedding = self.pos_embedding.permute(2, 0, 1).unsqueeze(0)
+
+        interpolated_pos_embedding = nn.functional.interpolate(
+            pos_embedding,
+            size=(h_p, w_p),
+            mode="bilinear",
+            align_corners=False
+        ) # (1 x E x h_p x w_p)
+
+        return interpolated_pos_embedding.squeeze(0).permute(1, 2, 0) # (h_p x w_p x E)
+
+    def batchify(self, x: list[torch.Tensor]):
+        unfold = nn.Unfold(kernel_size=self.patch_size, stride=self.patch_size)
+        seq_lens = []
+        pos_embed_slices = []
+        patchified_tensors = []
+        for t in x:
+            t = unfold(t.unsqueeze(0)) 
+            seq_lens.append(t.shape[-1]) 
+
+            h_p = t.shape[-2] // self.patch_size
+            w_p = t.shape[-1] // self.patch_size
+            if h_p > self.pe_max_height or w_p > self.pe_max_width:
+                pos_embed_slice = self.interpolate_pe(h_p, w_p).reshape(-1, self.hidden_dim)
+            else:
+                pos_embed_slice = self.pos_embedding[:h_p, :w_p, :].reshape(-1, self.hidden_dim)
+            pos_embed_slices.append(pos_embed_slice)
+            patchified_tensors.append(t.squeeze(0).transpose(0, 1)) 
+
+        nested_batch = torch.nested.as_nested_tensor(patchified_tensors, layout=torch.jagged)
+        padded_batch = nested_batch.to_padded_tensor(padding=0.0) 
+        embeddings = self.projection(padded_batch) 
+
+        nested_pos_embeds = torch.nested.as_nested_tensor(pos_embed_slices, layout=torch.jagged)
+        padded_pos_embeds = nested_pos_embeds.to_padded_tensor(padding=0.0)
+        embeddings = embeddings + padded_pos_embeds
+
+        # src_key_padding_mask will be used for mask signifying which patches in encoder memory are padding during cross-attention
+        src_key_padding_mask = self.create_attention_mask(seq_lens, embeddings.shape[1]).to(embeddings.device)
+        return embeddings, src_key_padding_mask 
+
+# TODO
+class OMRDecoder(nn.Module):
+    pass
+
+class ViTOMR(nn.Module):
+    # in init do the model surgery (pass in the whole MAE state_dict, do the surgery)
+    # regular Encoder, LMXDecoder with cross attention
+    # masking logic for image encodings and padded LMX token sequences 
+    
+    # freeze encoder layers, create transition head
+
+    # create embedding param for token vocab
+    def __init__(self, omr_encoder, pretrained_mae_state_dict, omr_decoder, hidden_dim, dropout_p=0.1):
+        self.encoder = omr_encoder
+
+        # extract encoder parameters and remove redundant prefixes added by MAE class to align names
+        encoder_state_dict = {
+            param[len("encoder."):]: value for param, value in pretrained_mae_state_dict.items() if param.startswith("encoder.")
+        }
+        self.encoder.load_state_dict(encoder_state_dict)
+
+        # freeze the entire encoder 
+        for param in self.encoder.parameters():
+            param.requires_grad = False
+        self.encoder.eval()
+
+        # transition head to allow some task-specific adaptation of the latent representation
+        self.transition_head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout_p),
+            nn.Linear(hidden_dim, hidden_dim)
+        )
+
+        self.decoder = omr_decoder

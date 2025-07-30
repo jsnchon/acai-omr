@@ -26,7 +26,8 @@ def test_encoder_batchify():
 
 def test_encoder_forward():
     hidden_dim = 200
-    encoder = Encoder(2, PE_MAX_HEIGHT, PE_MAX_WIDTH, num_layers=2, num_heads=2, hidden_dim=hidden_dim, mlp_dim=500)
+    patch_size = 2
+    encoder = Encoder(patch_size, PE_MAX_HEIGHT, PE_MAX_WIDTH, num_layers=2, num_heads=2, hidden_dim=hidden_dim, mlp_dim=500)
     x = [torch.rand(NUM_CHANNELS, 4, 4), torch.rand(NUM_CHANNELS, 4, 8)]
     x, mask = encoder(x)
     print(x)

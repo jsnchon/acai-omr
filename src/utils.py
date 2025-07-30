@@ -136,12 +136,13 @@ class PatchDivisibleResize(nn.Module):
 # resize image to a nearby patch divisible resolution that also, when patchified, has a sequence length
 # within a certain budget (to avoid excessively long input sequences)
 class DynamicResize(nn.Module):
-    def __init__(self, patch_size, max_seq_len, pe_max_height, pe_max_width):
+    def __init__(self, patch_size, max_seq_len, pe_max_height, pe_max_width, crop_imgs):
         super().__init__()
         self.patch_size = patch_size
         self.max_seq_len = max_seq_len
         self.pe_max_height = pe_max_height
         self.pe_max_width = pe_max_width
+        self.crop_imgs = crop_imgs # whether to center crop images larger than the max dims
 
     # img should be a tensor of shape C x H x W
     def forward(self, img):
@@ -163,11 +164,12 @@ class DynamicResize(nn.Module):
             antialias=True
         )
 
-        # center crop each of height and/or width if they're too large for the positional embedding
-        if target_height / self.patch_size > self.pe_max_height:
-            img = v2.functional.center_crop(img, (self.pe_max_height * self.patch_size, img.shape[-1]))
-        if target_width / self.patch_size > self.pe_max_width:
-            img = v2.functional.center_crop(img, (img.shape[-2], self.pe_max_width * self.patch_size))
+        if self.crop_imgs:
+            # center crop each of height and/or width if they're too large for the positional embedding
+            if target_height / self.patch_size > self.pe_max_height:
+                img = v2.functional.center_crop(img, (self.pe_max_height * self.patch_size, img.shape[-1]))
+            if target_width / self.patch_size > self.pe_max_width:
+                img = v2.functional.center_crop(img, (img.shape[-2], self.pe_max_width * self.patch_size))
 
         return img.clamp(0.0, 1.0)
 
