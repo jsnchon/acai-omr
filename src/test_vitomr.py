@@ -24,6 +24,12 @@ def test_encoder_batchify():
     second_ex_mask = (torch.arange(8) >= 8).unsqueeze(0)
     assert torch.equal(mask, torch.cat((first_ex_mask, second_ex_mask)))
 
+    # test larger inputs where pe needs to be interpolated
+    x = [torch.ones(NUM_CHANNELS, 10, 600)]
+    embeddings, mask = encoder.batchify(x) 
+    # since PE grid is all ones, should be interpolated to a grid of all ones matching input image dims
+    assert torch.equal(embeddings, torch.ones(NUM_CHANNELS, 1500, hidden_dim) + 1)
+
 def test_encoder_forward():
     encoder = debug_encoder
     x = [torch.rand(NUM_CHANNELS, 4, 4), torch.rand(NUM_CHANNELS, 4, 8)]
@@ -31,6 +37,13 @@ def test_encoder_forward():
     print(x)
     print(mask)
     assert x.shape == torch.Size([2, 8, debug_encoder_kwargs["hidden_dim"]])
+
+    # test larger inputs where pe needs to be interpolated
+    x = [torch.rand(NUM_CHANNELS, 10, 600)]
+    x, mask = encoder(x)
+    print(x)
+    print(mask)
+    assert x.shape == torch.Size([NUM_CHANNELS, 1500, debug_encoder_kwargs["hidden_dim"]])
     
 if __name__ == "__main__":
     test_encoder_batchify()

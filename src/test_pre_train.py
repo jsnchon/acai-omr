@@ -1,9 +1,9 @@
 from pre_train import pre_train, PE_MAX_HEIGHT, PE_MAX_WIDTH, base_transform
 from models import MAE, Encoder
 from torch.utils.data import Dataset
-from utils import show_prediction, PRIMUS_PREPARED_ROOT_DIR
+from utils import show_prediction, PRIMUS_PREPARED_ROOT_DIR, GRAND_STAFF_ROOT_DIR
 from torchvision.transforms import v2, InterpolationMode
-from datasets import PreparedDataset, PreTrainWrapper
+from datasets import PreparedDataset, PreTrainWrapper, GrandStaffLMXDataset, GrandStaffPreTrainWrapper
 import torch
 from pre_train import mae as pre_train_mae
 
@@ -51,8 +51,8 @@ def basic_prediction_test(checkpoint_path):
     mae_state_dict = checkpoint["mae_state_dict"]
     pre_train_mae.load_state_dict(mae_state_dict)
 
-    primus = PreparedDataset(PRIMUS_PREPARED_ROOT_DIR, transform=base_transform)
-    debug_dataset = PreTrainWrapper(primus)
+    grandstaff = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.dev.txt", transform=base_transform)
+    debug_dataset = GrandStaffPreTrainWrapper(grandstaff)
     sample = torch.randint(0, len(debug_dataset), (1, )).item()
     show_prediction(pre_train_mae, debug_dataset[sample], 16, "unaugmented_prediction.png")
 
@@ -64,9 +64,9 @@ def basic_prediction_test(checkpoint_path):
         v2.ColorJitter(brightness=0.2, saturation=0.2, contrast=0.2, hue=0),
     ])
 
-    augmented_debug_dataset = PreTrainWrapper(primus, transform=camera_augment)
+    augmented_debug_dataset = GrandStaffPreTrainWrapper(grandstaff, augment_p=1.0, transform=camera_augment)
     show_prediction(pre_train_mae, augmented_debug_dataset[sample], 16, "augmented_prediction.png")
 
 if __name__ == "__main__":
     # test_pre_train()
-    basic_prediction_test("epoch_150_checkpoint.pth")
+    basic_prediction_test("epoch_200_checkpoint.pth")

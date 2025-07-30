@@ -1,0 +1,3 @@
+[submodule "olimpic-icdar24"]
+	path = olimpic-icdar24
+	url = https://github.com/jsnchon/olimpic-icdar24

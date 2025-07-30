@@ -267,7 +267,6 @@ class MAELoss(nn.Module):
         loss = (loss * loss_mask).sum() / loss_mask.sum() # mean loss for desired patches
         return loss
 
-# TODO: test this encoder works fine, including with images requiring interpolation
 class OMREncoder(Encoder):
     def interpolate_pe(self, h_p, w_p):
         # reshape to (1 x E x h_old x w_old) for interpolation
@@ -312,19 +311,45 @@ class OMREncoder(Encoder):
         src_key_padding_mask = self.create_attention_mask(seq_lens, embeddings.shape[1]).to(embeddings.device)
         return embeddings, src_key_padding_mask 
 
-# TODO
 class OMRDecoder(nn.Module):
-    pass
+    def __init__(self, max_lmx_seq_len, num_layers=4, hidden_dim=768, num_heads=12, mlp_dim=3072, transformer_dropout=0.1):
+        super().__init__()
+        self.max_lmx_seq_len = max_lmx_seq_len
+        self.pos_embedding = nn.Parameter(
+            torch.zeros(self.max_lmx_seq_len, hidden_dim)
+        )
+        nn.init.trunc_normal_(self.pos_embedding, std=0.1)
+
+        self.decoder_blocks = nn.TransformerDecoder(
+            decoder_layer=nn.TransformerDecoderLayer(d_model=hidden_dim, nhead=num_heads, dim_feedforward=mlp_dim, dropout=transformer_dropout, activation="gelu", batch_first=True),
+            num_layers=num_layers,
+            norm=nn.LayerNorm(hidden_dim, eps=1e-6)
+        )
+
+    def forward(self, input_lmx, img_latent, lmx_attention_mask, latent_attention_mask):
+        """
+        input_lmx: (B x L_lmxmax x E), right shifted token indices 
+        img_latent: (B x L_imgmax x E)
+        lmx_attention_mask: (B, L_lmxmax), records which lmx tokens in lmx batch are pad tokens
+        latent_attention_mask: (B, L_imgmax) records which encoded patches in image batch are padding
+        """
+        batch_max_lmx_seq_len = input_lmx.shape[1]
+        if batch_max_lmx_seq_len > self.max_lmx_seq_len:
+            raise ValueError(f"{batch_max_lmx_seq_len} lmx tokens is too long of a sequence for max sequence length of {self.max_lmx_seq_len}")
+
+        # positionally embed lmx tokens
+        pos_embed_slice = self.pos_embedding[:batch_max_lmx_seq_len, :]
+        input_lmx = input_lmx + pos_embed_slice.unsqueeze(0)
+
+        causal_mask = torch.triu(torch.ones(batch_max_lmx_seq_len, batch_max_lmx_seq_len), diagonal=1).bool() # enforce autoregressive predictions
+        causal_mask = causal_mask.to(input_lmx.device)
+        return self.decoder_blocks(input_lmx, memory=img_latent, tgt_mask=causal_mask, tgt_key_padding_mask=lmx_attention_mask, memory_key_padding_mask=latent_attention_mask)
 
 class ViTOMR(nn.Module):
-    # in init do the model surgery (pass in the whole MAE state_dict, do the surgery)
-    # regular Encoder, LMXDecoder with cross attention
-    # masking logic for image encodings and padded LMX token sequences 
+    # masking logic for image encodings and padded LMX token sequences. Add prepare_for_decoder method to do this?
     
-    # freeze encoder layers, create transition head
-
     # create embedding param for token vocab
-    def __init__(self, omr_encoder, pretrained_mae_state_dict, omr_decoder, hidden_dim, dropout_p=0.1):
+    def __init__(self, omr_encoder, pretrained_mae_state_dict, omr_decoder, lmx_vocab_path, hidden_dim, dropout_p=0.1):
         self.encoder = omr_encoder
 
         # extract encoder parameters and remove redundant prefixes added by MAE class to align names
@@ -347,3 +372,5 @@ class ViTOMR(nn.Module):
         )
 
         self.decoder = omr_decoder
+
+    # forward remember to feed img latnet through transition head
