@@ -1,7 +1,7 @@
 from pre_train import pre_train, PE_MAX_HEIGHT, PE_MAX_WIDTH, base_transform
 from models import MAE, Encoder
 from torch.utils.data import Dataset
-from utils import show_prediction, PRIMUS_PREPARED_ROOT_DIR, GRAND_STAFF_ROOT_DIR
+from utils import show_prediction, PRIMUS_PREPARED_ROOT_DIR, GRAND_STAFF_ROOT_DIR, DEBUG_PRETRAINED_MAE_PATH
 from torchvision.transforms import v2, InterpolationMode
 from datasets import PreparedDataset, PreTrainWrapper, GrandStaffLMXDataset, GrandStaffPreTrainWrapper
 import torch
@@ -25,7 +25,6 @@ def test_pre_train():
     pre_train(DEBUG_MAE, debug_train_dataset, debug_validation_dataset)
 
 def test_encoder_transfer():
-    DEBUG_PRETRAINED_MAE_PATH = "debug_pretrained_mae.pth"
     pretrained_mae_state_dict = torch.load(DEBUG_PRETRAINED_MAE_PATH)
     # in MAE instance, encoder part's parameters start with encoder., so filter out those params (and also remove prefix to align names with Encoder class)
     encoder_state_dict = {
@@ -68,5 +67,5 @@ def basic_prediction_test(checkpoint_path):
     show_prediction(pre_train_mae, augmented_debug_dataset[sample], 16, "augmented_prediction.png")
 
 if __name__ == "__main__":
-    # test_pre_train()
-    basic_prediction_test("epoch_200_checkpoint.pth")
+    test_pre_train()
+    # basic_prediction_test("epoch_200_checkpoint.pth")

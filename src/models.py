@@ -2,6 +2,7 @@ import torch
 from torch import nn
 
 NUM_CHANNELS = 1 # assume these images all are grayscale
+LMX_PAD_TOKEN = "<pad>" # token used for padding lmx sequences
 
 # no point in subclassing torchvision ViT. Too many structural changes needed
 class Encoder(nn.Module):
@@ -172,7 +173,6 @@ class MAEDecoder(nn.Module):
     def forward(self, x: torch.Tensor, attention_mask: torch.Tensor):
         return self.decoder_blocks(x, src_key_padding_mask=attention_mask)
 
-
 class MAE(nn.Module):
     def __init__(self, mask_ratio, patch_size, pe_max_height, pe_max_width, encoder_hidden_dim=768, decoder_hidden_dim=512, encoder_kwargs={}, decoder_kwargs={}):
         super().__init__()
@@ -224,11 +224,9 @@ class MAE(nn.Module):
         loss_mask: (N x L_m)
     """
     def forward(self, batch: list[tuple[torch.Tensor, torch.Tensor]]):
-        x = []
-        y = []
-        for ex in batch:
-            x.append(ex[0])
-            y.append(ex[1])
+        x, y = zip(*batch)
+        x = list(x)
+        y = list(y)
 
         latent, decoder_attention_mask, kept_seq_lens, unmasked_seq_lens, batch_seq_masks, batch_ids_restore, patchified_dims = self.encoder(x)
         latent = self.decoder_embed(latent) # project to decoder embedding space
@@ -311,10 +309,23 @@ class OMREncoder(Encoder):
         src_key_padding_mask = self.create_attention_mask(seq_lens, embeddings.shape[1]).to(embeddings.device)
         return embeddings, src_key_padding_mask 
 
+# TODO: test vocab creation, masking, pos embedding, etc
 class OMRDecoder(nn.Module):
-    def __init__(self, max_lmx_seq_len, num_layers=4, hidden_dim=768, num_heads=12, mlp_dim=3072, transformer_dropout=0.1):
+    def __init__(self, max_lmx_seq_len, lmx_vocab_path, num_layers=4, hidden_dim=768, num_heads=12, mlp_dim=3072, transformer_dropout=0.1):
         super().__init__()
         self.max_lmx_seq_len = max_lmx_seq_len
+
+        with open(lmx_vocab_path, "r") as f:
+            tokens = [line.strip() for line in f if line.strip()]
+        
+        self.tokens_to_idxs = {token: i for i, token in enumerate(tokens)}
+        self.idxs_to_tokens = {i: token for i, token in enumerate(tokens)}
+        self.padding_idx = self.tokens_to_idxs[LMX_PAD_TOKEN]
+
+        self.vocab_embedding = nn.Embedding(
+            len(tokens), hidden_dim, padding_idx=self.padding_idx
+        )
+
         self.pos_embedding = nn.Parameter(
             torch.zeros(self.max_lmx_seq_len, hidden_dim)
         )
@@ -326,30 +337,41 @@ class OMRDecoder(nn.Module):
             norm=nn.LayerNorm(hidden_dim, eps=1e-6)
         )
 
-    def forward(self, input_lmx, img_latent, lmx_attention_mask, latent_attention_mask):
+    def batchify_lmx_seqs(self, lmx_seqs: list[torch.Tensor]):
+        nested_lmx_seqs = torch.nested.as_nested_tensor(lmx_seqs, layout=torch.jagged) # (B x L_lmxmax)
+        padded_lmx_seqs = nested_lmx_seqs.to_padded_tensor(padding=self.padding_idx)
+        batch_max_lmx_seq_len = padded_lmx_seqs.shape[1] 
+        if batch_max_lmx_seq_len > self.max_lmx_seq_len:
+                raise ValueError(f"{batch_max_lmx_seq_len} long lmx sequence length is too long for max sequence length of {self.max_lmx_seq_len}")
+
+        lmx_attention_mask = padded_lmx_seqs == self.padding_idx
+        lmx_attention_mask = lmx_attention_mask.to(padded_lmx_seqs.device) # (B,  L_lmxmax), True means 
+
+        return padded_lmx_seqs, lmx_attention_mask, batch_max_lmx_seq_len
+
+    def forward(self, input_lmx_seqs, img_latent, latent_attention_mask):
         """
-        input_lmx: (B x L_lmxmax x E), right shifted token indices 
+        input_lmx_seqs: list of input lmx sequence int tensors
         img_latent: (B x L_imgmax x E)
-        lmx_attention_mask: (B, L_lmxmax), records which lmx tokens in lmx batch are pad tokens
         latent_attention_mask: (B, L_imgmax) records which encoded patches in image batch are padding
         """
-        batch_max_lmx_seq_len = input_lmx.shape[1]
-        if batch_max_lmx_seq_len > self.max_lmx_seq_len:
-            raise ValueError(f"{batch_max_lmx_seq_len} lmx tokens is too long of a sequence for max sequence length of {self.max_lmx_seq_len}")
+        padded_lmx_seqs, lmx_attention_mask, batch_max_lmx_seq_len = self.batchify_lmx_seqs(input_lmx_seqs)
+        lmx_embeddings = self.vocab_embedding(padded_lmx_seqs) # (B, L_lmxmax, E)
 
         # positionally embed lmx tokens
         pos_embed_slice = self.pos_embedding[:batch_max_lmx_seq_len, :]
-        input_lmx = input_lmx + pos_embed_slice.unsqueeze(0)
+        lmx_embeddings = lmx_embeddings + pos_embed_slice.unsqueeze(0)
 
         causal_mask = torch.triu(torch.ones(batch_max_lmx_seq_len, batch_max_lmx_seq_len), diagonal=1).bool() # enforce autoregressive predictions
-        causal_mask = causal_mask.to(input_lmx.device)
-        return self.decoder_blocks(input_lmx, memory=img_latent, tgt_mask=causal_mask, tgt_key_padding_mask=lmx_attention_mask, memory_key_padding_mask=latent_attention_mask)
+        causal_mask = causal_mask.to(lmx_embeddings.device)
+        return self.decoder_blocks(lmx_embeddings, memory=img_latent, tgt_mask=causal_mask, tgt_key_padding_mask=lmx_attention_mask, memory_key_padding_mask=latent_attention_mask)
 
 class ViTOMR(nn.Module):
     # masking logic for image encodings and padded LMX token sequences. Add prepare_for_decoder method to do this?
     
     # create embedding param for token vocab
-    def __init__(self, omr_encoder, pretrained_mae_state_dict, omr_decoder, lmx_vocab_path, hidden_dim, dropout_p=0.1):
+    def __init__(self, omr_encoder, pretrained_mae_state_dict, omr_decoder, hidden_dim=768, dropout_p=0.1):
+        super().__init__()
         self.encoder = omr_encoder
 
         # extract encoder parameters and remove redundant prefixes added by MAE class to align names
@@ -372,5 +394,18 @@ class ViTOMR(nn.Module):
         )
 
         self.decoder = omr_decoder
+    
+    # x is a list of (image, lmx_sequence) tuples where each lmx_sequence is an int tensor of input token indices
+    def forward(self, x: list[tuple[torch.Tensor, torch.Tensor]]):
+        imgs, lmx_seqs = zip(*x)
+        imgs = list(imgs)
+        lmx_seqs = list(lmx_seqs)
+
+        # encode images
+        img_latent, latent_attention_mask = self.encoder(imgs)        
+
+        # encode -> transition -> decode
+
+    # for loss just use cross entropy with ignore index = pad index (since feeding in token indices to predict)
 
     # forward remember to feed img latnet through transition head

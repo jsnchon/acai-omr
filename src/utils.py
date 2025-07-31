@@ -18,6 +18,9 @@ DOREMI_PREPARED_ROOT_DIR = "data/doReMiPrepared"
 OLIMPIC_SYNTHETIC_ROOT_DIR = "data/olimpic-1.0-synthetic.2024-02-12/olimpic-1.0-synthetic"
 OLIMPIC_SCANNED_ROOT_DIR = "data/olimpic-1.0-scanned.2024-02-12/olimpic-1.0-scanned"
 
+# weights for a tiny MAE for testing purposes
+DEBUG_PRETRAINED_MAE_PATH = "debug_pretrained_mae.pth"
+
 def cosine_anneal_with_warmup(optimizer, warmup_epochs, total_epochs, final_lr):
     warmup = LinearLR(optimizer, start_factor=5e-3, end_factor=1.0, total_iters=warmup_epochs)
     anneal = CosineAnnealingLR(optimizer, T_max=total_epochs - warmup_epochs, eta_min=final_lr)
