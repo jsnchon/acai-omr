@@ -285,11 +285,12 @@ class OMREncoder(Encoder):
         pos_embed_slices = []
         patchified_tensors = []
         for t in x:
+            h_p = t.shape[-2] // self.patch_size
+            w_p = t.shape[-1] // self.patch_size
+
             t = unfold(t.unsqueeze(0)) 
             seq_lens.append(t.shape[-1]) 
 
-            h_p = t.shape[-2] // self.patch_size
-            w_p = t.shape[-1] // self.patch_size
             if h_p > self.pe_max_height or w_p > self.pe_max_width:
                 pos_embed_slice = self.interpolate_pe(h_p, w_p).reshape(-1, self.hidden_dim)
             else:
@@ -309,11 +310,11 @@ class OMREncoder(Encoder):
         src_key_padding_mask = self.create_attention_mask(seq_lens, embeddings.shape[1]).to(embeddings.device)
         return embeddings, src_key_padding_mask 
 
-# TODO: test vocab creation, masking, pos embedding, etc
 class OMRDecoder(nn.Module):
     def __init__(self, max_lmx_seq_len, lmx_vocab_path, num_layers=4, hidden_dim=768, num_heads=12, mlp_dim=3072, transformer_dropout=0.1):
         super().__init__()
         self.max_lmx_seq_len = max_lmx_seq_len
+        self.hidden_dim = hidden_dim
 
         with open(lmx_vocab_path, "r") as f:
             tokens = [line.strip() for line in f if line.strip()]
@@ -321,42 +322,36 @@ class OMRDecoder(nn.Module):
         self.tokens_to_idxs = {token: i for i, token in enumerate(tokens)}
         self.idxs_to_tokens = {i: token for i, token in enumerate(tokens)}
         self.padding_idx = self.tokens_to_idxs[LMX_PAD_TOKEN]
+        self.vocab_size = len(tokens)
 
         self.vocab_embedding = nn.Embedding(
-            len(tokens), hidden_dim, padding_idx=self.padding_idx
+            self.vocab_size, self.hidden_dim, padding_idx=self.padding_idx
         )
 
         self.pos_embedding = nn.Parameter(
-            torch.zeros(self.max_lmx_seq_len, hidden_dim)
+            torch.zeros(self.max_lmx_seq_len, self.hidden_dim)
         )
         nn.init.trunc_normal_(self.pos_embedding, std=0.1)
 
         self.decoder_blocks = nn.TransformerDecoder(
-            decoder_layer=nn.TransformerDecoderLayer(d_model=hidden_dim, nhead=num_heads, dim_feedforward=mlp_dim, dropout=transformer_dropout, activation="gelu", batch_first=True),
+            decoder_layer=nn.TransformerDecoderLayer(d_model=self.hidden_dim, nhead=num_heads, dim_feedforward=mlp_dim, dropout=transformer_dropout, activation="gelu", batch_first=True),
             num_layers=num_layers,
-            norm=nn.LayerNorm(hidden_dim, eps=1e-6)
+            norm=nn.LayerNorm(self.hidden_dim, eps=1e-6)
         )
 
-    def batchify_lmx_seqs(self, lmx_seqs: list[torch.Tensor]):
-        nested_lmx_seqs = torch.nested.as_nested_tensor(lmx_seqs, layout=torch.jagged) # (B x L_lmxmax)
-        padded_lmx_seqs = nested_lmx_seqs.to_padded_tensor(padding=self.padding_idx)
-        batch_max_lmx_seq_len = padded_lmx_seqs.shape[1] 
+        self.unembed = nn.Linear(self.hidden_dim, self.vocab_size)
+
+    def forward(self, input_seqs, img_latent, lmx_attention_mask, latent_attention_mask):
+        """
+        input_seqs: (B, L_lmxmax), batch tensor of input sequences where each sequence is an int tensor of a right-shifted original sequence
+        img_latent: (B, L_imgmax, E)
+        lmx_attention_mask: (B, L_lmxmax), records which lmx tokens are pad tokens
+        latent_attention_mask: (B, L_imgmax), records which encoded patches in image batch are padding
+        """
+        batch_max_lmx_seq_len = input_seqs.shape[1] 
         if batch_max_lmx_seq_len > self.max_lmx_seq_len:
                 raise ValueError(f"{batch_max_lmx_seq_len} long lmx sequence length is too long for max sequence length of {self.max_lmx_seq_len}")
-
-        lmx_attention_mask = padded_lmx_seqs == self.padding_idx
-        lmx_attention_mask = lmx_attention_mask.to(padded_lmx_seqs.device) # (B,  L_lmxmax), True means 
-
-        return padded_lmx_seqs, lmx_attention_mask, batch_max_lmx_seq_len
-
-    def forward(self, input_lmx_seqs, img_latent, latent_attention_mask):
-        """
-        input_lmx_seqs: list of input lmx sequence int tensors
-        img_latent: (B x L_imgmax x E)
-        latent_attention_mask: (B, L_imgmax) records which encoded patches in image batch are padding
-        """
-        padded_lmx_seqs, lmx_attention_mask, batch_max_lmx_seq_len = self.batchify_lmx_seqs(input_lmx_seqs)
-        lmx_embeddings = self.vocab_embedding(padded_lmx_seqs) # (B, L_lmxmax, E)
+        lmx_embeddings = self.vocab_embedding(input_seqs) # (B, L_lmxmax, E)
 
         # positionally embed lmx tokens
         pos_embed_slice = self.pos_embedding[:batch_max_lmx_seq_len, :]
@@ -364,7 +359,10 @@ class OMRDecoder(nn.Module):
 
         causal_mask = torch.triu(torch.ones(batch_max_lmx_seq_len, batch_max_lmx_seq_len), diagonal=1).bool() # enforce autoregressive predictions
         causal_mask = causal_mask.to(lmx_embeddings.device)
-        return self.decoder_blocks(lmx_embeddings, memory=img_latent, tgt_mask=causal_mask, tgt_key_padding_mask=lmx_attention_mask, memory_key_padding_mask=latent_attention_mask)
+        hidden_state = self.decoder_blocks(lmx_embeddings, memory=img_latent, tgt_mask=causal_mask, tgt_key_padding_mask=lmx_attention_mask, memory_key_padding_mask=latent_attention_mask)
+
+        pred = self.unembed(hidden_state)
+        return pred
 
 class ViTOMR(nn.Module):
     # masking logic for image encodings and padded LMX token sequences. Add prepare_for_decoder method to do this?
@@ -394,7 +392,26 @@ class ViTOMR(nn.Module):
         )
 
         self.decoder = omr_decoder
-    
+
+        if hidden_dim != self.encoder.hidden_dim:
+            raise ValueError(f"Mismatched hidden dim with encoder. ViTOMR: {hidden_dim}, encoder: {self.encoder.hidden_dim}")
+        if hidden_dim != self.decoder.hidden_dim:
+            raise ValueError(f"Mismatched hidden dim with decoder. ViTOMR: {hidden_dim}, decoder: {self.decoder.hidden_dim}")
+
+    # lmx_seqs is a list of int tensors containing the unmodified lmx sequences associated with the input images,
+    # in lmx token indices
+    def batchify_and_split_lmx_seqs(self, lmx_seqs: list[torch.Tensor], device):
+        # split lmx sequences into right-shifted inputs and left-shifted targets
+        padding_idx = self.decoder.padding_idx
+        lmx_seqs = torch.nested.as_nested_tensor(lmx_seqs)
+        lmx_seqs = lmx_seqs.to_padded_tensor(padding=padding_idx)
+        input_seqs = lmx_seqs[:, :-1]
+        target_seqs = lmx_seqs[:, 1:]
+
+        lmx_attention_mask = input_seqs == padding_idx # (B, L_lmxmax), True means that lmx token is a pad token
+        lmx_attention_mask = lmx_attention_mask.to(device)
+        return input_seqs, target_seqs, lmx_attention_mask
+
     # x is a list of (image, lmx_sequence) tuples where each lmx_sequence is an int tensor of input token indices
     def forward(self, x: list[tuple[torch.Tensor, torch.Tensor]]):
         imgs, lmx_seqs = zip(*x)
@@ -404,8 +421,26 @@ class ViTOMR(nn.Module):
         # encode images
         img_latent, latent_attention_mask = self.encoder(imgs)        
 
-        # encode -> transition -> decode
+        # feed through head
+        img_latent = self.transition_head(img_latent)
 
-    # for loss just use cross entropy with ignore index = pad index (since feeding in token indices to predict)
+        # prepare lmx sequences and mask
+        input_seqs, target_seqs, lmx_attention_mask = self.batchify_and_split_lmx_seqs(lmx_seqs, img_latent.device)
 
-    # forward remember to feed img latnet through transition head
+        # decode lmx with cross-attention to image latent
+        pred = self.decoder(input_seqs, img_latent, lmx_attention_mask, latent_attention_mask)
+        return pred, target_seqs # return target_seqs for later use in loss
+
+# wrapper to handle the logic with cross entropy loss
+class OMRLoss(nn.Module):
+    def __init__(self, padding_idx):
+        super().__init__()
+        self.loss_fn = nn.CrossEntropyLoss(ignore_index=padding_idx)
+
+    def forward(self, pred, target_seqs):
+        """
+        pred: (B, L_lmxmax, vocab_size), decoder output
+        target_seqs: (B, L_lmxmax), tokens to predict at each position
+        """
+        # flatten tensors since target tensor needs to be shape (N, )
+        return self.loss_fn(pred.reshape(-1, pred.shape[-1]), target_seqs.reshape(-1))

@@ -210,7 +210,6 @@ def pre_train(mae, train_dataset, validation_dataset):
     print(f"Saving final model state dict separately to {model_path}")
     torch.save(mae.state_dict(), model_path)
 
-print(f"Setting up MAE with mask ratio {MASK_RATIO} and patch size {PATCH_SIZE}")
 mae = MAE(MASK_RATIO, PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH)
 
 # base transform for all images: convert to tensor, scale to patch divisible size within token budget
@@ -221,6 +220,7 @@ base_transform = v2.Compose([
 ])
 
 if __name__ == "__main__":
+    print(f"MAE set up with mask ratio {MASK_RATIO} and patch size {PATCH_SIZE}")
     # base train datasets
     grand_staff = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.train.txt", transform=base_transform)
     primus = PreparedDataset(PRIMUS_PREPARED_ROOT_DIR, transform=base_transform)

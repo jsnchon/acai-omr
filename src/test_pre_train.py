@@ -7,10 +7,10 @@ from datasets import PreparedDataset, PreTrainWrapper, GrandStaffLMXDataset, Gra
 import torch
 from pre_train import mae as pre_train_mae
 
-# for debug purposes, hidden dims are also 1
+# for debug purposes, hidden dims are 10
 DEBUG_KWARGS = {"num_layers": 1, "num_heads": 1, "mlp_dim": 1}
 DEBUG_PATCH_SIZE = 16
-DEBUG_MAE = MAE(0.75, DEBUG_PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH, encoder_hidden_dim=1, decoder_hidden_dim=1, encoder_kwargs=DEBUG_KWARGS, decoder_kwargs=DEBUG_KWARGS)
+DEBUG_MAE = MAE(0.75, DEBUG_PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH, encoder_hidden_dim=10, decoder_hidden_dim=10, encoder_kwargs=DEBUG_KWARGS, decoder_kwargs=DEBUG_KWARGS)
 
 class DebugDataset(Dataset):
     def __len__(self):
