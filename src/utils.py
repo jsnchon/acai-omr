@@ -3,6 +3,7 @@ import torch
 import numpy as np
 from torch import nn
 from torch.utils.data.sampler import BatchSampler
+from torch.utils.data import Dataset
 import numpy as np
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms import v2
