@@ -6,11 +6,12 @@ from PIL import Image
 
 # superclass to deal with the commonalities between the LMX datasets
 class LMXDataset(Dataset):
-    def __init__(self, root_dir, split_file_name, transform=None):
+    def __init__(self, root_dir, split_file_name, img_transform=None, lmx_transform=None):
         self.root_dir = Path(root_dir)
         split_file = self.root_dir / split_file_name
         self.id_df = pd.read_csv(split_file, header=None)
-        self.transform = transform
+        self.img_transform = img_transform
+        self.lmx_transform = lmx_transform
 
     def __len__(self):
         return len(self.id_df)
@@ -32,13 +33,16 @@ class GrandStaffLMXDataset(LMXDataset):
         # based on distorted img is always the same size as the target img in pre-training)
         distorted_img = distorted_img.resize(original_img.size, resample=Image.Resampling.BILINEAR)
 
-        if self.transform:       
-            original_img = self.transform(original_img)
-            distorted_img = self.transform(distorted_img)
+        if self.img_transform:       
+            original_img = self.img_transform(original_img)
+            distorted_img = self.img_transform(distorted_img)
 
         lmx_path = self.root_dir / (self.id_df.iat[idx, 0] + ".lmx")
         with open(lmx_path, "r") as f:
             lmx = f.read()
+
+        if self.lmx_transform:
+            lmx = self.lmx_transform(lmx)
 
         return original_img, distorted_img, lmx
 
@@ -119,11 +123,36 @@ class OlimpicDataset(LMXDataset):
         img_path = self.root_dir / (self.id_df.iat[idx, 0] + ".png")
         img = Image.open(img_path).convert("L")
 
-        if self.transform:
-            img = self.transform(img)
+        if self.img_transform:
+            img = self.img_transform(img)
 
         lmx_path = self.root_dir / (self.id_df.iat[idx, 0] + ".lmx")
         with open(lmx_path, "r") as f:
             lmx = f.read()
 
+        if self.lmx_transform:
+            lmx = self.lmx_transform(lmx)
+
         return img, lmx
+
+# different wrapper for OMR training since target is now an lmx token sequence. Augmentaiton arguments
+# relate to image augmentation. Base transformations on images and lmx sequences should be passed in the base dataset creation
+class GrandStaffOMRTrainWrapper(Dataset):
+    def __init__(self, base_dataset, augment_p=0.0, transform=None):
+        if augment_p > 0:
+            assert transform is not None, "Augmentation transform must be specified for non-zero augment_p"
+        self.base_dataset = base_dataset
+        self.augment_p = augment_p
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.base_dataset)
+
+    def __getitem__(self, idx):
+        original_img, distorted_img, lmx = self.base_dataset[idx]
+        rand = torch.rand(1).item()
+        if rand < self.augment_p: # augment distorted image and return it as the input image
+            input_img = self.transform(distorted_img)
+            return input_img, lmx
+        else: # return original image as input image
+            return original_img, lmx

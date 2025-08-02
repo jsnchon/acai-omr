@@ -1,16 +1,12 @@
 import torch
 from datasets import GrandStaffLMXDataset, PreparedDataset, OlimpicDataset, GrandStaffPreTrainWrapper, OlimpicPreTrainWrapper, PreTrainWrapper
 from utils import GRAND_STAFF_ROOT_DIR, PRIMUS_PREPARED_ROOT_DIR, DOREMI_PREPARED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
-from utils import DynamicResize, cosine_anneal_with_warmup
+from utils import DynamicResize, cosine_anneal_with_warmup, save_training_stats
 from torch.utils.data import ConcatDataset, DataLoader
-from torchvision.transforms import InterpolationMode
-from torchvision.transforms import v2
+from torchvision.transforms import InterpolationMode, v2
 from models import MAE, MAELoss
 from pathlib import Path
-import matplotlib.pyplot as plt
-import pandas as pd
 import time
-import numpy as np
 
 MODEL_DIR_PATH = Path("mae_pre_train")
 CHECKPOINTS_DIR_PATH = MODEL_DIR_PATH / "checkpoints"
@@ -40,7 +36,7 @@ WARMUP_EPOCHS = 50
 BATCH_SIZE = 64
 
 # collate ragged batch into a list of (input, target) tensors for the MAE logic to handle
-def pre_train_collate_fn(batch):
+def ragged_collate_fn(batch):
     collated_batch = []
     for example in batch:
         collated_batch.append((example[0], example[1]))
@@ -53,52 +49,6 @@ def save_pretraining_state(path, mae, optimizer, scheduler):
         "optimizer_state_dict": optimizer.state_dict(),
         "scheduler_state_dict": scheduler.state_dict()
     }, path)
-
-# mode should be one of "Train" or "Validation"
-def graph_model_stats(epoch_losses, plot_file_path, mode="Training"):
-    fig, ax = plt.subplots()
-    fig.set_figheight(8)
-    fig.set_figwidth(12)
-    ax.set_title(f"{mode} stats")
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel(f"{mode} average loss")
-    x_axis = np.arange(1, len(epoch_losses) + 1) # make sure each stat is lined up with integer epoch labels
-    ax.plot(x_axis, epoch_losses)
-    print(f"Saving plot to {plot_file_path}")
-    fig.savefig(plot_file_path)
-    plt.close(fig)
-
-def graph_lrs(epoch_lrs, lr_plot_file_path):
-    fig, ax = plt.subplots()
-    fig.set_figheight(8)
-    fig.set_figwidth(12)
-    ax.set_title("Learning rates over time")
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("Learning rate (at epoch start)")
-    x_axis = np.arange(1, len(epoch_lrs) + 1)
-    ax.plot(x_axis, epoch_lrs)
-    print(f"Saving plot to {lr_plot_file_path}")
-    fig.savefig(lr_plot_file_path)
-    plt.close(fig)
-
-# saves everything to stats directory created in pretrain setup
-def save_training_stats(epoch_training_losses, epoch_validation_losses, epoch_lrs):
-    train_plot_path = STATS_DIR_PATH / "training_stats.png"
-    validation_plot_path = STATS_DIR_PATH / "validation_stats.png"
-    lr_plot_path = STATS_DIR_PATH / "lrs.png"
-    csv_path = STATS_DIR_PATH / "training_stats.csv"
-    graph_model_stats(epoch_training_losses, train_plot_path, mode="Train")
-    graph_model_stats(epoch_validation_losses, validation_plot_path, mode="Validation")
-    graph_lrs(epoch_lrs, lr_plot_path)
-
-    stats_df = pd.DataFrame({
-        "Epoch": np.arange(1, len(epoch_lrs) + 1),
-        "Training loss": epoch_training_losses,
-        "Validation loss": epoch_validation_losses,
-        "Lr at start": epoch_lrs,
-    })
-    print(f"Writing training stats csv to {csv_path}")
-    stats_df.to_csv(csv_path)
 
 def train_loop(mae, dataloader, loss_fn, optimizer, scheduler, device):
     print("Starting training")
@@ -155,8 +105,8 @@ def pre_train(mae, train_dataset, validation_dataset):
     params_count = sum(p.numel() for p in mae.parameters() if p.requires_grad)
     print(f"Trainable parameters count: {params_count}") 
     print(f"Setting up DataLoaders with batch size {BATCH_SIZE}, shuffle, {NUM_WORKERS} workers, pre train collate function, pinned memory")
-    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=pre_train_collate_fn, pin_memory=True)
-    validation_dataloader = DataLoader(validation_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=pre_train_collate_fn, pin_memory=True)
+    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
+    validation_dataloader = DataLoader(validation_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
     print(f"Dataset augmentation probability: {AUGMENTATION_P}")
     print(f"Setting up AdamW with base learning rate {BASE_LR}, betas {ADAMW_BETAS}, weight decay {ADAMW_WEIGHT_DECAY}")
     optimizer = torch.optim.AdamW(mae.parameters(), lr=BASE_LR, betas=ADAMW_BETAS, weight_decay=ADAMW_WEIGHT_DECAY)
@@ -199,10 +149,10 @@ def pre_train(mae, train_dataset, validation_dataset):
             checkpoint_path = CHECKPOINTS_DIR_PATH / f"epoch_{i+1}_checkpoint.pth"
             save_pretraining_state(checkpoint_path, mae, optimizer, scheduler)
             print("Checkpointing stats plots")
-            save_training_stats(epoch_training_losses, epoch_validation_losses, epoch_lrs)
+            save_training_stats(STATS_DIR_PATH, epoch_training_losses, epoch_validation_losses, epoch_lrs)
 
     print("Plotting final stats")
-    save_training_stats(epoch_training_losses, epoch_validation_losses, epoch_lrs)
+    save_training_stats(STATS_DIR_PATH, epoch_training_losses, epoch_validation_losses, epoch_lrs)
     print("Saving final pretraining state")
     pretrain_state_path = MODEL_DIR_PATH / f"ending_pretrain_state.pth"
     save_pretraining_state(pretrain_state_path, mae, optimizer, scheduler)
@@ -222,10 +172,10 @@ base_transform = v2.Compose([
 if __name__ == "__main__":
     print(f"MAE set up with mask ratio {MASK_RATIO} and patch size {PATCH_SIZE}")
     # base train datasets
-    grand_staff = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.train.txt", transform=base_transform)
+    grand_staff = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.train.txt", img_transform=base_transform)
     primus = PreparedDataset(PRIMUS_PREPARED_ROOT_DIR, transform=base_transform)
     doremi = PreparedDataset(DOREMI_PREPARED_ROOT_DIR, transform=base_transform)
-    olimpic = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.train.txt", transform=base_transform)
+    olimpic = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.train.txt", img_transform=base_transform)
 
     # augmentation to make image look like it was taken with a phone camera with AUGMENTATION_P probability
     camera_augment = v2.RandomApply(transforms=[
@@ -251,9 +201,9 @@ if __name__ == "__main__":
     ])
 
     # validation dataset setup
-    grand_staff_validate = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.dev.txt", transform=base_transform)
-    olimpic_synthetic_validate = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.dev.txt", transform=base_transform)
-    olimpic_scanned_validate = OlimpicDataset(OLIMPIC_SCANNED_ROOT_DIR, "samples.dev.txt", transform=base_transform)
+    grand_staff_validate = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.dev.txt", img_transform=base_transform)
+    olimpic_synthetic_validate = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.dev.txt", img_transform=base_transform)
+    olimpic_scanned_validate = OlimpicDataset(OLIMPIC_SCANNED_ROOT_DIR, "samples.dev.txt", img_transform=base_transform)
 
     validation_dataset = ConcatDataset([
         GrandStaffPreTrainWrapper(grand_staff_validate),

@@ -1,8 +1,8 @@
 import torch
 from torch import nn
+from utils import LMX_PAD_TOKEN
 
 NUM_CHANNELS = 1 # assume these images all are grayscale
-LMX_PAD_TOKEN = "<pad>" # token used for padding lmx sequences
 
 # no point in subclassing torchvision ViT. Too many structural changes needed
 class Encoder(nn.Module):
@@ -433,9 +433,9 @@ class ViTOMR(nn.Module):
 
 # wrapper to handle the logic with cross entropy loss
 class OMRLoss(nn.Module):
-    def __init__(self, padding_idx):
+    def __init__(self, padding_idx, label_smoothing=0.1):
         super().__init__()
-        self.loss_fn = nn.CrossEntropyLoss(ignore_index=padding_idx)
+        self.loss_fn = nn.CrossEntropyLoss(ignore_index=padding_idx, label_smoothing=label_smoothing)
 
     def forward(self, pred, target_seqs):
         """

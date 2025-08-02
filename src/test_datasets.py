@@ -1,4 +1,4 @@
-from datasets import GrandStaffLMXDataset, PreparedDataset, OlimpicDataset, PreTrainWrapper, OlimpicPreTrainWrapper, GrandStaffPreTrainWrapper
+from datasets import GrandStaffLMXDataset, PreparedDataset, OlimpicDataset, PreTrainWrapper, OlimpicPreTrainWrapper, GrandStaffPreTrainWrapper, GrandStaffOMRTrainWrapper
 from utils import display_dataset_img, DynamicResize, GRAND_STAFF_ROOT_DIR, PRIMUS_PREPARED_ROOT_DIR, DOREMI_PREPARED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
 from torchvision.transforms import ToTensor
 import pytest
@@ -13,7 +13,7 @@ def test_grand_staff_dataset(mocker):
     # verify transforms are being applied
     mock_transform = mocker.Mock()
     mock_transform.return_value = "transformed_img"
-    dataset = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.train.txt", transform=mock_transform)
+    dataset = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.train.txt", img_transform=mock_transform)
     original, distorted, lmx = dataset[0]
     mock_transform.assert_called()
     assert original == distorted == "transformed_img"
@@ -74,14 +74,14 @@ def test_olimpic_datasets(mocker):
     # verify transforms are being applied
     mock_transform = mocker.Mock()
     mock_transform.return_value = "transformed_img"
-    dataset = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.train.txt", transform=mock_transform)
+    dataset = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.train.txt", img_transform=mock_transform)
     img, lmx = dataset[0]
     mock_transform.assert_called()
     assert img == "transformed_img"
 
 # trying to parmeterize this test led to some weird (likely race condition) behavior with matplotlib
 def test_to_tensor():
-    dataset = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.train.txt", transform=ToTensor())
+    dataset = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.train.txt", img_transform=ToTensor())
     display_dataset_img(dataset, 0)
 
     dataset = PreparedDataset(PRIMUS_PREPARED_ROOT_DIR, transform=ToTensor())
@@ -90,10 +90,10 @@ def test_to_tensor():
     dataset = PreparedDataset(DOREMI_PREPARED_ROOT_DIR, transform=ToTensor())
     display_dataset_img(dataset, 0)
 
-    dataset = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.train.txt", transform=ToTensor())
+    dataset = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.train.txt", img_transform=ToTensor())
     display_dataset_img(dataset, 0)
 
-    dataset = OlimpicDataset(OLIMPIC_SCANNED_ROOT_DIR, "samples.test.txt", transform=ToTensor())
+    dataset = OlimpicDataset(OLIMPIC_SCANNED_ROOT_DIR, "samples.test.txt", img_transform=ToTensor())
     display_dataset_img(dataset, 0)
 
 test_params = [
@@ -128,7 +128,7 @@ def test_dynamic_resize():
     max_seq_len = 10
     pe_max_height = 4
     pe_max_width = 8 
-    resize = DynamicResize(patch_size, max_seq_len, pe_max_height, pe_max_width)
+    resize = DynamicResize(patch_size, max_seq_len, pe_max_height, pe_max_width, False)
 
     img = resize(torch.rand(1, 6, 10))
     assert (img.shape[-1] / patch_size) * (img.shape[-2] / patch_size) <= 10
@@ -138,3 +138,22 @@ def test_dynamic_resize():
 
     img = resize(torch.rand(1, 100, 200))
     assert img.shape[-1] / patch_size < pe_max_width and img.shape[-2] / patch_size < pe_max_height
+
+def test_grand_staff_omr_train_wrapper(mocker):
+    mock_transform = mocker.Mock()
+    mock_transform.return_value = "transformed_img"
+    base_dataset = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.train.txt")
+    dataset = GrandStaffOMRTrainWrapper(base_dataset, 1, mock_transform)
+
+    input_img, lmx = dataset[0]
+    mock_transform.assert_called()
+    assert input_img == "transformed_img" and lmx != "transformed_img"
+    assert type(lmx) == str
+
+    mock_transform = mocker.Mock()
+    mock_transform.return_value = "transformed_img"
+    dataset = GrandStaffOMRTrainWrapper(base_dataset, 0, mock_transform)
+    input_img, lmx = dataset[0]
+    mock_transform.assert_not_called()
+    assert input_img != "transformed_img" and lmx != "transformed_img"
+    assert type(lmx) == str

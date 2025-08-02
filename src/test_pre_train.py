@@ -1,7 +1,7 @@
-from pre_train import pre_train, PE_MAX_HEIGHT, PE_MAX_WIDTH, base_transform
+from pre_train import pre_train, PE_MAX_HEIGHT, PE_MAX_WIDTH, base_transform, EPOCHS, WARMUP_EPOCHS, BASE_LR, MIN_LR
 from models import MAE, Encoder
 from torch.utils.data import Dataset
-from utils import show_prediction, PRIMUS_PREPARED_ROOT_DIR, GRAND_STAFF_ROOT_DIR, DEBUG_PRETRAINED_MAE_PATH
+from utils import show_prediction, PRIMUS_PREPARED_ROOT_DIR, GRAND_STAFF_ROOT_DIR, DEBUG_PRETRAINED_MAE_PATH, cosine_anneal_with_warmup, plot_lr_schedule
 from torchvision.transforms import v2, InterpolationMode
 from datasets import PreparedDataset, PreTrainWrapper, GrandStaffLMXDataset, GrandStaffPreTrainWrapper
 import torch
@@ -66,6 +66,11 @@ def basic_prediction_test(checkpoint_path):
     augmented_debug_dataset = GrandStaffPreTrainWrapper(grandstaff, augment_p=1.0, transform=camera_augment)
     show_prediction(pre_train_mae, augmented_debug_dataset[sample], 16, "augmented_prediction.png")
 
+def test_lr_scheduler():
+    optimizer = torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=BASE_LR)
+    scheduler = cosine_anneal_with_warmup(optimizer, WARMUP_EPOCHS, EPOCHS, MIN_LR)
+    plot_lr_schedule(scheduler, optimizer, EPOCHS)
+
 if __name__ == "__main__":
     test_pre_train()
-    # basic_prediction_test("epoch_200_checkpoint.pth")
+    # basic_prediction_test("epoch_350_checkpoint.pth")

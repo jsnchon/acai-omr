@@ -11,7 +11,9 @@ import logging
 import math
 from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
 from models import MAELoss
+import pandas as pd
 
+# store a bunch of useful constants shared between various files here
 GRAND_STAFF_ROOT_DIR = "data/grandstaff-lmx.2024-02-12/grandstaff-lmx"
 PRIMUS_PREPARED_ROOT_DIR = "data/primusPrepared"
 DOREMI_PREPARED_ROOT_DIR = "data/doReMiPrepared"
@@ -21,10 +23,23 @@ OLIMPIC_SCANNED_ROOT_DIR = "data/olimpic-1.0-scanned.2024-02-12/olimpic-1.0-scan
 # weights for a tiny MAE for testing purposes
 DEBUG_PRETRAINED_MAE_PATH = "debug_pretrained_mae.pth"
 
-def cosine_anneal_with_warmup(optimizer, warmup_epochs, total_epochs, final_lr):
-    warmup = LinearLR(optimizer, start_factor=5e-3, end_factor=1.0, total_iters=warmup_epochs)
-    anneal = CosineAnnealingLR(optimizer, T_max=total_epochs - warmup_epochs, eta_min=final_lr)
-    return SequentialLR(optimizer, schedulers=[warmup, anneal], milestones=[warmup_epochs])
+LMX_BOS_TOKEN = "<bos>"
+LMX_EOS_TOKEN = "<eos>"
+LMX_PAD_TOKEN = "<pad>" # token used for padding lmx sequences
+
+# num_train_batches is the number of batches in each epoch. If passed, the scheduler will configure to be called
+# each minibatch instead of each epoch
+def cosine_anneal_with_warmup(optimizer, warmup_epochs, total_epochs, final_lr, num_train_batches=None):
+    if not num_train_batches:
+        warmup = LinearLR(optimizer, start_factor=5e-3, end_factor=1.0, total_iters=warmup_epochs)
+        anneal = CosineAnnealingLR(optimizer, T_max=total_epochs - warmup_epochs, eta_min=final_lr)
+        return SequentialLR(optimizer, schedulers=[warmup, anneal], milestones=[warmup_epochs])
+    else:
+        warmup_total_iters = warmup_epochs * num_train_batches
+        anneal_total_iters = (total_epochs - warmup_epochs) * num_train_batches
+        warmup = LinearLR(optimizer, start_factor=5e-3, end_factor=1.0, total_iters=warmup_total_iters)
+        anneal = CosineAnnealingLR(optimizer, T_max=anneal_total_iters, eta_min=final_lr)
+        return SequentialLR(optimizer, schedulers=[warmup, anneal], milestones=[warmup_total_iters])
 
 def plot_lr_schedule(scheduler, optimizer, num_epochs):
     lrs = []
@@ -175,6 +190,52 @@ class DynamicResize(nn.Module):
                 img = v2.functional.center_crop(img, (img.shape[-2], self.pe_max_width * self.patch_size))
 
         return img.clamp(0.0, 1.0)
+    
+# mode should be one of "Train" or "Validation"
+def graph_model_stats(epoch_losses, plot_file_path, mode="Training"):
+    fig, ax = plt.subplots()
+    fig.set_figheight(8)
+    fig.set_figwidth(12)
+    ax.set_title(f"{mode} stats")
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel(f"{mode} average loss")
+    x_axis = np.arange(1, len(epoch_losses) + 1) # make sure each stat is lined up with integer epoch labels
+    ax.plot(x_axis, epoch_losses)
+    print(f"Saving plot to {plot_file_path}")
+    fig.savefig(plot_file_path)
+    plt.close(fig)
+
+def graph_lrs(epoch_lrs, lr_plot_file_path):
+    fig, ax = plt.subplots()
+    fig.set_figheight(8)
+    fig.set_figwidth(12)
+    ax.set_title("Learning rates over time")
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Learning rate (at epoch start)")
+    x_axis = np.arange(1, len(epoch_lrs) + 1)
+    ax.plot(x_axis, epoch_lrs)
+    print(f"Saving plot to {lr_plot_file_path}")
+    fig.savefig(lr_plot_file_path)
+    plt.close(fig)
+
+# saves everything to stats directory created in pretrain setup
+def save_training_stats(stats_dir_path, epoch_training_losses, epoch_validation_losses, epoch_lrs):
+    train_plot_path = stats_dir_path / "training_stats.png"
+    validation_plot_path = stats_dir_path / "validation_stats.png"
+    lr_plot_path = stats_dir_path / "lrs.png"
+    csv_path = stats_dir_path / "training_stats.csv"
+    graph_model_stats(epoch_training_losses, train_plot_path, mode="Train")
+    graph_model_stats(epoch_validation_losses, validation_plot_path, mode="Validation")
+    graph_lrs(epoch_lrs, lr_plot_path)
+
+    stats_df = pd.DataFrame({
+        "Epoch": np.arange(1, len(epoch_lrs) + 1),
+        "Training loss": epoch_training_losses,
+        "Validation loss": epoch_validation_losses,
+        "Lr at start": epoch_lrs,
+    })
+    print(f"Writing training stats csv to {csv_path}")
+    stats_df.to_csv(csv_path)
 
 """
 DataLoader batching requires non-ragged batches, ie all examples are of the same length. A collate function to pad based on

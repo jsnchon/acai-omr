@@ -1,9 +1,8 @@
 import torch
 from torch import nn
 from models import Encoder, MAEEncoder, MAE, MAELoss, NUM_CHANNELS
-from pre_train import BASE_LR, MIN_LR, WARMUP_EPOCHS, EPOCHS, PE_MAX_HEIGHT, PE_MAX_WIDTH
+from pre_train import PE_MAX_HEIGHT, PE_MAX_WIDTH
 import copy
-from utils import cosine_anneal_with_warmup, plot_lr_schedule
 import time
 
 def test_encoder_batchify():
@@ -202,11 +201,6 @@ def test_MAE_gradient_flow():
     assert not torch.equal(before, after) # expect some update (even in zero gradient areas because of how AdamW works)
     assert torch.sum(grad[9:, 9:, :]) == 0 # ensure PE gradient is 0 for non-used portions on this input
 
-def test_lr_scheduler():
-    optimizer = torch.optim.SGD([nn.Parameter(torch.zeros(1))], lr=BASE_LR)
-    scheduler = cosine_anneal_with_warmup(optimizer, WARMUP_EPOCHS, EPOCHS, MIN_LR)
-    plot_lr_schedule(scheduler, optimizer, EPOCHS)
-
 def basic_performance_test():
     deltas = []
     NUM_TRIALS = 3
@@ -226,6 +220,3 @@ def basic_performance_test():
         deltas.append(end - start)
 
     print(f"Average delta: {sum(deltas) / len(deltas):0.6f}")
-
-if __name__ == "__main__":
-    test_lr_scheduler()
