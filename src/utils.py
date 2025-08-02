@@ -13,20 +13,6 @@ from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
 from models import MAELoss
 import pandas as pd
 
-# store a bunch of useful constants shared between various files here
-GRAND_STAFF_ROOT_DIR = "data/grandstaff-lmx.2024-02-12/grandstaff-lmx"
-PRIMUS_PREPARED_ROOT_DIR = "data/primusPrepared"
-DOREMI_PREPARED_ROOT_DIR = "data/doReMiPrepared"
-OLIMPIC_SYNTHETIC_ROOT_DIR = "data/olimpic-1.0-synthetic.2024-02-12/olimpic-1.0-synthetic"
-OLIMPIC_SCANNED_ROOT_DIR = "data/olimpic-1.0-scanned.2024-02-12/olimpic-1.0-scanned"
-
-# weights for a tiny MAE for testing purposes
-DEBUG_PRETRAINED_MAE_PATH = "debug_pretrained_mae.pth"
-
-LMX_BOS_TOKEN = "<bos>"
-LMX_EOS_TOKEN = "<eos>"
-LMX_PAD_TOKEN = "<pad>" # token used for padding lmx sequences
-
 # num_train_batches is the number of batches in each epoch. If passed, the scheduler will configure to be called
 # each minibatch instead of each epoch
 def cosine_anneal_with_warmup(optimizer, warmup_epochs, total_epochs, final_lr, num_train_batches=None):

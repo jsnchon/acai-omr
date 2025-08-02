@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from utils import LMX_PAD_TOKEN
+from config import LMX_PAD_TOKEN
 
 NUM_CHANNELS = 1 # assume these images all are grayscale
 
@@ -368,7 +368,7 @@ class ViTOMR(nn.Module):
     # masking logic for image encodings and padded LMX token sequences. Add prepare_for_decoder method to do this?
     
     # create embedding param for token vocab
-    def __init__(self, omr_encoder, pretrained_mae_state_dict, omr_decoder, hidden_dim=768, dropout_p=0.1):
+    def __init__(self, omr_encoder, pretrained_mae_state_dict, omr_decoder, hidden_dim=768, transition_head_dim=3072, dropout_p=0.1):
         super().__init__()
         self.encoder = omr_encoder
 
@@ -385,10 +385,10 @@ class ViTOMR(nn.Module):
 
         # transition head to allow some task-specific adaptation of the latent representation
         self.transition_head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(hidden_dim, transition_head_dim),
             nn.GELU(),
             nn.Dropout(dropout_p),
-            nn.Linear(hidden_dim, hidden_dim)
+            nn.Linear(transition_head_dim, hidden_dim)
         )
 
         self.decoder = omr_decoder

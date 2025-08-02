@@ -3,7 +3,7 @@ from torch import nn
 from models import OMREncoder, OMRDecoder, ViTOMR, NUM_CHANNELS, OMRLoss
 from pre_train import PE_MAX_HEIGHT, PE_MAX_WIDTH
 from omr_train import MAX_LMX_SEQ_LEN
-from utils import DEBUG_PRETRAINED_MAE_PATH
+from config import DEBUG_PRETRAINED_MAE_PATH
 
 VOCAB_LEN = 227
 

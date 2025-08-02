@@ -1,7 +1,8 @@
 from pre_train import pre_train, PE_MAX_HEIGHT, PE_MAX_WIDTH, base_transform, EPOCHS, WARMUP_EPOCHS, BASE_LR, MIN_LR
 from models import MAE, Encoder
 from torch.utils.data import Dataset
-from utils import show_prediction, PRIMUS_PREPARED_ROOT_DIR, GRAND_STAFF_ROOT_DIR, DEBUG_PRETRAINED_MAE_PATH, cosine_anneal_with_warmup, plot_lr_schedule
+from utils import show_prediction, cosine_anneal_with_warmup, plot_lr_schedule
+from config import PRIMUS_PREPARED_ROOT_DIR, GRAND_STAFF_ROOT_DIR, DEBUG_PRETRAINED_MAE_PATH
 from torchvision.transforms import v2, InterpolationMode
 from datasets import PreparedDataset, PreTrainWrapper, GrandStaffLMXDataset, GrandStaffPreTrainWrapper
 import torch

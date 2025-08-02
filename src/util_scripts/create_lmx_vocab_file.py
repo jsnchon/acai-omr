@@ -12,5 +12,5 @@ from app.linearization.vocabulary import print_vocabulary
 with open(args.vocab_path, "w") as f:
     f.write("<bos>\n")
     f.write("<pad>\n")
-    print_vocabulary(file=f)
     f.write("<eos>\n")
+    print_vocabulary(file=f)

@@ -3,7 +3,7 @@ from torchvision.transforms import ToTensor
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
-from utils import GRAND_STAFF_ROOT_DIR, PRIMUS_PREPARED_ROOT_DIR, DOREMI_PREPARED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
+from config import GRAND_STAFF_ROOT_DIR, PRIMUS_PREPARED_ROOT_DIR, DOREMI_PREPARED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR
 from pathlib import Path
 import matplotlib.pyplot as plt
 from torch.nn import Identity

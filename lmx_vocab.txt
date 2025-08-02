@@ -1,5 +1,6 @@
 <bos>
 <pad>
+<eos>
 measure
 key:fifths:-7
 key:fifths:-6
@@ -224,4 +225,3 @@ tremolo:1
 tremolo:2
 tremolo:3
 tremolo:4
-<eos>
