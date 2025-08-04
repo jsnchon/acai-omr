@@ -41,16 +41,16 @@ def test_loop(model, model_type, dataloader, loss_fn, device):
     print(f"Average test loss: {avg_loss}")
     return avg_loss
 
-def test_mae(mae_state_dict, args, device):
+def test_mae(mae, mae_state_dict, args, device):
     print("Creating MAE model from loaded state dict")
     mae.load_state_dict(mae_state_dict)
     print("Model architecture\n--------------------")
     print(mae)
 
     print("Setting up test dataset and dataloader")
-    grand_staff = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.test.txt", transform=base_transform)
-    olimpic_synthetic = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.test.txt", transform=base_transform)
-    olimpic_scanned = OlimpicDataset(OLIMPIC_SCANNED_ROOT_DIR, "samples.test.txt", transform=base_transform)
+    grand_staff = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.test.txt", img_transform=base_transform)
+    olimpic_synthetic = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.test.txt", img_transform=base_transform)
+    olimpic_scanned = OlimpicDataset(OLIMPIC_SCANNED_ROOT_DIR, "samples.test.txt", img_transform=base_transform)
 
     test_dataset = ConcatDataset([
         GrandStaffPreTrainWrapper(grand_staff),
@@ -115,7 +115,7 @@ else:
 device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
 print(f"Using device {device}")
 
-if model_type == Models.MAE:
-    test_mae(model_state_dict, args, device)
-elif model_type == Models.VIT_OMR:
+if model_type == Models.MAE.value:
+    test_mae(mae, model_state_dict, args, device)
+elif model_type == Models.VIT_OMR.value:
     pass

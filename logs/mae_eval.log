@@ -1,0 +1,71 @@
+Setting up MAE with mask ratio 0.75 and patch size 16
+Using device cuda
+Setting up encoder with patch size 16, pe grid of 60 x 200
+Setting up decoder with max lmx sequence length 512, vocab file lmx_vocab.txt
+Loaded pretrained mae state dict from mae_pre_train/pretrained_mae.pth
+Setting up ViTOMR model
+Loading state dict from mae_pre_train/pretrained_mae.pth
+Using device cuda
+Creating MAE model from loaded state dict
+Model architecture
+--------------------
+MAE(
+  (encoder): MAEEncoder(
+    (projection): Linear(in_features=256, out_features=768, bias=True)
+    (encoder_blocks): TransformerEncoder(
+      (layers): ModuleList(
+        (0-11): 12 x TransformerEncoderLayer(
+          (self_attn): MultiheadAttention(
+            (out_proj): NonDynamicallyQuantizableLinear(in_features=768, out_features=768, bias=True)
+          )
+          (linear1): Linear(in_features=768, out_features=3072, bias=True)
+          (dropout): Dropout(p=0.0, inplace=False)
+          (linear2): Linear(in_features=3072, out_features=768, bias=True)
+          (norm1): LayerNorm((768,), eps=1e-05, elementwise_affine=True)
+          (norm2): LayerNorm((768,), eps=1e-05, elementwise_affine=True)
+          (dropout1): Dropout(p=0.0, inplace=False)
+          (dropout2): Dropout(p=0.0, inplace=False)
+        )
+      )
+      (norm): LayerNorm((768,), eps=1e-06, elementwise_affine=True)
+    )
+  )
+  (decoder): MAEDecoder(
+    (decoder_blocks): TransformerEncoder(
+      (layers): ModuleList(
+        (0-7): 8 x TransformerEncoderLayer(
+          (self_attn): MultiheadAttention(
+            (out_proj): NonDynamicallyQuantizableLinear(in_features=512, out_features=512, bias=True)
+          )
+          (linear1): Linear(in_features=512, out_features=3072, bias=True)
+          (dropout): Dropout(p=0.0, inplace=False)
+          (linear2): Linear(in_features=3072, out_features=512, bias=True)
+          (norm1): LayerNorm((512,), eps=1e-05, elementwise_affine=True)
+          (norm2): LayerNorm((512,), eps=1e-05, elementwise_affine=True)
+          (dropout1): Dropout(p=0.0, inplace=False)
+          (dropout2): Dropout(p=0.0, inplace=False)
+        )
+      )
+      (norm): LayerNorm((512,), eps=1e-06, elementwise_affine=True)
+    )
+  )
+  (decoder_embed): Linear(in_features=768, out_features=512, bias=True)
+  (decoder_unembed): Linear(in_features=512, out_features=256, bias=True)
+)
+Setting up test dataset and dataloader
+Using a batch size of 64 and 24 workers
+Starting evaluation
+[   64/10647]
+[ 1664/10647]
+[ 3264/10647]
+[ 4864/10647]
+[ 6464/10647]
+[ 8064/10647]
+[ 9664/10647]
+Average test loss: 0.1589139682982496
+Creating directory at mae_predictions if it already doesn't exist
+Saving prediction to mae_predictions/sample_0.png
+Saving prediction to mae_predictions/sample_1.png
+Saving prediction to mae_predictions/sample_2.png
+Saving prediction to mae_predictions/sample_3.png
+Saving prediction to mae_predictions/sample_4.png

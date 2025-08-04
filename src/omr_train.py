@@ -14,21 +14,21 @@ MODEL_DIR_PATH = Path("omr_train")
 CHECKPOINTS_DIR_PATH = MODEL_DIR_PATH / "checkpoints"
 STATS_DIR_PATH = MODEL_DIR_PATH / "stats"
 
-PRETRAINED_MAE_STATE_DICT_PATH = "epoch_350_mae.pth" # "mae_pre_train/pretrained_mae.pth"
+PRETRAINED_MAE_STATE_DICT_PATH = "mae_pre_train/pretrained_mae.pth"
 MAX_IMG_SEQ_LEN = 512 # for DynamicResize
-MAX_LMX_SEQ_LEN = 512 # in tokens, max lmx token seuqence length to support
+MAX_LMX_SEQ_LEN = 1536 # in tokens, max lmx token sequence length to support
 LMX_VOCAB_PATH = "lmx_vocab.txt"
 
 AUGMENTATION_P = 0.3
 NUM_WORKERS = 24
 
-EPOCHS = 30
-CHECKPOINT_FREQ = 5
+EPOCHS = 100
+CHECKPOINT_FREQ = 10
 BASE_LR = 2e-4
 MIN_LR = 1e-6
 ADAMW_BETAS = (0.9, 0.95)
 ADAMW_WEIGHT_DECAY = 0.01
-WARMUP_EPOCHS = 2 # step scheduler per-batch since doing so little epochs
+WARMUP_EPOCHS = 5 # step scheduler per-batch since doing so little epochs
 BATCH_SIZE = 64
 
 # additional regularization: dropout of 0.1 in decoder, label smoothing of 0.1
@@ -214,8 +214,8 @@ if __name__ == "__main__":
     ])
 
     grand_staff_validate = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.dev.txt", img_transform=base_img_transform, lmx_transform=base_lmx_transform)
-    olimpic_synthetic_validate = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.dev.txt", img_transform=base_img_transform)
-    olimpic_scanned_validate = OlimpicDataset(OLIMPIC_SCANNED_ROOT_DIR, "samples.dev.txt", img_transform=base_img_transform)
+    olimpic_synthetic_validate = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.dev.txt", img_transform=base_img_transform, lmx_transform=base_lmx_transform)
+    olimpic_scanned_validate = OlimpicDataset(OLIMPIC_SCANNED_ROOT_DIR, "samples.dev.txt", img_transform=base_img_transform, lmx_transform=base_lmx_transform)
 
     validation_dataset = ConcatDataset([
         GrandStaffOMRTrainWrapper(grand_staff_validate),
