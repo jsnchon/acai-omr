@@ -29,7 +29,7 @@ MIN_LR = 1e-6
 ADAMW_BETAS = (0.9, 0.95)
 ADAMW_WEIGHT_DECAY = 0.01
 WARMUP_EPOCHS = 5 # step scheduler per-batch since doing so little epochs
-BATCH_SIZE = 64
+BATCH_SIZE = 32
 
 # additional regularization: dropout of 0.1 in decoder, label smoothing of 0.1
 

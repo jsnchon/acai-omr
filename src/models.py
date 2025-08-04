@@ -311,7 +311,7 @@ class OMREncoder(Encoder):
         return embeddings, src_key_padding_mask 
 
 class OMRDecoder(nn.Module):
-    def __init__(self, max_lmx_seq_len, lmx_vocab_path, num_layers=4, hidden_dim=768, num_heads=12, mlp_dim=3072, transformer_dropout=0.1):
+    def __init__(self, max_lmx_seq_len, lmx_vocab_path, num_layers=6, hidden_dim=1024, num_heads=16, mlp_dim=4096, transformer_dropout=0.1):
         super().__init__()
         self.max_lmx_seq_len = max_lmx_seq_len
         self.hidden_dim = hidden_dim
@@ -368,7 +368,7 @@ class ViTOMR(nn.Module):
     # masking logic for image encodings and padded LMX token sequences. Add prepare_for_decoder method to do this?
     
     # create embedding param for token vocab
-    def __init__(self, omr_encoder, pretrained_mae_state_dict, omr_decoder, hidden_dim=768, transition_head_dim=3072, dropout_p=0.1):
+    def __init__(self, omr_encoder, pretrained_mae_state_dict, omr_decoder, transition_head_dim=4096, dropout_p=0.1):
         super().__init__()
         self.encoder = omr_encoder
 
@@ -383,21 +383,16 @@ class ViTOMR(nn.Module):
             param.requires_grad = False
         self.encoder.eval()
 
-        # transition head to allow some task-specific adaptation of the latent representation
-        self.transition_head = nn.Sequential(
-            nn.Linear(hidden_dim, transition_head_dim),
-            nn.GELU(),
-            nn.Dropout(dropout_p),
-            nn.Linear(transition_head_dim, hidden_dim)
-        )
-
         self.decoder = omr_decoder
 
-        if hidden_dim != self.encoder.hidden_dim:
-            raise ValueError(f"Mismatched hidden dim with encoder. ViTOMR: {hidden_dim}, encoder: {self.encoder.hidden_dim}")
-        if hidden_dim != self.decoder.hidden_dim:
-            raise ValueError(f"Mismatched hidden dim with decoder. ViTOMR: {hidden_dim}, decoder: {self.decoder.hidden_dim}")
-
+        # transition head to allow some task-specific adaptation of the latent representation
+        self.transition_head = nn.Sequential(
+            nn.Linear(self.encoder.hidden_dim, transition_head_dim),
+            nn.GELU(),
+            nn.Dropout(dropout_p),
+            nn.Linear(transition_head_dim, self.decoder.hidden_dim)
+        )
+    
     # lmx_seqs is a list of int tensors containing the unmodified lmx sequences associated with the input images,
     # in lmx token indices
     def batchify_and_split_lmx_seqs(self, lmx_seqs: list[torch.Tensor], device):
