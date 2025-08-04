@@ -1,7 +1,7 @@
 from pre_train import pre_train, PE_MAX_HEIGHT, PE_MAX_WIDTH, base_transform, EPOCHS, WARMUP_EPOCHS, BASE_LR, MIN_LR
 from models import MAE, Encoder
 from torch.utils.data import Dataset
-from utils import show_prediction, cosine_anneal_with_warmup, plot_lr_schedule
+from utils import show_mae_prediction, cosine_anneal_with_warmup, plot_lr_schedule
 from config import PRIMUS_PREPARED_ROOT_DIR, GRAND_STAFF_ROOT_DIR, DEBUG_PRETRAINED_MAE_PATH
 from torchvision.transforms import v2, InterpolationMode
 from datasets import PreparedDataset, PreTrainWrapper, GrandStaffLMXDataset, GrandStaffPreTrainWrapper
@@ -36,13 +36,13 @@ def test_encoder_transfer():
     new_encoder = Encoder(patch_size=DEBUG_PATCH_SIZE, hidden_dim=1, **DEBUG_KWARGS)
     new_encoder.load_state_dict(encoder_state_dict)
 
-def test_show_prediction():
+def test_show_mae_prediction():
     patch_size = 16
     mae = MAE(0.75, 16, PE_MAX_HEIGHT, PE_MAX_WIDTH)
 
     primus = PreparedDataset(PRIMUS_PREPARED_ROOT_DIR, transform=base_transform)
     debug_dataset = PreTrainWrapper(primus)
-    show_prediction(mae, debug_dataset[0], patch_size)
+    show_mae_prediction(mae, debug_dataset[0], patch_size)
 
 # qualitatively evaluate the model is learning to do what it needs to. scp a checkpoint file then pass it in here
 # assumes will run the image on cpu
@@ -54,7 +54,7 @@ def basic_prediction_test(checkpoint_path):
     grandstaff = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.dev.txt", transform=base_transform)
     debug_dataset = GrandStaffPreTrainWrapper(grandstaff)
     sample = torch.randint(0, len(debug_dataset), (1, )).item()
-    show_prediction(pre_train_mae, debug_dataset[sample], 16, "unaugmented_prediction.png")
+    show_mae_prediction(pre_train_mae, debug_dataset[sample], 16, "unaugmented_prediction.png")
 
     camera_augment = v2.Compose([
         v2.GaussianBlur(kernel_size=15, sigma=1),
@@ -65,7 +65,7 @@ def basic_prediction_test(checkpoint_path):
     ])
 
     augmented_debug_dataset = GrandStaffPreTrainWrapper(grandstaff, augment_p=1.0, transform=camera_augment)
-    show_prediction(pre_train_mae, augmented_debug_dataset[sample], 16, "augmented_prediction.png")
+    show_mae_prediction(pre_train_mae, augmented_debug_dataset[sample], 16, "augmented_prediction.png")
 
 def test_lr_scheduler():
     optimizer = torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=BASE_LR)

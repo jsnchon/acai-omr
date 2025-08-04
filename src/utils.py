@@ -28,6 +28,13 @@ def cosine_anneal_with_warmup(optimizer, warmup_epochs, total_epochs, final_lr, 
         anneal = CosineAnnealingLR(optimizer, T_max=anneal_total_iters, eta_min=final_lr)
         return SequentialLR(optimizer, schedulers=[warmup, anneal], milestones=[warmup_total_iters])
 
+# collate ragged batch into a list of (input, target) tensors for the MAE logic to handle
+def ragged_collate_fn(batch):
+    collated_batch = []
+    for example in batch:
+        collated_batch.append((example[0], example[1]))
+    return collated_batch
+
 def plot_lr_schedule(scheduler, optimizer, num_epochs):
     lrs = []
     for _ in range(num_epochs):
@@ -43,7 +50,7 @@ def plot_lr_schedule(scheduler, optimizer, num_epochs):
     plt.savefig("lr_over_epochs.png")
 
 # shows the input, mae's reconstruction, and target images using one example ex side by side
-def show_prediction(mae, ex, patch_size, save_path):
+def show_mae_prediction(mae, ex, patch_size, save_path):
     loss_fn = MAELoss()
     mae.eval()
     with torch.no_grad():

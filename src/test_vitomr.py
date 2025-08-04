@@ -145,18 +145,18 @@ def test_batchify_and_split_lmx_seqs():
     print(f"Input sequences\n{input_seqs}\nTarget sequences\n{target_seqs}\nAttention mask\n{mask}")
 
     print(torch.cat([lmx_seqs[0][:-1], torch.tensor(vitomr.decoder.padding_idx).repeat(2)]))
-    input_seqs_target = torch.cat([
+    input_seqs_expected = torch.cat([
         torch.cat([lmx_seqs[0], torch.tensor([vitomr.decoder.padding_idx])]).unsqueeze(0),
         lmx_seqs[1][:-1].unsqueeze(0)
     ], dim=0)
 
-    target_seqs_target = torch.cat([
+    target_seqs_expected = torch.cat([
         torch.cat([lmx_seqs[0][1:], torch.tensor([vitomr.decoder.padding_idx]).repeat(2)]).unsqueeze(0),
         lmx_seqs[1][1:].unsqueeze(0)
     ], dim=0)
 
-    assert torch.equal(input_seqs, input_seqs_target)
-    assert torch.equal(target_seqs, target_seqs_target)
+    assert torch.equal(input_seqs, input_seqs_expected)
+    assert torch.equal(target_seqs, target_seqs_expected)
     # it's fine for the non-max length input sequences to have their <eos> tokens leftover since the causal mask
     # will prevent earlier tokens attending to it and the position will be padded out in the loss calculation
     assert torch.equal(mask[0, :], torch.tensor([False, False, False, False, False, True]))

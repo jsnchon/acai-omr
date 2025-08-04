@@ -1,7 +1,7 @@
 import torch
 from datasets import GrandStaffLMXDataset, PreparedDataset, OlimpicDataset, GrandStaffPreTrainWrapper, OlimpicPreTrainWrapper, PreTrainWrapper
 from config import GRAND_STAFF_ROOT_DIR, PRIMUS_PREPARED_ROOT_DIR, DOREMI_PREPARED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
-from utils import DynamicResize, cosine_anneal_with_warmup, save_training_stats
+from utils import DynamicResize, cosine_anneal_with_warmup, save_training_stats, ragged_collate_fn
 from torch.utils.data import ConcatDataset, DataLoader
 from torchvision.transforms import InterpolationMode, v2
 from models import MAE, MAELoss
@@ -34,13 +34,6 @@ ADAMW_BETAS = (0.9, 0.95) # lr/AdamW settings basically copied from the paper
 ADAMW_WEIGHT_DECAY = 0.05
 WARMUP_EPOCHS = 50 
 BATCH_SIZE = 64
-
-# collate ragged batch into a list of (input, target) tensors for the MAE logic to handle
-def ragged_collate_fn(batch):
-    collated_batch = []
-    for example in batch:
-        collated_batch.append((example[0], example[1]))
-    return collated_batch
 
 def save_pretraining_state(path, mae, optimizer, scheduler):
     print(f"Saving pretraining state to {path}")
@@ -160,6 +153,7 @@ def pre_train(mae, train_dataset, validation_dataset):
     print(f"Saving final model state dict separately to {model_path}")
     torch.save(mae.state_dict(), model_path)
 
+print(f"Setting up MAE with mask ratio {MASK_RATIO} and patch size {PATCH_SIZE}")
 mae = MAE(MASK_RATIO, PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH)
 
 # base transform for all images: convert to tensor, scale to patch divisible size within token budget
@@ -170,7 +164,6 @@ base_transform = v2.Compose([
 ])
 
 if __name__ == "__main__":
-    print(f"MAE set up with mask ratio {MASK_RATIO} and patch size {PATCH_SIZE}")
     # base train datasets
     grand_staff = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.train.txt", img_transform=base_transform)
     primus = PreparedDataset(PRIMUS_PREPARED_ROOT_DIR, transform=base_transform)

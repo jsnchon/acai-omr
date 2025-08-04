@@ -4,10 +4,10 @@ from pathlib import Path
 from models import OMREncoder, OMRDecoder, ViTOMR, OMRLoss
 from datasets import GrandStaffLMXDataset, GrandStaffOMRTrainWrapper, OlimpicDataset
 from config import GRAND_STAFF_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, LMX_BOS_TOKEN, LMX_EOS_TOKEN
-from utils import DynamicResize, cosine_anneal_with_warmup, save_training_stats
+from utils import DynamicResize, cosine_anneal_with_warmup, save_training_stats, ragged_collate_fn
 from torch.utils.data import ConcatDataset, DataLoader
 from torchvision.transforms import v2, InterpolationMode
-from pre_train import PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH, ragged_collate_fn
+from pre_train import PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH
 import time
 
 MODEL_DIR_PATH = Path("omr_train")
@@ -52,7 +52,7 @@ class PrepareLMXSequence(nn.Module):
 def save_omr_training_state(path, vitomr, optimizer, scheduler):
     print(f"Saving omr training state to {path}")
     torch.save({
-        "mae_state_dict": vitomr.state_dict(),
+        "vitomr_state_dict": vitomr.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "scheduler_state_dict": scheduler.state_dict()
     }, path)
@@ -163,28 +163,31 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
     print(f"Saving final model state dict separately to {model_path}")
     torch.save(vitomr.state_dict(), model_path)
 
+device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
+print(f"Using device {device}")
+
+print(f"Setting up encoder with patch size {PATCH_SIZE}, pe grid of {PE_MAX_HEIGHT} x {PE_MAX_WIDTH}")
+encoder = OMREncoder(PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH)
+print(f"Setting up decoder with max lmx sequence length {MAX_LMX_SEQ_LEN}, vocab file {LMX_VOCAB_PATH}")
+decoder = OMRDecoder(MAX_LMX_SEQ_LEN, LMX_VOCAB_PATH)
+if device == "cpu":
+    pretrained_mae_state_dict = torch.load(PRETRAINED_MAE_STATE_DICT_PATH, map_location=torch.device("cpu"))
+else:
+    pretrained_mae_state_dict = torch.load(PRETRAINED_MAE_STATE_DICT_PATH)
+print(f"Loaded pretrained mae state dict from {PRETRAINED_MAE_STATE_DICT_PATH}")
+print("Setting up ViTOMR model")
+vitomr = ViTOMR(encoder, pretrained_mae_state_dict, decoder)
+vitomr = vitomr.to(device)
+
+base_img_transform = v2.Compose([
+    v2.ToImage(),
+    v2.ToDtype(torch.float32, scale=True),
+    DynamicResize(PATCH_SIZE, MAX_IMG_SEQ_LEN, PE_MAX_HEIGHT, PE_MAX_WIDTH, False)
+])
+
+base_lmx_transform = PrepareLMXSequence(decoder.tokens_to_idxs)
+
 if __name__ == "__main__":
-    device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
-    print(f"Using device {device}")
-
-    print(f"Setting up encoder with patch size {PATCH_SIZE}, pe grid of {PE_MAX_HEIGHT} x {PE_MAX_WIDTH}")
-    encoder = OMREncoder(PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH)
-    print(f"Setting up decoder with max lmx sequence length {MAX_LMX_SEQ_LEN}, vocab file {LMX_VOCAB_PATH}")
-    decoder = OMRDecoder(MAX_LMX_SEQ_LEN, LMX_VOCAB_PATH)
-    if device == "cpu":
-        pretrained_mae_state_dict = torch.load(PRETRAINED_MAE_STATE_DICT_PATH, map_location=torch.device("cpu"))
-    else:
-        pretrained_mae_state_dict = torch.load(PRETRAINED_MAE_STATE_DICT_PATH)
-    print(f"Loaded pretrained mae state dict from {PRETRAINED_MAE_STATE_DICT_PATH}")
-    print("Setting up ViTOMR model")
-    vitomr = ViTOMR(encoder, pretrained_mae_state_dict, decoder)
-    vitomr = vitomr.to(device)
-
-    base_img_transform = v2.Compose([
-        v2.ToImage(),
-        v2.ToDtype(torch.float32, scale=True),
-        DynamicResize(PATCH_SIZE, MAX_IMG_SEQ_LEN, PE_MAX_HEIGHT, PE_MAX_WIDTH, False)
-    ])
 
     # slightly stronger augmentation since this training stage should be way easier
     camera_augment = v2.RandomApply(transforms=[
@@ -201,8 +204,6 @@ if __name__ == "__main__":
     ])
 
     olimpic_img_transform = v2.Compose([base_img_transform, camera_augment])
-
-    base_lmx_transform = PrepareLMXSequence(decoder.tokens_to_idxs)
 
     grand_staff = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.train.txt", img_transform=base_img_transform, lmx_transform=base_lmx_transform)
     olimpic = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.train.txt", img_transform=olimpic_img_transform, lmx_transform=base_lmx_transform)

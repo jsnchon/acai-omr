@@ -67,8 +67,8 @@ def test_masked_encoder_batchify():
     # verify embeddings (should be padded tensor with non padded patches having only 2's)
     first_embedding_seq = torch.cat([torch.ones(NUM_CHANNELS, 2, hidden_dim) + 1, torch.zeros(NUM_CHANNELS, 1, hidden_dim)], dim=1)
     second_embedding_seq = torch.ones(NUM_CHANNELS, 3, hidden_dim) + 1
-    embeddings_target = torch.cat([first_embedding_seq, second_embedding_seq])
-    assert torch.equal(embeddings_target, embeddings)
+    embeddings_expected = torch.cat([first_embedding_seq, second_embedding_seq])
+    assert torch.equal(embeddings_expected, embeddings)
     # verify encoder attention mask
     first_ex_mask = (torch.arange(3) >= 2).unsqueeze(0)
     second_ex_mask = (torch.arange(3) >= 3).unsqueeze(0)
@@ -115,11 +115,11 @@ def test_prepare_for_decoder():
 
     reconstructed_seq = mae.prepare_for_decoder(latent, kept_seq_lens, unmasked_seq_lens, batch_ids_restore, patchified_dims)
     print(f"Latent after reconstruction: {reconstructed_seq}, {reconstructed_seq.shape}")
-    first_target_seq = torch.cat([
+    first_expected_seq = torch.cat([
         torch.tensor([100, 100, 1, 2]).unsqueeze(-1).unsqueeze(0) + 500, # unshuffled/positionally embedded part
         torch.tensor([0, 0]).unsqueeze(-1).unsqueeze(0)], dim=1) # padding part
-    second_target_seq = torch.tensor([100, 100, 100, 1, 2, 3]).unsqueeze(-1).unsqueeze(0) + 500
-    assert torch.equal(reconstructed_seq, torch.cat([first_target_seq, second_target_seq]))
+    second_expected_seq = torch.tensor([100, 100, 100, 1, 2, 3]).unsqueeze(-1).unsqueeze(0) + 500
+    assert torch.equal(reconstructed_seq, torch.cat([first_expected_seq, second_expected_seq]))
 
 def test_MAE_forward():
     encoder_kwargs = {"num_heads": 1, "num_layers": 4}
