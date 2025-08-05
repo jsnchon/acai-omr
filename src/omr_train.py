@@ -146,7 +146,7 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
         print(f"Epoch {i + 1}\n--------------------")
         base_lr = optimizer.param_groups[-1]["lr"] # assuming transition head/decoder lr is the same
         fine_tune_lr = optimizer.param_groups[0]["lr"]
-        print(f"Base learning rate at epoch start: {base_lr:>0.8f}\nFine-tune learning rate at epoch start: {fine_tune_lr}")
+        print(f"Base learning rate at epoch start: {base_lr:>0.8f}\nFine-tune learning rate at epoch start: {fine_tune_lr:>0.8f}")
         epoch_lrs.append((base_lr, fine_tune_lr))
 
         train_start_time = time.perf_counter()
