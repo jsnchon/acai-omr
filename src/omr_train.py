@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from pathlib import Path
-from models import OMREncoder, OMRDecoder, ViTOMR, OMRLoss
+from models import FineTuneOMREncoder, OMRDecoder, ViTOMR, OMRLoss
 from datasets import GrandStaffLMXDataset, GrandStaffOMRTrainWrapper, OlimpicDataset
 from config import GRAND_STAFF_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, LMX_BOS_TOKEN, LMX_EOS_TOKEN
 from utils import DynamicResize, cosine_anneal_with_warmup, save_training_stats, ragged_collate_fn
@@ -16,6 +16,7 @@ CHECKPOINTS_DIR_PATH = MODEL_DIR_PATH / "checkpoints"
 STATS_DIR_PATH = MODEL_DIR_PATH / "stats"
 
 PRETRAINED_MAE_STATE_DICT_PATH = "mae_pre_train/pretrained_mae.pth"
+ENCODER_FINE_TUNE_DEPTH = 4
 MAX_IMG_SEQ_LEN = 512 # for DynamicResize
 MAX_LMX_SEQ_LEN = 1536 # in tokens, max lmx token sequence length to support
 LMX_VOCAB_PATH = "lmx_vocab.txt"
@@ -173,7 +174,7 @@ device = torch.accelerator.current_accelerator().type if torch.accelerator.is_av
 print(f"Using device {device}")
 
 print(f"Setting up encoder with patch size {PATCH_SIZE}, pe grid of {PE_MAX_HEIGHT} x {PE_MAX_WIDTH}")
-encoder = OMREncoder(PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH)
+encoder = FineTuneOMREncoder(PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH, ENCODER_FINE_TUNE_DEPTH)
 print(f"Setting up decoder with max lmx sequence length {MAX_LMX_SEQ_LEN}, vocab file {LMX_VOCAB_PATH}")
 decoder = OMRDecoder(MAX_LMX_SEQ_LEN, LMX_VOCAB_PATH)
 if device == "cpu":

@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from models import OMREncoder, OMRDecoder, ViTOMR, NUM_CHANNELS, OMRLoss
+from models import OMREncoder, FineTuneOMREncoder, OMRDecoder, ViTOMR, NUM_CHANNELS, OMRLoss
 from pre_train import PE_MAX_HEIGHT, PE_MAX_WIDTH
 from datasets import OlimpicDataset
 from omr_train import MAX_LMX_SEQ_LEN, base_img_transform, base_lmx_transform
@@ -9,7 +9,7 @@ from utils import show_vitomr_prediction
 
 VOCAB_LEN = 227
 
-debug_kwargs = {"num_layers": 1, "num_heads": 1, "hidden_dim": 10, "mlp_dim": 1}
+debug_kwargs = {"num_layers": 2, "num_heads": 1, "hidden_dim": 10, "mlp_dim": 1}
 # the encoder structure used in the pre_train loop test
 pretrained_debug_encoder = OMREncoder(16, PE_MAX_HEIGHT, PE_MAX_WIDTH, **debug_kwargs)
 debug_mae_state_dict = torch.load(DEBUG_PRETRAINED_MAE_PATH)
@@ -166,10 +166,16 @@ def test_batchify_and_split_lmx_seqs():
 
 def test_vitomr():
     vitomr = debug_vitomr
+    optimizer = torch.optim.SGD(vitomr.parameters(), lr=0.1)
+    loss_fn = OMRLoss(vitomr.decoder.padding_idx)
+
     encoder_before = {name: param.clone().detach() for name, param in vitomr.encoder.named_parameters()}
     x = [(torch.rand(NUM_CHANNELS, 64, 128), torch.randint(high=VOCAB_LEN, size=(8,))),
          (torch.rand(NUM_CHANNELS, 32, 32), torch.randint(high=VOCAB_LEN, size=(6,)))]
     pred, target_seqs = debug_vitomr(x)
+    loss = loss_fn(pred, target_seqs)
+    loss.backward()
+    optimizer.step()
     print(f"Prediction\n{pred}\nTarget sequences\n{target_seqs}")
     assert pred.shape == torch.Size([2, 7, VOCAB_LEN])
     encoder_after = {name: param.clone().detach() for name, param in vitomr.encoder.named_parameters()}
@@ -184,5 +190,30 @@ def test_show_vitomr_prediction():
     debug_dataset = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.train.txt", img_transform=base_img_transform, lmx_transform=base_lmx_transform)
     show_vitomr_prediction(vitomr, debug_dataset[0], "vitomr_prediction_test")
 
+def test_vitomr_with_fine_tune():
+    encoder = FineTuneOMREncoder(16, PE_MAX_HEIGHT, PE_MAX_WIDTH, 1, **debug_kwargs)
+    vitomr = ViTOMR(encoder, debug_mae_state_dict, OMRDecoder(MAX_LMX_SEQ_LEN, "lmx_vocab.txt", **debug_kwargs))
+    optimizer = torch.optim.SGD(vitomr.parameters(), lr=0.1)
+    loss_fn = OMRLoss(vitomr.decoder.padding_idx)
+
+    encoder_before = {name: param.clone().detach() for name, param in vitomr.encoder.named_parameters()}
+    x = [(torch.rand(NUM_CHANNELS, 64, 128), torch.randint(high=VOCAB_LEN, size=(8,))),
+         (torch.rand(NUM_CHANNELS, 32, 32), torch.randint(high=VOCAB_LEN, size=(6,)))]
+    pred, target_seqs = vitomr(x)
+    loss = loss_fn(pred, target_seqs)
+    loss.backward()
+    optimizer.step()
+    print(f"Prediction\n{pred}\nTarget sequences\n{target_seqs}")
+    assert pred.shape == torch.Size([2, 7, VOCAB_LEN])
+    encoder_after = {name: param.clone().detach() for name, param in vitomr.encoder.named_parameters()}
+
+    # ensure encoder finetuning is working properly
+    for name, param in encoder_before.items():
+        if "frozen" in name:
+            assert torch.equal(param, encoder_after[name])
+        else:
+            assert not torch.equal(param, encoder_after[name])
+
 if __name__ == "__main__":
-    test_show_vitomr_prediction()
+    # test_vitomr()
+    test_vitomr_with_fine_tune()

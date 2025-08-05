@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 from config import LMX_PAD_TOKEN
+import re
 
 NUM_CHANNELS = 1 # assume these images all are grayscale
 
@@ -310,6 +311,32 @@ class OMREncoder(Encoder):
         src_key_padding_mask = self.create_attention_mask(seq_lens, embeddings.shape[1]).to(embeddings.device)
         return embeddings, src_key_padding_mask 
 
+class FineTuneOMREncoder(OMREncoder):
+    def __init__(self, patch_size, pe_max_height, pe_max_width, fine_tune_depth, num_layers=12, hidden_dim=768, num_heads=12, mlp_dim=3072, transformer_dropout=0.1):
+        super().__init__(patch_size, pe_max_height, pe_max_width, num_layers, hidden_dim, num_heads, mlp_dim)
+        del self.encoder_blocks
+
+        self.fine_tune_depth = fine_tune_depth
+        self.num_layers = num_layers
+        num_frozen_layers = self.num_layers - self.fine_tune_depth
+
+        base_encoder_layer_kwargs = {"d_model": self.hidden_dim, "nhead": num_heads, "dim_feedforward": mlp_dim, "activation": "gelu", "batch_first": True}
+        self.frozen_blocks = nn.TransformerEncoder(
+            encoder_layer=nn.TransformerEncoderLayer(dropout=0.0, **base_encoder_layer_kwargs),
+            num_layers=num_frozen_layers
+        )
+        self.fine_tune_blocks = nn.TransformerEncoder(
+            encoder_layer=nn.TransformerEncoderLayer(dropout=0.1, **base_encoder_layer_kwargs),
+            num_layers=self.fine_tune_depth,
+            norm=nn.LayerNorm(self.hidden_dim, eps=1e-6)
+        )
+
+    def forward(self, x: list[torch.Tensor]):
+        x, src_key_padding_mask = self.batchify(x)
+        x = self.frozen_blocks(x, src_key_padding_mask=src_key_padding_mask)
+        x = self.fine_tune_blocks(x, src_key_padding_mask=src_key_padding_mask)
+        return x, src_key_padding_mask 
+
 class OMRDecoder(nn.Module):
     def __init__(self, max_lmx_seq_len, lmx_vocab_path, num_layers=10, hidden_dim=1024, num_heads=16, mlp_dim=4096, transformer_dropout=0.15):
         super().__init__()
@@ -372,16 +399,20 @@ class ViTOMR(nn.Module):
         super().__init__()
         self.encoder = omr_encoder
 
-        # extract encoder parameters and remove redundant prefixes added by MAE class to align names
-        encoder_state_dict = {
-            param[len("encoder."):]: value for param, value in pretrained_mae_state_dict.items() if param.startswith("encoder.")
-        }
+        encoder_state_dict = self.create_omr_encoder_state_dict(pretrained_mae_state_dict)
         self.encoder.load_state_dict(encoder_state_dict)
 
-        # freeze the entire encoder 
-        for param in self.encoder.parameters():
-            param.requires_grad = False
-        self.encoder.eval()
+        # depending on the type of encoder being used, either freeze the whole thing or just the frozen blocks
+        if isinstance(self.encoder, FineTuneOMREncoder):
+            for param in self.encoder.frozen_blocks.parameters():
+                param.requires_grad = False
+
+            self.encoder.frozen_blocks.eval()
+        else:
+            for param in self.encoder.parameters():
+                param.requires_grad = False
+            
+            self.encoder.eval()
 
         self.decoder = omr_decoder
 
@@ -392,7 +423,40 @@ class ViTOMR(nn.Module):
             nn.Dropout(transition_head_dropout_p),
             nn.Linear(transition_head_dim, self.decoder.hidden_dim)
         )
-    
+
+    def create_omr_encoder_state_dict(self, pretrained_mae_state_dict):
+        # preprocess state dict: remove redundant prefixes added by MAE class since 
+        pretrained_mae_state_dict = {
+            param[len("encoder."):]: value for param, value in pretrained_mae_state_dict.items() if param.startswith("encoder.")
+        }
+
+        if not isinstance(self.encoder, FineTuneOMREncoder):
+            return pretrained_mae_state_dict
+
+        # separate encoder layers into frozen or fine-tune blocks depending on their depth
+        omr_encoder_state_dict = {}
+        freeze_threshold_depth = self.encoder.num_layers - self.encoder.fine_tune_depth
+        last_norm_layer_parameters = ["encoder_blocks.norm.weight", "encoder_blocks.norm.bias"]
+        for param in pretrained_mae_state_dict.keys():
+            layer_num_pattern = re.compile(r"(?:\w|\.)+?(\d+)(?:\w|\.)+")
+            if match := layer_num_pattern.match(param):
+                layer_num = int(match.group(1))
+                if layer_num < freeze_threshold_depth:
+                    new_param_name = param.replace("encoder_blocks", "frozen_blocks")
+                else:
+                    new_param_name = param.replace("encoder_blocks", "fine_tune_blocks")
+                    new_param_name = new_param_name.replace(f"layers.{layer_num}", f"layers.{layer_num - freeze_threshold_depth}")
+                omr_encoder_state_dict[new_param_name] = pretrained_mae_state_dict[param]
+
+            elif param in last_norm_layer_parameters:
+                new_param_name = param.replace("encoder_blocks", "fine_tune_blocks")
+                omr_encoder_state_dict[new_param_name] = pretrained_mae_state_dict[param]
+
+            else: 
+                omr_encoder_state_dict[param] = pretrained_mae_state_dict[param]
+        
+        return omr_encoder_state_dict
+   
     # lmx_seqs is a list of int tensors containing the unmodified lmx sequences associated with the input images,
     # in lmx token indices
     def batchify_and_split_lmx_seqs(self, lmx_seqs: list[torch.Tensor], device):
