@@ -244,36 +244,53 @@ def graph_model_stats(train_losses, validation_losses, plot_file_path):
     fig.savefig(plot_file_path)
     plt.close(fig)
 
-def graph_lrs(epoch_lrs, lr_plot_file_path):
+def graph_lrs(epoch_lrs, lr_plot_file_path, fine_tuning):
     fig, ax = plt.subplots()
     fig.set_figheight(8)
     fig.set_figwidth(12)
     ax.set_title("Learning rates over time")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Learning rate (at epoch start)")
-    x_axis = np.arange(1, len(epoch_lrs) + 1)
-    ax.plot(x_axis, epoch_lrs)
     ax.grid()
+    x_axis = np.arange(1, len(epoch_lrs) + 1)
+    if fine_tuning:
+        base_lrs, fine_tune_lrs = zip(*epoch_lrs)
+        ax.plot(x_axis, list(base_lrs), label="Base lr", color="blue")
+        ax.plot(x_axis, list(fine_tune_lrs), label="Fine-tune lr", color="red")
+        ax.legend()
+    else:
+        ax.plot(x_axis, epoch_lrs)
     print(f"Saving plot to {lr_plot_file_path}")
     fig.savefig(lr_plot_file_path)
     plt.close(fig)
 
 # saves everything to stats directory created in pretrain setup
-def save_training_stats(stats_dir_path, epoch_training_losses, epoch_validation_losses, epoch_lrs):
+def save_training_stats(stats_dir_path, epoch_training_losses, epoch_validation_losses, epoch_lrs, fine_tuning=False):
     loss_plot_path = stats_dir_path / "losses.png"
     lr_plot_path = stats_dir_path / "lrs.png"
     csv_path = stats_dir_path / "training_stats.csv"
     graph_model_stats(epoch_training_losses, epoch_validation_losses, loss_plot_path)
-    graph_lrs(epoch_lrs, lr_plot_path)
-
-    stats_df = pd.DataFrame({
-        "Epoch": np.arange(1, len(epoch_lrs) + 1),
-        "Training loss": epoch_training_losses,
-        "Validation loss": epoch_validation_losses,
-        "Lr at start": epoch_lrs,
-    })
-    print(f"Writing training stats csv to {csv_path}")
-    stats_df.to_csv(csv_path)
+    graph_lrs(epoch_lrs, lr_plot_path, fine_tuning)
+    if fine_tuning:
+        base_lrs, fine_tune_lrs = zip(*epoch_lrs)
+        stats_df = pd.DataFrame({
+            "Epoch": np.arange(1, len(epoch_lrs) + 1),
+            "Training loss": epoch_training_losses,
+            "Validation loss": epoch_validation_losses,
+            "Base lr at start": list(base_lrs),
+            "Fine-tune lr at start": list(fine_tune_lrs),
+        })
+        print(f"Writing training stats csv to {csv_path}")
+        stats_df.to_csv(csv_path)
+    else:
+        stats_df = pd.DataFrame({
+            "Epoch": np.arange(1, len(epoch_lrs) + 1),
+            "Training loss": epoch_training_losses,
+            "Validation loss": epoch_validation_losses,
+            "Lr at start": epoch_lrs,
+        })
+        print(f"Writing training stats csv to {csv_path}")
+        stats_df.to_csv(csv_path)
 
 # previous code wrote loss and validation curves to separate plots. This little utility function will use the stats
 # csv to reformat the training stats to the new plot versions. The args should be pathlib Path instances

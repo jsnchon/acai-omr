@@ -394,7 +394,6 @@ class OMRDecoder(nn.Module):
 class ViTOMR(nn.Module):
     # masking logic for image encodings and padded LMX token sequences. Add prepare_for_decoder method to do this?
     
-    # create embedding param for token vocab
     def __init__(self, omr_encoder, pretrained_mae_state_dict, omr_decoder, transition_head_dim=4096, transition_head_dropout_p=0.1):
         super().__init__()
         self.encoder = omr_encoder
@@ -430,7 +429,9 @@ class ViTOMR(nn.Module):
             param[len("encoder."):]: value for param, value in pretrained_mae_state_dict.items() if param.startswith("encoder.")
         }
 
-        if not isinstance(self.encoder, FineTuneOMREncoder):
+        # the base OMREncoder still has an encoder_blocks instance variable, so the basic name adjustment is all 
+        # that's needed to align the state dicts 
+        if not isinstance(self.encoder, FineTuneOMREncoder): 
             return pretrained_mae_state_dict
 
         # separate encoder layers into frozen or fine-tune blocks depending on their depth
@@ -439,20 +440,21 @@ class ViTOMR(nn.Module):
         last_norm_layer_parameters = ["encoder_blocks.norm.weight", "encoder_blocks.norm.bias"]
         for param in pretrained_mae_state_dict.keys():
             layer_num_pattern = re.compile(r"(?:\w|\.)+?(\d+)(?:\w|\.)+")
-            if match := layer_num_pattern.match(param):
+            if match := layer_num_pattern.match(param): # this is a layer in MAEEncoder's encoder_blocks variable
                 layer_num = int(match.group(1))
                 if layer_num < freeze_threshold_depth:
                     new_param_name = param.replace("encoder_blocks", "frozen_blocks")
                 else:
                     new_param_name = param.replace("encoder_blocks", "fine_tune_blocks")
+                    # shift layer numbers to start at index 0 in this new block
                     new_param_name = new_param_name.replace(f"layers.{layer_num}", f"layers.{layer_num - freeze_threshold_depth}")
                 omr_encoder_state_dict[new_param_name] = pretrained_mae_state_dict[param]
 
-            elif param in last_norm_layer_parameters:
+            elif param in last_norm_layer_parameters: # the last norm layer should be fine tunable
                 new_param_name = param.replace("encoder_blocks", "fine_tune_blocks")
                 omr_encoder_state_dict[new_param_name] = pretrained_mae_state_dict[param]
 
-            else: 
+            else: # parameters that are shared between all these Encoder types (eg self.projection)
                 omr_encoder_state_dict[param] = pretrained_mae_state_dict[param]
         
         return omr_encoder_state_dict

@@ -139,14 +139,15 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
 
     epoch_training_losses = []
     epoch_validation_losses = []
-    epoch_lrs = []
+    epoch_lrs = [] # tuples of (base_lr, fine_tune_lr)
 
     print(f"OMR training for {EPOCHS} epochs. Checkpointing every {CHECKPOINT_FREQ} epochs")
     for i in range(EPOCHS):
         print(f"Epoch {i + 1}\n--------------------")
-        epoch_start_lr = optimizer.param_groups[0]["lr"]
-        print(f"Learning rate at epoch start: {epoch_start_lr:>0.8f}")
-        epoch_lrs.append(epoch_start_lr)
+        base_lr = optimizer.param_groups[-1]["lr"] # assuming transition head/decoder lr is the same
+        fine_tune_lr = optimizer.param_groups[0]["lr"]
+        print(f"Base learning rate at epoch start: {base_lr:>0.8f}\nFine-tune learning rate at epoch start: {fine_tune_lr}")
+        epoch_lrs.append((base_lr, fine_tune_lr))
 
         train_start_time = time.perf_counter()
         epoch_train_loss = train_loop(vitomr, train_dataloader, loss_fn, optimizer, scheduler, device, scaler)
@@ -163,10 +164,10 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
             checkpoint_path = CHECKPOINTS_DIR_PATH / f"epoch_{i+1}_checkpoint.pth"
             save_omr_training_state(checkpoint_path, vitomr, optimizer, scheduler, scaler)
             print("Checkpointing stats plots")
-            save_training_stats(STATS_DIR_PATH, epoch_training_losses, epoch_validation_losses, epoch_lrs)
+            save_training_stats(STATS_DIR_PATH, epoch_training_losses, epoch_validation_losses, epoch_lrs, fine_tuning=True)
 
     print("Plotting final stats")
-    save_training_stats(STATS_DIR_PATH, epoch_training_losses, epoch_validation_losses, epoch_lrs)
+    save_training_stats(STATS_DIR_PATH, epoch_training_losses, epoch_validation_losses, epoch_lrs, fine_tuning=True)
     print("Saving final omr training state")
     omr_train_state_path = MODEL_DIR_PATH / f"ending_omr_train_state.pth"
     save_omr_training_state(omr_train_state_path, vitomr, optimizer, scheduler, scaler)
