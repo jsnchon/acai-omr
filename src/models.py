@@ -311,7 +311,7 @@ class OMREncoder(Encoder):
         return embeddings, src_key_padding_mask 
 
 class OMRDecoder(nn.Module):
-    def __init__(self, max_lmx_seq_len, lmx_vocab_path, num_layers=6, hidden_dim=1024, num_heads=16, mlp_dim=4096, transformer_dropout=0.1):
+    def __init__(self, max_lmx_seq_len, lmx_vocab_path, num_layers=10, hidden_dim=1024, num_heads=16, mlp_dim=4096, transformer_dropout=0.15):
         super().__init__()
         self.max_lmx_seq_len = max_lmx_seq_len
         self.hidden_dim = hidden_dim
@@ -368,7 +368,7 @@ class ViTOMR(nn.Module):
     # masking logic for image encodings and padded LMX token sequences. Add prepare_for_decoder method to do this?
     
     # create embedding param for token vocab
-    def __init__(self, omr_encoder, pretrained_mae_state_dict, omr_decoder, transition_head_dim=4096, dropout_p=0.1):
+    def __init__(self, omr_encoder, pretrained_mae_state_dict, omr_decoder, transition_head_dim=4096, transition_head_dropout_p=0.1):
         super().__init__()
         self.encoder = omr_encoder
 
@@ -389,7 +389,7 @@ class ViTOMR(nn.Module):
         self.transition_head = nn.Sequential(
             nn.Linear(self.encoder.hidden_dim, transition_head_dim),
             nn.GELU(),
-            nn.Dropout(dropout_p),
+            nn.Dropout(transition_head_dropout_p),
             nn.Linear(transition_head_dim, self.decoder.hidden_dim)
         )
     
