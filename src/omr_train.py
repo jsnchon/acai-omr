@@ -163,8 +163,8 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
     print("Plotting final stats")
     save_training_stats(STATS_DIR_PATH, epoch_training_losses, epoch_validation_losses, epoch_lrs)
     print("Saving final omr training state")
-    pretrain_state_path = MODEL_DIR_PATH / f"ending_omr_train_state.pth"
-    save_omr_training_state(pretrain_state_path, vitomr, optimizer, scheduler, scaler)
+    omr_train_state_path = MODEL_DIR_PATH / f"ending_omr_train_state.pth"
+    save_omr_training_state(omr_train_state_path, vitomr, optimizer, scheduler, scaler)
     model_path = MODEL_DIR_PATH / "vitomr.pth"
     print(f"Saving final model state dict separately to {model_path}")
     torch.save(vitomr.state_dict(), model_path)
