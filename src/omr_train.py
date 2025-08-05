@@ -26,6 +26,7 @@ NUM_WORKERS = 26
 
 EPOCHS = 100
 CHECKPOINT_FREQ = 10
+FINE_TUNE_BASE_LR = 2e-5
 BASE_LR = 2e-4
 MIN_LR = 1e-6
 ADAMW_BETAS = (0.9, 0.95)
@@ -119,8 +120,11 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
     train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
     validation_dataloader = DataLoader(validation_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
     print(f"Dataset augmentation probability: {AUGMENTATION_P}")
-    print(f"Setting up AdamW with base learning rate {BASE_LR}, betas {ADAMW_BETAS}, weight decay {ADAMW_WEIGHT_DECAY}")
-    optimizer = torch.optim.AdamW(vitomr.parameters(), lr=BASE_LR, betas=ADAMW_BETAS, weight_decay=ADAMW_WEIGHT_DECAY)
+    print(f"Setting up AdamW with {FINE_TUNE_BASE_LR} base lr for encoder fine tuning, {BASE_LR} base lr for the transition head/decoder, betas {ADAMW_BETAS}, weight decay {ADAMW_WEIGHT_DECAY}")
+    optimizer = torch.optim.AdamW([{"params": vitomr.encoder.parameters(), "lr": FINE_TUNE_BASE_LR}, 
+                                   {"params": vitomr.transition_head.parameters(), "lr": BASE_LR}, 
+                                   {"params": vitomr.decoder.parameters(), "lr": BASE_LR}], 
+                                   betas=ADAMW_BETAS, weight_decay=ADAMW_WEIGHT_DECAY)
     num_batches = len(train_dataloader)
     print(f"Setting up scheduler with {WARMUP_EPOCHS} warm-up epochs, {EPOCHS} total epochs, {MIN_LR} minimum learning rate, {num_batches} batches per epoch")
     scheduler = cosine_anneal_with_warmup(optimizer, WARMUP_EPOCHS, EPOCHS, MIN_LR, num_train_batches=num_batches)
@@ -173,7 +177,7 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
 device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
 print(f"Using device {device}")
 
-print(f"Setting up encoder with patch size {PATCH_SIZE}, pe grid of {PE_MAX_HEIGHT} x {PE_MAX_WIDTH}")
+print(f"Setting up encoder with patch size {PATCH_SIZE}, pe grid of {PE_MAX_HEIGHT} x {PE_MAX_WIDTH}, partial fine-tuning in last {ENCODER_FINE_TUNE_DEPTH} layers")
 encoder = FineTuneOMREncoder(PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH, ENCODER_FINE_TUNE_DEPTH)
 print(f"Setting up decoder with max lmx sequence length {MAX_LMX_SEQ_LEN}, vocab file {LMX_VOCAB_PATH}")
 decoder = OMRDecoder(MAX_LMX_SEQ_LEN, LMX_VOCAB_PATH)
@@ -231,20 +235,3 @@ if __name__ == "__main__":
     ])
 
     omr_train(vitomr, train_dataset, validation_dataset, device)
-
-"""
-Chat's recommended recipe
-🔧 Core Training Hyperparameters
-Hyperparameter	Value / Range	Notes
-Epochs	10–30	Depending on dataset size; early stop on val loss.
-Batch size	32–128	As large as fits in GPU memory; larger = more stable.
-Optimizer	AdamW	Standard for transformers.
-Initial LR	1e-4	You can go slightly higher if encoder is frozen.
-Min LR	1e-6	For cosine schedule.
-Weight decay	0.01	Typical for Transformer-based models.
-Scheduler	Cosine Annealing + Warmup	Smooth convergence.
-Warmup steps	5% of total steps	Critical to prevent initial divergence.
-Gradient clipping	1.0	Prevent exploding gradients.
-Dropout	0.1	Only in decoder or adapters.
-Label smoothing	0.0–0.1	Optional. Slight smoothing can improve generalization.
-"""
