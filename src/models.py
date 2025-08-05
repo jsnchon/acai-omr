@@ -362,7 +362,7 @@ class OMRDecoder(nn.Module):
         hidden_state = self.decoder_blocks(lmx_embeddings, memory=img_latent, tgt_mask=causal_mask, tgt_key_padding_mask=lmx_attention_mask, memory_key_padding_mask=latent_attention_mask)
 
         pred = self.unembed(hidden_state)
-        return pred
+        return pred #(B, L_lmxmax, vocab_size)
 
 class ViTOMR(nn.Module):
     # masking logic for image encodings and padded LMX token sequences. Add prepare_for_decoder method to do this?
@@ -403,11 +403,17 @@ class ViTOMR(nn.Module):
         input_seqs = lmx_seqs[:, :-1]
         target_seqs = lmx_seqs[:, 1:]
 
-        lmx_attention_mask = input_seqs == padding_idx # (B, L_lmxmax), True means that lmx token is a pad token
+        lmx_attention_mask = (input_seqs == padding_idx) # (B, L_lmxmax), True means that lmx token is a pad token
         lmx_attention_mask = lmx_attention_mask.to(device)
         return input_seqs, target_seqs, lmx_attention_mask
 
-    # x is a list of (image, lmx_sequence) tuples where each lmx_sequence is an int tensor of input token indices
+    """
+    Input
+        x is a list of (image, lmx_sequence) tuples where each lmx_sequence is an int tensor of input token indices, with <bos> and <eos> tokens added to each already
+    Output
+        pred: (B, L_lmxmax, vocab_size)
+        target_seqs: (B, L_lmxmax)
+    """
     def forward(self, x: list[tuple[torch.Tensor, torch.Tensor]]):
         imgs, lmx_seqs = zip(*x)
         imgs = list(imgs)
@@ -434,7 +440,7 @@ class OMRLoss(nn.Module):
 
     def forward(self, pred, target_seqs):
         """
-        pred: (B, L_lmxmax, vocab_size), decoder output
+        pred: (B, L_lmxmax, vocab_size), decoder output logits
         target_seqs: (B, L_lmxmax), tokens to predict at each position
         """
         # flatten tensors since target tensor needs to be shape (N, )

@@ -1,8 +1,8 @@
 import torch
 from config import GRAND_STAFF_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
-from utils import show_mae_prediction, ragged_collate_fn
+from utils import show_mae_prediction, show_vitomr_prediction, ragged_collate_fn
 from pathlib import Path
-from models import MAELoss
+from models import MAELoss, OMRLoss
 from datasets import GrandStaffLMXDataset, OlimpicDataset, OlimpicPreTrainWrapper, GrandStaffPreTrainWrapper
 from torch.utils.data import ConcatDataset, DataLoader
 from pre_train import mae, base_transform
@@ -41,6 +41,24 @@ def test_loop(model, model_type, dataloader, loss_fn, device):
     print(f"Average test loss: {avg_loss}")
     return avg_loss
 
+def sample_predictions(model, model_type, prediction_dir, test_dataset, device):
+    num_predictions = args.num_predictions
+    assert num_predictions is not None, "If a prediction directory is specified, a number of predictions to sample must be specified"
+
+    print(f"Creating directory at {prediction_dir} if it already doesn't exist")
+    prediction_dir = Path(prediction_dir)
+    prediction_dir.mkdir(exist_ok=True)
+
+    samples = torch.randint(0, len(test_dataset), (num_predictions, ))
+    for sample_num, sample in enumerate(samples):
+        save_path = prediction_dir / f"sample_{sample_num}.png"
+        ex = test_dataset[sample.item()]
+        ex = (ex[0].to(device), ex[1].to(device))
+        if model_type == Models.MAE:
+            show_mae_prediction(model, ex, mae.patch_size, save_path)
+        elif model_type == Models.VIT_OMR:
+            show_vitomr_prediction(model, ex, save_path)
+
 def test_mae(mae, mae_state_dict, args, device):
     print("Creating MAE model from loaded state dict")
     mae.load_state_dict(mae_state_dict)
@@ -70,22 +88,38 @@ def test_mae(mae, mae_state_dict, args, device):
 
     prediction_dir = args.prediction_dir
     if prediction_dir:
-        num_predictions = args.num_predictions
-        assert num_predictions is not None, "If a prediction directory is specified, a number of predictions to sample must be specified"
+        sample_predictions(mae, Models.MAE, prediction_dir, test_dataloader.dataset, device)
 
-        print(f"Creating directory at {prediction_dir} if it already doesn't exist")
-        prediction_dir = Path(prediction_dir)
-        prediction_dir.mkdir(exist_ok=True)
+def test_vitomr(vitomr, vitomr_state_dict, args, device):
+    print("Creatinv ViTOMR model from loaded state dict")
+    vitomr.load_state_dict(vitomr_state_dict)
+    print("Model architecture\n--------------------")
+    print(vitomr)
 
-        samples = torch.randint(0, len(test_dataset), (num_predictions, ))
-        for sample_num, sample in enumerate(samples):
-            save_path = prediction_dir / f"sample_{sample_num}.png"
-            ex = test_dataset[sample.item()]
-            ex = (ex[0].to(device), ex[1].to(device))
-            show_mae_prediction(mae, ex, mae.patch_size, save_path)
+    print("Setting up test dataset and dataloader")
+    grand_staff = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.test.txt", img_transform=base_img_transform, lmx_transform=base_lmx_transform)
+    olimpic_synthetic = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.test.txt", img_transform=base_img_transform, lmx_transform=base_lmx_transform)
+    olimpic_scanned = OlimpicDataset(OLIMPIC_SCANNED_ROOT_DIR, "samples.test.txt", img_transform=base_img_transform, lmx_transform=base_lmx_transform)
 
-def test_vitomr(vitomr_state_dict, args, device):
-    pass
+    test_dataset = ConcatDataset([
+        GrandStaffPreTrainWrapper(grand_staff),
+        OlimpicPreTrainWrapper(olimpic_synthetic),
+        OlimpicPreTrainWrapper(olimpic_scanned)
+    ])
+
+    batch_size = args.batch_size
+    num_workers = args.num_workers
+    print(f"Using a batch size of {batch_size} and {num_workers} workers")
+    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=ragged_collate_fn, pin_memory=True)
+    loss_fn = OMRLoss()
+
+    vitomr = vitomr.to(device)
+
+    test_loop(vitomr, Models.VIT_OMR, test_dataloader, loss_fn, device)
+
+    prediction_dir = args.prediction_dir
+    if prediction_dir:
+        sample_predictions(vitomr, Models.VIT_OMR, prediction_dir, test_dataloader.dataset, device)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("model_type", choices=[Models.MAE.value, Models.VIT_OMR.value])
@@ -115,7 +149,7 @@ else:
 device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
 print(f"Using device {device}")
 
-if model_type == Models.MAE.value:
+if model_type == Models.MAE.value: # use Enum.value here since those strings (not actual Enum objects) are the command line options
     test_mae(mae, model_state_dict, args, device)
 elif model_type == Models.VIT_OMR.value:
-    pass
+    test_vitomr(vitomr, model_state_dict, args, device)

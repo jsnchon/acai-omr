@@ -33,7 +33,7 @@ def test_omr_train():
     debug_encoder = OMREncoder(DEBUG_PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH, hidden_dim=10, **DEBUG_KWARGS)
     debug_decoder = OMRDecoder(MAX_LMX_SEQ_LEN, LMX_VOCAB_PATH, hidden_dim=10, **DEBUG_KWARGS)
     debug_mae_state_dict = torch.load(DEBUG_PRETRAINED_MAE_PATH)
-    debug_vitomr = ViTOMR(debug_encoder, debug_mae_state_dict, debug_decoder, hidden_dim=10)
+    debug_vitomr = ViTOMR(debug_encoder, debug_mae_state_dict, debug_decoder)
 
     omr_train(debug_vitomr, train_dataset, validation_dataset, "cpu") 
 

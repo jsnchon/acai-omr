@@ -11,8 +11,9 @@ import torchvision.transforms.v2.functional as F
 import logging
 import math
 from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
-from models import MAELoss
+from models import MAELoss, OMRLoss
 import pandas as pd
+from pathlib import Path
 
 # num_train_batches is the number of batches in each epoch. If passed, the scheduler will configure to be called
 # each minibatch instead of each epoch
@@ -50,7 +51,7 @@ def plot_lr_schedule(scheduler, optimizer, num_epochs):
     plt.savefig("lr_over_epochs.png")
 
 # shows the input, mae's reconstruction, and target images using one example ex side by side
-def show_mae_prediction(mae, ex, patch_size, save_path):
+def show_mae_prediction(mae, ex, patch_size, save_path: str):
     loss_fn = MAELoss()
     mae.eval()
     with torch.no_grad():
@@ -77,6 +78,48 @@ def show_mae_prediction(mae, ex, patch_size, save_path):
         fig.savefig(save_path)
     else:
         raise NotImplementedError("Images are assumed to be grayscale")
+
+def show_vitomr_prediction(vitomr, ex, sample_save_dir: str):
+    sample_save_dir = Path(sample_save_dir)
+    sample_save_dir.mkdir(exist_ok=True)
+
+    loss_fn = OMRLoss(padding_idx=vitomr.decoder.padding_idx)
+    vitomr.eval()
+    with torch.no_grad():
+        pred, target_seq = vitomr([ex])
+    loss = loss_fn(pred, target_seq)
+
+    idxs_to_tokens = vitomr.decoder.idxs_to_tokens
+    pred = torch.softmax(pred, dim=-1)
+    pred = torch.argmax(pred, dim=-1)
+    pred = pred.squeeze(0)
+    pred = [idxs_to_tokens[idx.item()] for idx in pred]
+    pred = " ".join(pred)
+
+    target_seq = target_seq.squeeze(0)
+    target_seq = [idxs_to_tokens[idx.item()] for idx in target_seq]
+    target_seq = " ".join(target_seq)
+
+    fig, ax = plt.subplots()
+    fig.set_figheight(8)
+    fig.set_figwidth(12)
+    fig.suptitle(f"Sequences cross entropy loss: {loss}")
+    ax.imshow(ex[0].cpu().squeeze(0), cmap="gray")
+    ax.set_title("Input image")
+
+    plot_save_path = sample_save_dir / "input_image.png"
+    print(f"Saving input image to {plot_save_path}")
+    fig.savefig(plot_save_path)
+
+    pred_file_path = sample_save_dir / "pred.txt"
+    print(f"Saving predicted token sequence to {pred_file_path}")
+    with open(pred_file_path, "w") as f:
+        f.write(pred)
+
+    target_seq_file_path = sample_save_dir / "target_seq.txt"
+    print(f"Saving target token sequence to {target_seq_file_path}")
+    with open(target_seq_file_path, "w") as f:
+        f.write(target_seq)
 
 # dataset should be initialized with a ToTensor transformation for any images
 def display_dataset_img(dataset, index): 
@@ -185,16 +228,18 @@ class DynamicResize(nn.Module):
 
         return img.clamp(0.0, 1.0)
     
-# mode should be one of "Train" or "Validation"
-def graph_model_stats(epoch_losses, plot_file_path, mode="Training"):
+def graph_model_stats(train_losses, validation_losses, plot_file_path):
     fig, ax = plt.subplots()
     fig.set_figheight(8)
     fig.set_figwidth(12)
-    ax.set_title(f"{mode} stats")
+    ax.set_title(f"Training stats")
     ax.set_xlabel("Epoch")
-    ax.set_ylabel(f"{mode} average loss")
-    x_axis = np.arange(1, len(epoch_losses) + 1) # make sure each stat is lined up with integer epoch labels
-    ax.plot(x_axis, epoch_losses)
+    ax.set_ylabel(f"Average loss")
+    x_axis = np.arange(1, len(train_losses) + 1) # make sure each stat is lined up with integer epoch labels
+    ax.plot(x_axis, train_losses, label="Train loss", color="blue")
+    ax.plot(x_axis, validation_losses, label="Validation loss", color="red")
+    ax.grid()
+    ax.legend()
     print(f"Saving plot to {plot_file_path}")
     fig.savefig(plot_file_path)
     plt.close(fig)
@@ -208,18 +253,17 @@ def graph_lrs(epoch_lrs, lr_plot_file_path):
     ax.set_ylabel("Learning rate (at epoch start)")
     x_axis = np.arange(1, len(epoch_lrs) + 1)
     ax.plot(x_axis, epoch_lrs)
+    ax.grid()
     print(f"Saving plot to {lr_plot_file_path}")
     fig.savefig(lr_plot_file_path)
     plt.close(fig)
 
 # saves everything to stats directory created in pretrain setup
 def save_training_stats(stats_dir_path, epoch_training_losses, epoch_validation_losses, epoch_lrs):
-    train_plot_path = stats_dir_path / "training_stats.png"
-    validation_plot_path = stats_dir_path / "validation_stats.png"
+    loss_plot_path = stats_dir_path / "losses.png"
     lr_plot_path = stats_dir_path / "lrs.png"
     csv_path = stats_dir_path / "training_stats.csv"
-    graph_model_stats(epoch_training_losses, train_plot_path, mode="Train")
-    graph_model_stats(epoch_validation_losses, validation_plot_path, mode="Validation")
+    graph_model_stats(epoch_training_losses, epoch_validation_losses, loss_plot_path)
     graph_lrs(epoch_lrs, lr_plot_path)
 
     stats_df = pd.DataFrame({
@@ -230,6 +274,17 @@ def save_training_stats(stats_dir_path, epoch_training_losses, epoch_validation_
     })
     print(f"Writing training stats csv to {csv_path}")
     stats_df.to_csv(csv_path)
+
+# previous code wrote loss and validation curves to separate plots. This little utility function will use the stats
+# csv to reformat the training stats to the new plot versions. The args should be pathlib Path instances
+def reformat_training_stats(old_stats_dir_path, new_stats_dir_path):
+    stats_df_path = old_stats_dir_path / "training_stats.csv"
+    stats_df = pd.read_csv(stats_df_path)
+    training_losses = stats_df["Training loss"]
+    validation_losses = stats_df["Validation loss"]
+    lrs = stats_df["Lr at start"]
+
+    save_training_stats(new_stats_dir_path, training_losses, validation_losses, lrs)
 
 """
 DataLoader batching requires non-ragged batches, ie all examples are of the same length. A collate function to pad based on

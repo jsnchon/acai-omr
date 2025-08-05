@@ -34,9 +34,8 @@ BATCH_SIZE = 32
 # additional regularization: dropout of 0.1 in decoder, label smoothing of 0.1
 
 # TODO:
-# add omr mode to eval_model.py, separate mae testing
+# if still underfitting, increase decoder to 8 layers, sanity check that overfits on tiny dataset (like 256 exs), use grad accumulation if run into memory issues
 # implement omr autoregressive beam search inference
-# change mae weight path once the pretraining is done
 
 class PrepareLMXSequence(nn.Module):
     def __init__(self, tokens_to_idxs):
@@ -68,6 +67,7 @@ def train_loop(vitomr, dataloader, loss_fn, optimizer, scheduler, device):
     for batch_idx, batch in enumerate(dataloader):
         batch = [(x.to(device, non_blocking=True), y.to(device, non_blocking=True)) for x, y in batch]
         pred, target_seqs = vitomr(batch)
+        exit()
         loss = loss_fn(pred, target_seqs)
         epoch_loss += loss.item()
         loss.backward()

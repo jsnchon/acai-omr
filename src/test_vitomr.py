@@ -2,8 +2,10 @@ import torch
 from torch import nn
 from models import OMREncoder, OMRDecoder, ViTOMR, NUM_CHANNELS, OMRLoss
 from pre_train import PE_MAX_HEIGHT, PE_MAX_WIDTH
-from omr_train import MAX_LMX_SEQ_LEN
-from config import DEBUG_PRETRAINED_MAE_PATH
+from datasets import OlimpicDataset
+from omr_train import MAX_LMX_SEQ_LEN, base_img_transform, base_lmx_transform
+from config import DEBUG_PRETRAINED_MAE_PATH, OLIMPIC_SYNTHETIC_ROOT_DIR
+from utils import show_vitomr_prediction
 
 VOCAB_LEN = 227
 
@@ -11,7 +13,7 @@ debug_kwargs = {"num_layers": 1, "num_heads": 1, "hidden_dim": 10, "mlp_dim": 1}
 # the encoder structure used in the pre_train loop test
 pretrained_debug_encoder = OMREncoder(16, PE_MAX_HEIGHT, PE_MAX_WIDTH, **debug_kwargs)
 debug_mae_state_dict = torch.load(DEBUG_PRETRAINED_MAE_PATH)
-debug_vitomr = ViTOMR(pretrained_debug_encoder, debug_mae_state_dict, OMRDecoder(MAX_LMX_SEQ_LEN, "lmx_vocab.txt", **debug_kwargs), hidden_dim=10)
+debug_vitomr = ViTOMR(pretrained_debug_encoder, debug_mae_state_dict, OMRDecoder(MAX_LMX_SEQ_LEN, "lmx_vocab.txt", **debug_kwargs))
  
 def test_encoder_batchify():
     patch_size = 2
@@ -176,5 +178,11 @@ def test_vitomr():
     for name, param in encoder_before.items():
         assert torch.equal(param, encoder_after[name])
 
+def test_show_vitomr_prediction():
+    vitomr = debug_vitomr
+
+    debug_dataset = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.train.txt", img_transform=base_img_transform, lmx_transform=base_lmx_transform)
+    show_vitomr_prediction(vitomr, debug_dataset[0], "vitomr_prediction_test")
+
 if __name__ == "__main__":
-    test_decoder_gradient_flow()
+    test_show_vitomr_prediction()

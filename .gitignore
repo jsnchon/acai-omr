@@ -4,7 +4,7 @@ data-zips/
 __pycache__/
 tests/__pycache__/
 .pytest_cache/
-mae_pre_train/
+*mae_pre_train/
 omr_train/
 *.png
 *.pth

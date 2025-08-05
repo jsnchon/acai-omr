@@ -42,7 +42,7 @@ def test_show_mae_prediction():
 
     primus = PreparedDataset(PRIMUS_PREPARED_ROOT_DIR, transform=base_transform)
     debug_dataset = PreTrainWrapper(primus)
-    show_mae_prediction(mae, debug_dataset[0], patch_size)
+    show_mae_prediction(mae, debug_dataset[0], patch_size, "mae_prediction_test.png")
 
 # qualitatively evaluate the model is learning to do what it needs to. scp a checkpoint file then pass it in here
 # assumes will run the image on cpu
