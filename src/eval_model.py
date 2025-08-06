@@ -7,6 +7,7 @@ from datasets import GrandStaffLMXDataset, OlimpicDataset, OlimpicPreTrainWrappe
 from torch.utils.data import ConcatDataset, DataLoader
 from pre_train import mae, base_transform
 from omr_train import vitomr, base_img_transform, base_lmx_transform
+from torch.amp import autocast
 from enum import Enum
 import argparse
 
@@ -24,19 +25,20 @@ def test_loop(model, model_type, dataloader, loss_fn, device):
     batch_size = dataloader.batch_size
 
     with torch.no_grad():
-        for batch_idx, batch in enumerate(dataloader):
-            batch = [(x.to(device, non_blocking=True), y.to(device, non_blocking=True)) for x, y in batch]
-            if model_type == Models.MAE:
-                pred, loss_mask, target = model(batch)
-                test_loss += loss_fn(pred, loss_mask, target).item()
-            elif model_type == Models.VIT_OMR:
-                pred, target_seqs = model(batch)
-                test_loss += loss_fn(pred, target_seqs).item()
+        with autocast(device_type=device, dtype=torch.bfloat16):
+            for batch_idx, batch in enumerate(dataloader):
+                batch = [(x.to(device, non_blocking=True), y.to(device, non_blocking=True)) for x, y in batch]
+                if model_type == Models.MAE:
+                    pred, loss_mask, target = model(batch)
+                    test_loss += loss_fn(pred, loss_mask, target).item()
+                elif model_type == Models.VIT_OMR:
+                    pred, target_seqs = model(batch)
+                    test_loss += loss_fn(pred, target_seqs).item()
 
-            if batch_idx % 25 == 0:
-                current_ex = batch_idx * batch_size + len(batch)
-                print(f"[{current_ex:>5d}/{len_dataset:>5d}]")
-        
+                if batch_idx % 25 == 0:
+                    current_ex = batch_idx * batch_size + len(batch)
+                    print(f"[{current_ex:>5d}/{len_dataset:>5d}]")
+            
     avg_loss = test_loss / num_batches
     print(f"Average test loss: {avg_loss}")
     return avg_loss

@@ -7,7 +7,7 @@ from config import GRAND_STAFF_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR, OLIMPIC_SYNTH
 from utils import DynamicResize, cosine_anneal_with_warmup, save_training_stats, ragged_collate_fn
 from torch.utils.data import ConcatDataset, DataLoader
 from torchvision.transforms import v2, InterpolationMode
-from torch.amp import autocast, GradScaler
+from torch.amp import autocast
 from pre_train import PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH
 import time
 
@@ -16,7 +16,7 @@ CHECKPOINTS_DIR_PATH = MODEL_DIR_PATH / "checkpoints"
 STATS_DIR_PATH = MODEL_DIR_PATH / "stats"
 
 PRETRAINED_MAE_STATE_DICT_PATH = "mae_pre_train/pretrained_mae.pth"
-ENCODER_FINE_TUNE_DEPTH = 4
+ENCODER_FINE_TUNE_DEPTH = 6
 MAX_IMG_SEQ_LEN = 512 # for DynamicResize
 MAX_LMX_SEQ_LEN = 1536 # in tokens, max lmx token sequence length to support
 LMX_VOCAB_PATH = "lmx_vocab.txt"
@@ -51,16 +51,15 @@ class PrepareLMXSequence(nn.Module):
         tokens.append(LMX_EOS_TOKEN)
         return torch.tensor([self.tokens_to_idxs[token] for token in tokens])
 
-def save_omr_training_state(path, vitomr, optimizer, scheduler, scaler):
+def save_omr_training_state(path, vitomr, optimizer, scheduler):
     print(f"Saving omr training state to {path}")
     torch.save({
         "vitomr_state_dict": vitomr.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "scheduler_state_dict": scheduler.state_dict(),
-        "scaler_state_dict": scaler.state_dict(),
     }, path)
 
-def train_loop(vitomr, dataloader, loss_fn, optimizer, scheduler, device, scaler):
+def train_loop(vitomr, dataloader, loss_fn, optimizer, scheduler, device):
     print("Starting training")
     vitomr.train()
     epoch_loss = 0
@@ -70,13 +69,12 @@ def train_loop(vitomr, dataloader, loss_fn, optimizer, scheduler, device, scaler
 
     for batch_idx, batch in enumerate(dataloader):
         batch = [(x.to(device, non_blocking=True), y.to(device, non_blocking=True)) for x, y in batch]
-        with autocast(device_type=device, dtype=torch.float16):
+        with autocast(device_type=device, dtype=torch.bfloat16):
             pred, target_seqs = vitomr(batch)
             loss = loss_fn(pred, target_seqs)
         epoch_loss += loss.item()
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
+        loss.backward()
+        optimizer.step()
         optimizer.zero_grad()
         scheduler.step()
 
@@ -88,7 +86,7 @@ def train_loop(vitomr, dataloader, loss_fn, optimizer, scheduler, device, scaler
     print(f"Average training loss over this epoch: {avg_loss}")
     return avg_loss
 
-def validation_loop(vitomr, dataloader, loss_fn, device, scaler):
+def validation_loop(vitomr, dataloader, loss_fn, device):
     print("Starting validation")
     vitomr.eval()
     epoch_loss = 0
@@ -97,7 +95,7 @@ def validation_loop(vitomr, dataloader, loss_fn, device, scaler):
     batch_size = dataloader.batch_size
 
     with torch.no_grad():
-        with autocast(device_type=device, dtype=torch.float16):
+        with autocast(device_type=device, dtype=torch.bfloat16):
             for batch_idx, batch in enumerate(dataloader):
                 batch = [(x.to(device, non_blocking=True), y.to(device, non_blocking=True)) for x, y in batch]
                 pred, target_seqs = vitomr(batch)
@@ -128,7 +126,6 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
     num_batches = len(train_dataloader)
     print(f"Setting up scheduler with {WARMUP_EPOCHS} warm-up epochs, {EPOCHS} total epochs, {MIN_LR} minimum learning rate, {num_batches} batches per epoch")
     scheduler = cosine_anneal_with_warmup(optimizer, WARMUP_EPOCHS, EPOCHS, MIN_LR, num_train_batches=num_batches)
-    scaler = GradScaler()
     
     loss_fn = OMRLoss(vitomr.decoder.padding_idx)
 
@@ -150,19 +147,19 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
         epoch_lrs.append((base_lr, fine_tune_lr))
 
         train_start_time = time.perf_counter()
-        epoch_train_loss = train_loop(vitomr, train_dataloader, loss_fn, optimizer, scheduler, device, scaler)
+        epoch_train_loss = train_loop(vitomr, train_dataloader, loss_fn, optimizer, scheduler, device)
         train_end_time = time.perf_counter()
         epoch_training_losses.append(epoch_train_loss)
         time_delta = train_end_time - train_start_time
         print(f"Time for this training epoch: {time_delta:>0.2f} seconds ({time_delta / 60:>0.2f} minutes)")
 
-        epoch_validation_loss = validation_loop(vitomr, validation_dataloader, loss_fn, device, scaler)
+        epoch_validation_loss = validation_loop(vitomr, validation_dataloader, loss_fn, device)
         epoch_validation_losses.append(epoch_validation_loss)
 
         if (i + 1) % CHECKPOINT_FREQ == 0:
             print("Checkpointing model, optimizer, scheduler state dicts")
             checkpoint_path = CHECKPOINTS_DIR_PATH / f"epoch_{i+1}_checkpoint.pth"
-            save_omr_training_state(checkpoint_path, vitomr, optimizer, scheduler, scaler)
+            save_omr_training_state(checkpoint_path, vitomr, optimizer, scheduler)
             print("Checkpointing stats plots")
             save_training_stats(STATS_DIR_PATH, epoch_training_losses, epoch_validation_losses, epoch_lrs, fine_tuning=True)
 
@@ -170,7 +167,7 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
     save_training_stats(STATS_DIR_PATH, epoch_training_losses, epoch_validation_losses, epoch_lrs, fine_tuning=True)
     print("Saving final omr training state")
     omr_train_state_path = MODEL_DIR_PATH / f"ending_omr_train_state.pth"
-    save_omr_training_state(omr_train_state_path, vitomr, optimizer, scheduler, scaler)
+    save_omr_training_state(omr_train_state_path, vitomr, optimizer, scheduler)
     model_path = MODEL_DIR_PATH / "vitomr.pth"
     print(f"Saving final model state dict separately to {model_path}")
     torch.save(vitomr.state_dict(), model_path)
