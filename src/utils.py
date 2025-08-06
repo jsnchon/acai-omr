@@ -122,7 +122,7 @@ def show_vitomr_prediction(vitomr, ex, sample_save_dir: str):
         f.write(target_seq)
 
 # dataset should be initialized with a ToTensor transformation for any images
-def display_dataset_img(dataset, index): 
+def display_dataset_img(dataset, index, save_path): 
     data = dataset[index]
 
     if isinstance(data, tuple):
@@ -139,18 +139,18 @@ def display_dataset_img(dataset, index):
 
         fig, axs = plt.subplots(rows, COLS)
         if rows == 1: # tuple contains one tensor, so one subplot and axs is just one axes object, not a list
-            axs.imshow(img_tensors[0].permute(1, 2, 0).numpy())
+            axs.imshow(img_tensors[0].squeeze(0), cmap="gray")
         else:
             # one image per col
             for i in range(rows):
                 ax = axs[i]
-                ax.imshow(img_tensors[i].permute(1, 2, 0).numpy()) 
+                ax.imshow(img_tensors[0].squeeze(0), cmap="gray")
     else:
         fig, ax = plt.subplots()
-        ax.imshow(data.permute(1, 2, 0).numpy())
+        ax.imshow(img_tensors[0].squeeze(0), cmap="gray")
 
     fig.suptitle(f"Index: {index}")
-    plt.show()
+    plt.savefig(save_path)
     return data
 
 def sample_pre_train_dataset(pre_train_dataset, num_samples, patch_size):
