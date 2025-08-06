@@ -272,13 +272,13 @@ def save_training_stats(stats_dir_path, epoch_training_losses, epoch_validation_
     graph_model_stats(epoch_training_losses, epoch_validation_losses, loss_plot_path)
     graph_lrs(epoch_lrs, lr_plot_path, fine_tuning)
     if fine_tuning:
-        base_lrs, fine_tune_lrs = zip(*epoch_lrs)
+        base_lrs, fine_tune_base_lrs = zip(*epoch_lrs)
         stats_df = pd.DataFrame({
             "Epoch": np.arange(1, len(epoch_lrs) + 1),
             "Training loss": epoch_training_losses,
             "Validation loss": epoch_validation_losses,
             "Base lr at start": list(base_lrs),
-            "Fine-tune lr at start": list(fine_tune_lrs),
+            "Fine-tune base lr at start": list(fine_tune_base_lrs),
         })
         print(f"Writing training stats csv to {csv_path}")
         stats_df.to_csv(csv_path)

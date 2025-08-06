@@ -321,10 +321,14 @@ class FineTuneOMREncoder(OMREncoder):
         num_frozen_layers = self.num_layers - self.fine_tune_depth
 
         base_encoder_layer_kwargs = {"d_model": self.hidden_dim, "nhead": num_heads, "dim_feedforward": mlp_dim, "activation": "gelu", "batch_first": True}
-        self.frozen_blocks = nn.TransformerEncoder(
-            encoder_layer=nn.TransformerEncoderLayer(dropout=0.0, **base_encoder_layer_kwargs),
+        if num_frozen_layers == 0: # full fine-tune
+            self.frozen_blocks = None
+        else:
+            self.frozen_blocks = nn.TransformerEncoder(
+                encoder_layer=nn.TransformerEncoderLayer(dropout=0.0, **base_encoder_layer_kwargs),
             num_layers=num_frozen_layers
-        )
+            )
+
         self.fine_tune_blocks = nn.TransformerEncoder(
             encoder_layer=nn.TransformerEncoderLayer(dropout=0.1, **base_encoder_layer_kwargs),
             num_layers=self.fine_tune_depth,
@@ -333,12 +337,13 @@ class FineTuneOMREncoder(OMREncoder):
 
     def forward(self, x: list[torch.Tensor]):
         x, src_key_padding_mask = self.batchify(x)
-        x = self.frozen_blocks(x, src_key_padding_mask=src_key_padding_mask)
+        if self.frozen_blocks:
+            x = self.frozen_blocks(x, src_key_padding_mask=src_key_padding_mask)
         x = self.fine_tune_blocks(x, src_key_padding_mask=src_key_padding_mask)
         return x, src_key_padding_mask 
 
 class OMRDecoder(nn.Module):
-    def __init__(self, max_lmx_seq_len, lmx_vocab_path, num_layers=10, hidden_dim=1024, num_heads=16, mlp_dim=4096, transformer_dropout=0.15):
+    def __init__(self, max_lmx_seq_len, lmx_vocab_path, num_layers=10, hidden_dim=1024, num_heads=16, mlp_dim=4096, transformer_dropout=0.1):
         super().__init__()
         self.max_lmx_seq_len = max_lmx_seq_len
         self.hidden_dim = hidden_dim
@@ -401,8 +406,8 @@ class ViTOMR(nn.Module):
         encoder_state_dict = self.create_omr_encoder_state_dict(pretrained_mae_state_dict)
         self.encoder.load_state_dict(encoder_state_dict)
 
-        # depending on the type of encoder being used, either freeze the whole thing or just the frozen blocks
-        if isinstance(self.encoder, FineTuneOMREncoder):
+        # depending on the type of encoder being used, either freeze the whole thing or just the frozen blocks or none at all (for full fine-tune)
+        if isinstance(self.encoder, FineTuneOMREncoder) and self.encoder.frozen_blocks:
             for param in self.encoder.frozen_blocks.parameters():
                 param.requires_grad = False
 

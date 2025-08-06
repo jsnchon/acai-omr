@@ -16,7 +16,7 @@ CHECKPOINTS_DIR_PATH = MODEL_DIR_PATH / "checkpoints"
 STATS_DIR_PATH = MODEL_DIR_PATH / "stats"
 
 PRETRAINED_MAE_STATE_DICT_PATH = "mae_pre_train/pretrained_mae.pth"
-ENCODER_FINE_TUNE_DEPTH = 6
+ENCODER_FINE_TUNE_DEPTH = 12
 MAX_IMG_SEQ_LEN = 512 # for DynamicResize
 MAX_LMX_SEQ_LEN = 1536 # in tokens, max lmx token sequence length to support
 LMX_VOCAB_PATH = "lmx_vocab.txt"
@@ -26,12 +26,13 @@ NUM_WORKERS = 26
 
 EPOCHS = 100
 CHECKPOINT_FREQ = 10
-FINE_TUNE_BASE_LR = 2e-5
-BASE_LR = 2e-4
+FINE_TUNE_BASE_LR = 1e-5
+FINE_TUNE_DECAY_FACTOR = 0.9
+BASE_LR = 1e-4
 MIN_LR = 1e-6
 ADAMW_BETAS = (0.9, 0.95)
 ADAMW_WEIGHT_DECAY = 0.01
-WARMUP_EPOCHS = 5 # step scheduler per-batch since doing so little epochs
+WARMUP_EPOCHS = 10 # step scheduler per-batch since doing so little epochs
 BATCH_SIZE = 32
 
 # additional regularization: dropout of 0.1 in transition head and 0.15 in decoder, label smoothing of 0.1
@@ -109,6 +110,17 @@ def validation_loop(vitomr, dataloader, loss_fn, device):
     print(f"Average validation loss for this epoch: {avg_loss}")
     return avg_loss
 
+def create_fine_tune_param_groups(vitomr, base_lr, fine_tune_base_lr, fine_tune_decay_factor):
+    print(f"Creating optimizer parameter groups using base lr {base_lr} for transition head and decoder, {fine_tune_base_lr} as encoder fine-tune base lr with {fine_tune_decay_factor} layer-wise decay factor")
+    param_groups = [
+        {"params": vitomr.transition_head.parameters(), "lr": BASE_LR}, 
+        {"params": vitomr.decoder.parameters(), "lr": BASE_LR}, 
+    ]
+    for i, layer in enumerate(reversed(vitomr.encoder.fine_tune_blocks.layers)):
+        layer_lr = FINE_TUNE_BASE_LR * (fine_tune_decay_factor ** i)
+        param_groups.append({"params": layer.parameters(), "lr": layer_lr})
+    return param_groups
+
 def omr_train(vitomr, train_dataset, validation_dataset, device):
     print("Model architecture\n--------------------")
     print(vitomr)
@@ -118,11 +130,10 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
     train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
     validation_dataloader = DataLoader(validation_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
     print(f"Dataset augmentation probability: {AUGMENTATION_P}")
-    print(f"Setting up AdamW with {FINE_TUNE_BASE_LR} base lr for encoder fine tuning, {BASE_LR} base lr for the transition head/decoder, betas {ADAMW_BETAS}, weight decay {ADAMW_WEIGHT_DECAY}")
-    optimizer = torch.optim.AdamW([{"params": vitomr.encoder.parameters(), "lr": FINE_TUNE_BASE_LR}, 
-                                   {"params": vitomr.transition_head.parameters(), "lr": BASE_LR}, 
-                                   {"params": vitomr.decoder.parameters(), "lr": BASE_LR}], 
-                                   betas=ADAMW_BETAS, weight_decay=ADAMW_WEIGHT_DECAY)
+    param_groups = create_fine_tune_param_groups(vitomr, BASE_LR, FINE_TUNE_BASE_LR, FINE_TUNE_DECAY_FACTOR)
+    print(f"Encoder fine-tune lrs by layer: {[group["lr"] for group in param_groups]}")
+    print(f"Setting up AdamW with betas {ADAMW_BETAS}, weight decay {ADAMW_WEIGHT_DECAY}")
+    optimizer = torch.optim.AdamW(param_groups, betas=ADAMW_BETAS, weight_decay=ADAMW_WEIGHT_DECAY)
     num_batches = len(train_dataloader)
     print(f"Setting up scheduler with {WARMUP_EPOCHS} warm-up epochs, {EPOCHS} total epochs, {MIN_LR} minimum learning rate, {num_batches} batches per epoch")
     scheduler = cosine_anneal_with_warmup(optimizer, WARMUP_EPOCHS, EPOCHS, MIN_LR, num_train_batches=num_batches)
@@ -142,9 +153,9 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
     for i in range(EPOCHS):
         print(f"Epoch {i + 1}\n--------------------")
         base_lr = optimizer.param_groups[-1]["lr"] # assuming transition head/decoder lr is the same
-        fine_tune_lr = optimizer.param_groups[0]["lr"]
-        print(f"Base learning rate at epoch start: {base_lr:>0.8f}\nFine-tune learning rate at epoch start: {fine_tune_lr:>0.8f}")
-        epoch_lrs.append((base_lr, fine_tune_lr))
+        fine_tune_base_lr = optimizer.param_groups[0]["lr"]
+        print(f"Base learning rate at epoch start: {base_lr:>0.8f}\nFine-tune learning rate at epoch start: {fine_tune_base_lr:>0.8f}")
+        epoch_lrs.append((base_lr, fine_tune_base_lr))
 
         train_start_time = time.perf_counter()
         epoch_train_loss = train_loop(vitomr, train_dataloader, loss_fn, optimizer, scheduler, device)
