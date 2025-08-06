@@ -35,10 +35,9 @@ ADAMW_WEIGHT_DECAY = 0.01
 WARMUP_EPOCHS = 10 # step scheduler per-batch since doing so little epochs
 BATCH_SIZE = 32
 
-# additional regularization: dropout of 0.1 in transition head and 0.15 in decoder, label smoothing of 0.1
+# additional regularization: dropout of 0.1 in encoder, transition head, decoder, label smoothing of 0.05
 
 # TODO:
-# change eval_model.py to also use AMP
 # implement omr autoregressive beam search inference
 
 class PrepareLMXSequence(nn.Module):
@@ -113,8 +112,8 @@ def validation_loop(vitomr, dataloader, loss_fn, device):
 def create_fine_tune_param_groups(vitomr, base_lr, fine_tune_base_lr, fine_tune_decay_factor):
     print(f"Creating optimizer parameter groups using base lr {base_lr} for transition head and decoder, {fine_tune_base_lr} as encoder fine-tune base lr with {fine_tune_decay_factor} layer-wise decay factor")
     param_groups = [
-        {"params": vitomr.transition_head.parameters(), "lr": BASE_LR}, 
         {"params": vitomr.decoder.parameters(), "lr": BASE_LR}, 
+        {"params": vitomr.transition_head.parameters(), "lr": BASE_LR}, 
     ]
     for i, layer in enumerate(reversed(vitomr.encoder.fine_tune_blocks.layers)):
         layer_lr = FINE_TUNE_BASE_LR * (fine_tune_decay_factor ** i)
@@ -124,8 +123,10 @@ def create_fine_tune_param_groups(vitomr, base_lr, fine_tune_base_lr, fine_tune_
 def omr_train(vitomr, train_dataset, validation_dataset, device):
     print("Model architecture\n--------------------")
     print(vitomr)
-    params_count = sum(p.numel() for p in vitomr.parameters() if p.requires_grad)
-    print(f"Trainable parameters count: {params_count}") 
+    encoder_params_count = sum(p.numel() for p in vitomr.encoder.parameters() if p.requires_grad)
+    transition_head_params_count = sum(p.numel() for p in vitomr.transition_head.parameters() if p.requires_grad)
+    decoder_params_count = sum(p.numel() for p in vitomr.decoder.parameters() if p.requires_grad)
+    print(f"Trainable parameters count\n--------------------\nEncoder: {encoder_params_count}\nTransition head: {transition_head_params_count}\nDecoder: {decoder_params_count}\nTotal: {encoder_params_count + transition_head_params_count + decoder_params_count}") 
     print(f"Setting up DataLoaders with batch size {BATCH_SIZE}, shuffle, {NUM_WORKERS} workers, ragged collate function, pinned memory")
     train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
     validation_dataloader = DataLoader(validation_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
@@ -152,8 +153,8 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
     print(f"OMR training for {EPOCHS} epochs. Checkpointing every {CHECKPOINT_FREQ} epochs")
     for i in range(EPOCHS):
         print(f"Epoch {i + 1}\n--------------------")
-        base_lr = optimizer.param_groups[-1]["lr"] # assuming transition head/decoder lr is the same
-        fine_tune_base_lr = optimizer.param_groups[0]["lr"]
+        base_lr = optimizer.param_groups[0]["lr"] # assuming transition head/decoder lr is the same
+        fine_tune_base_lr = optimizer.param_groups[2]["lr"] # record the highest fine-tune lr all the decayed ones are based on
         print(f"Base learning rate at epoch start: {base_lr:>0.8f}\nFine-tune learning rate at epoch start: {fine_tune_base_lr:>0.8f}")
         epoch_lrs.append((base_lr, fine_tune_base_lr))
 
@@ -209,17 +210,17 @@ base_lmx_transform = PrepareLMXSequence(decoder.tokens_to_idxs)
 
 if __name__ == "__main__":
 
-    # slightly stronger augmentation since this training stage should be way easier
+    # slightly stronger augmentation since this training stage should be aided by the pre-training
     camera_augment = v2.RandomApply(transforms=[
         v2.GaussianBlur(kernel_size=15, sigma=1),
         v2.GaussianNoise(sigma=0.03),
         v2.RandomRotation(degrees=(-2, 2), interpolation=InterpolationMode.BILINEAR),
-        v2.RandomPerspective(distortion_scale=0.1, p=1),
+        v2.RandomPerspective(distortion_scale=0.15, p=1),
         v2.ColorJitter(brightness=0.3, saturation=0.2, contrast=0.2, hue=0),
     ], p=AUGMENTATION_P)
 
     grandstaff_camera_augment = v2.Compose([
-        v2.RandomPerspective(distortion_scale=0.1, p=1),
+        v2.RandomPerspective(distortion_scale=0.15, p=1),
         v2.ColorJitter(brightness=0.3, saturation=0.2, contrast=0.2, hue=0),
     ])
 

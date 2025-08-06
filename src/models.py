@@ -326,7 +326,7 @@ class FineTuneOMREncoder(OMREncoder):
         else:
             self.frozen_blocks = nn.TransformerEncoder(
                 encoder_layer=nn.TransformerEncoderLayer(dropout=0.0, **base_encoder_layer_kwargs),
-            num_layers=num_frozen_layers
+                num_layers=num_frozen_layers
             )
 
         self.fine_tune_blocks = nn.TransformerEncoder(
@@ -412,11 +412,13 @@ class ViTOMR(nn.Module):
                 param.requires_grad = False
 
             self.encoder.frozen_blocks.eval()
-        else:
+        elif isinstance(self.encoder, OMREncoder) and not isinstance(self.encoder, FineTuneOMREncoder):
             for param in self.encoder.parameters():
                 param.requires_grad = False
             
             self.encoder.eval()
+        # for full fine-tune, we leave the state_dict as is (everything has requires_grad)
+
 
         self.decoder = omr_decoder
 
@@ -505,7 +507,7 @@ class ViTOMR(nn.Module):
 
 # wrapper to handle the logic with cross entropy loss
 class OMRLoss(nn.Module):
-    def __init__(self, padding_idx, label_smoothing=0.1):
+    def __init__(self, padding_idx, label_smoothing=0.05):
         super().__init__()
         self.loss_fn = nn.CrossEntropyLoss(ignore_index=padding_idx, label_smoothing=label_smoothing)
 
