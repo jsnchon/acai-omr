@@ -312,7 +312,7 @@ class OMREncoder(Encoder):
         return embeddings, src_key_padding_mask 
 
 class FineTuneOMREncoder(OMREncoder):
-    def __init__(self, patch_size, pe_max_height, pe_max_width, fine_tune_depth, num_layers=12, hidden_dim=768, num_heads=12, mlp_dim=3072, transformer_dropout=0.1):
+    def __init__(self, patch_size, pe_max_height, pe_max_width, fine_tune_depth, num_layers=12, hidden_dim=768, num_heads=12, mlp_dim=3072, transformer_dropout=0.05):
         super().__init__(patch_size, pe_max_height, pe_max_width, num_layers, hidden_dim, num_heads, mlp_dim)
         del self.encoder_blocks
 
@@ -330,7 +330,7 @@ class FineTuneOMREncoder(OMREncoder):
             )
 
         self.fine_tune_blocks = nn.TransformerEncoder(
-            encoder_layer=nn.TransformerEncoderLayer(dropout=0.1, **base_encoder_layer_kwargs),
+            encoder_layer=nn.TransformerEncoderLayer(dropout=transformer_dropout, **base_encoder_layer_kwargs),
             num_layers=self.fine_tune_depth,
             norm=nn.LayerNorm(self.hidden_dim, eps=1e-6)
         )
@@ -399,7 +399,7 @@ class OMRDecoder(nn.Module):
 class ViTOMR(nn.Module):
     # masking logic for image encodings and padded LMX token sequences. Add prepare_for_decoder method to do this?
     
-    def __init__(self, omr_encoder, pretrained_mae_state_dict, omr_decoder, transition_head_dim=4096, transition_head_dropout_p=0.1):
+    def __init__(self, omr_encoder, pretrained_mae_state_dict, omr_decoder, transition_head_dim=4096, transition_head_dropout_p=0.05):
         super().__init__()
         self.encoder = omr_encoder
 
@@ -410,13 +410,9 @@ class ViTOMR(nn.Module):
         if isinstance(self.encoder, FineTuneOMREncoder) and self.encoder.frozen_blocks:
             for param in self.encoder.frozen_blocks.parameters():
                 param.requires_grad = False
-
-            self.encoder.frozen_blocks.eval()
         elif isinstance(self.encoder, OMREncoder) and not isinstance(self.encoder, FineTuneOMREncoder):
             for param in self.encoder.parameters():
                 param.requires_grad = False
-            
-            self.encoder.eval()
         # for full fine-tune, we leave the state_dict as is (everything has requires_grad)
 
 

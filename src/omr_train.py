@@ -35,7 +35,7 @@ ADAMW_WEIGHT_DECAY = 0.01
 WARMUP_EPOCHS = 10 # step scheduler per-batch since doing so little epochs
 BATCH_SIZE = 32
 
-# additional regularization: dropout of 0.1 in encoder, transition head, decoder, label smoothing of 0.05
+# additional regularization: dropout of 0.05 in encoder and transition head, dropout of 0.1 in decoder, label smoothing of 0.05
 
 # TODO:
 # implement omr autoregressive beam search inference
