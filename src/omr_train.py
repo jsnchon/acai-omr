@@ -125,7 +125,7 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
     validation_dataloader = DataLoader(validation_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
     print(f"Dataset augmentation probability: {AUGMENTATION_P}")
 
-    print(f"Creating optimizer parameter groups using base lr {base_lr} for transition head and decoder, {fine_tune_base_lr} as encoder fine-tune base lr with {fine_tune_decay_factor} layer-wise decay factor")
+    print(f"Creating optimizer parameter groups using base lr {BASE_LR} for transition head and decoder, {FINE_TUNE_BASE_LR} as encoder fine-tune base lr with {FINE_TUNE_DECAY_FACTOR} layer-wise decay factor")
     param_groups = vitomr.create_fine_tune_param_groups(BASE_LR, FINE_TUNE_BASE_LR, FINE_TUNE_DECAY_FACTOR)
     print(f"Encoder fine-tune lrs by layer: {[group["lr"] for group in param_groups]}")
 
