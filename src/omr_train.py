@@ -24,16 +24,17 @@ LMX_VOCAB_PATH = "lmx_vocab.txt"
 AUGMENTATION_P = 0.3
 NUM_WORKERS = 26
 
-EPOCHS = 100
-CHECKPOINT_FREQ = 10
-FINE_TUNE_BASE_LR = 1e-5
+EPOCHS = 60
+CHECKPOINT_FREQ = 5
+FINE_TUNE_BASE_LR = 5e-6
 FINE_TUNE_DECAY_FACTOR = 0.9
-BASE_LR = 1e-4
+BASE_LR = 5e-5
 MIN_LR = 1e-6
 ADAMW_BETAS = (0.9, 0.95)
 ADAMW_WEIGHT_DECAY = 0.01
 WARMUP_EPOCHS = 10 # step scheduler per-batch since doing so little epochs
-BATCH_SIZE = 32
+BATCH_SIZE = 16
+GRAD_ACCUMULATION_STEPS = 2
 
 # additional regularization: dropout of 0.05 in encoder and transition head, dropout of 0.1 in decoder, label smoothing of 0.05
 
@@ -59,7 +60,7 @@ def save_omr_training_state(path, vitomr, optimizer, scheduler):
         "scheduler_state_dict": scheduler.state_dict(),
     }, path)
 
-def train_loop(vitomr, dataloader, loss_fn, optimizer, scheduler, device):
+def train_loop(vitomr, dataloader, loss_fn, optimizer, grad_accumulation_steps, scheduler, device):
     print("Starting training")
     vitomr.train()
     epoch_loss = 0
@@ -74,13 +75,15 @@ def train_loop(vitomr, dataloader, loss_fn, optimizer, scheduler, device):
             loss = loss_fn(pred, target_seqs)
         epoch_loss += loss.item()
         loss.backward()
-        optimizer.step()
-        optimizer.zero_grad()
-        scheduler.step()
 
         if batch_idx % 100 == 0:
             current_ex = batch_idx * batch_size + len(batch)
             print(f"[{current_ex:>6d}/{len_dataset:>6d}]")
+
+        if (batch_idx + 1) % grad_accumulation_steps == 0:
+            optimizer.step()
+            optimizer.zero_grad()
+            scheduler.step()
     
     avg_loss = epoch_loss / num_batches
     print(f"Average training loss over this epoch: {avg_loss}")
@@ -109,17 +112,6 @@ def validation_loop(vitomr, dataloader, loss_fn, device):
     print(f"Average validation loss for this epoch: {avg_loss}")
     return avg_loss
 
-def create_fine_tune_param_groups(vitomr, base_lr, fine_tune_base_lr, fine_tune_decay_factor):
-    print(f"Creating optimizer parameter groups using base lr {base_lr} for transition head and decoder, {fine_tune_base_lr} as encoder fine-tune base lr with {fine_tune_decay_factor} layer-wise decay factor")
-    param_groups = [
-        {"params": vitomr.decoder.parameters(), "lr": BASE_LR}, 
-        {"params": vitomr.transition_head.parameters(), "lr": BASE_LR}, 
-    ]
-    for i, layer in enumerate(reversed(vitomr.encoder.fine_tune_blocks.layers)):
-        layer_lr = FINE_TUNE_BASE_LR * (fine_tune_decay_factor ** i)
-        param_groups.append({"params": layer.parameters(), "lr": layer_lr})
-    return param_groups
-
 def omr_train(vitomr, train_dataset, validation_dataset, device):
     print("Model architecture\n--------------------")
     print(vitomr)
@@ -127,16 +119,22 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
     transition_head_params_count = sum(p.numel() for p in vitomr.transition_head.parameters() if p.requires_grad)
     decoder_params_count = sum(p.numel() for p in vitomr.decoder.parameters() if p.requires_grad)
     print(f"Trainable parameters count\n--------------------\nEncoder: {encoder_params_count}\nTransition head: {transition_head_params_count}\nDecoder: {decoder_params_count}\nTotal: {encoder_params_count + transition_head_params_count + decoder_params_count}") 
+
     print(f"Setting up DataLoaders with batch size {BATCH_SIZE}, shuffle, {NUM_WORKERS} workers, ragged collate function, pinned memory")
     train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
     validation_dataloader = DataLoader(validation_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
     print(f"Dataset augmentation probability: {AUGMENTATION_P}")
-    param_groups = create_fine_tune_param_groups(vitomr, BASE_LR, FINE_TUNE_BASE_LR, FINE_TUNE_DECAY_FACTOR)
+
+    print(f"Creating optimizer parameter groups using base lr {base_lr} for transition head and decoder, {fine_tune_base_lr} as encoder fine-tune base lr with {fine_tune_decay_factor} layer-wise decay factor")
+    param_groups = vitomr.create_fine_tune_param_groups(BASE_LR, FINE_TUNE_BASE_LR, FINE_TUNE_DECAY_FACTOR)
     print(f"Encoder fine-tune lrs by layer: {[group["lr"] for group in param_groups]}")
+
     print(f"Setting up AdamW with betas {ADAMW_BETAS}, weight decay {ADAMW_WEIGHT_DECAY}")
     optimizer = torch.optim.AdamW(param_groups, betas=ADAMW_BETAS, weight_decay=ADAMW_WEIGHT_DECAY)
-    num_batches = len(train_dataloader)
-    print(f"Setting up scheduler with {WARMUP_EPOCHS} warm-up epochs, {EPOCHS} total epochs, {MIN_LR} minimum learning rate, {num_batches} batches per epoch")
+
+    print(f"Accumulating gradients for {GRAD_ACCUMULATION_STEPS} for an effective batch size of {GRAD_ACCUMULATION_STEPS * BATCH_SIZE}")
+    num_batches = len(train_dataloader) / GRAD_ACCUMULATION_STEPS
+    print(f"Setting up scheduler with {WARMUP_EPOCHS} warm-up epochs, {EPOCHS} total epochs, {MIN_LR} minimum learning rate, {num_batches} (effective) batches per epoch")
     scheduler = cosine_anneal_with_warmup(optimizer, WARMUP_EPOCHS, EPOCHS, MIN_LR, num_train_batches=num_batches)
     
     loss_fn = OMRLoss(vitomr.decoder.padding_idx)
@@ -159,7 +157,7 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
         epoch_lrs.append((base_lr, fine_tune_base_lr))
 
         train_start_time = time.perf_counter()
-        epoch_train_loss = train_loop(vitomr, train_dataloader, loss_fn, optimizer, scheduler, device)
+        epoch_train_loss = train_loop(vitomr, train_dataloader, loss_fn, optimizer, GRAD_ACCUMULATION_STEPS, scheduler, device)
         train_end_time = time.perf_counter()
         epoch_training_losses.append(epoch_train_loss)
         time_delta = train_end_time - train_start_time
@@ -190,7 +188,7 @@ print(f"Using device {device}")
 print(f"Setting up encoder with patch size {PATCH_SIZE}, pe grid of {PE_MAX_HEIGHT} x {PE_MAX_WIDTH}, fine-tuning last {ENCODER_FINE_TUNE_DEPTH} layers")
 encoder = FineTuneOMREncoder(PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH, ENCODER_FINE_TUNE_DEPTH)
 print(f"Setting up decoder with max lmx sequence length {MAX_LMX_SEQ_LEN}, vocab file {LMX_VOCAB_PATH}")
-decoder = OMRDecoder(MAX_LMX_SEQ_LEN, LMX_VOCAB_PATH)
+decoder = OMRDecoder(MAX_LMX_SEQ_LEN, LMX_VOCAB_PATH, num_layers=20)
 if device == "cpu":
     pretrained_mae_state_dict = torch.load(PRETRAINED_MAE_STATE_DICT_PATH, map_location=torch.device("cpu"))
 else:

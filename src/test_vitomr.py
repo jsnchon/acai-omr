@@ -13,7 +13,8 @@ debug_kwargs = {"num_layers": 2, "num_heads": 1, "hidden_dim": 10, "mlp_dim": 1}
 # the encoder structure used in the pre_train loop test
 pretrained_debug_encoder = OMREncoder(16, PE_MAX_HEIGHT, PE_MAX_WIDTH, **debug_kwargs)
 debug_mae_state_dict = torch.load(DEBUG_PRETRAINED_MAE_PATH)
-debug_vitomr = ViTOMR(pretrained_debug_encoder, debug_mae_state_dict, OMRDecoder(MAX_LMX_SEQ_LEN, "lmx_vocab.txt", **debug_kwargs))
+debug_decoder = OMRDecoder(MAX_LMX_SEQ_LEN, "lmx_vocab.txt", **debug_kwargs)
+debug_vitomr = ViTOMR(pretrained_debug_encoder, debug_mae_state_dict, debug_decoder)
  
 def test_encoder_batchify():
     patch_size = 2
@@ -190,13 +191,13 @@ def test_show_vitomr_prediction():
     debug_dataset = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.train.txt", img_transform=base_img_transform, lmx_transform=base_lmx_transform)
     show_vitomr_prediction(vitomr, debug_dataset[0], "vitomr_prediction_test")
 
-def test_vitomr_with_fine_tune():
+def test_partial_fine_tune():
     encoder = FineTuneOMREncoder(16, PE_MAX_HEIGHT, PE_MAX_WIDTH, 1, **debug_kwargs)
-    vitomr = ViTOMR(encoder, debug_mae_state_dict, OMRDecoder(MAX_LMX_SEQ_LEN, "lmx_vocab.txt", **debug_kwargs))
-    optimizer = torch.optim.SGD(vitomr.parameters(), lr=0.1)
+    vitomr = ViTOMR(encoder, debug_mae_state_dict, debug_decoder)
+    optimizer = torch.optim.SGD(vitomr.parameters(), lr=10)
     loss_fn = OMRLoss(vitomr.decoder.padding_idx)
 
-    encoder_before = {name: param.clone().detach() for name, param in vitomr.encoder.named_parameters()}
+    encoder_before = {name: param.clone() for name, param in vitomr.encoder.named_parameters()}
     x = [(torch.rand(NUM_CHANNELS, 64, 128), torch.randint(high=VOCAB_LEN, size=(8,))),
          (torch.rand(NUM_CHANNELS, 32, 32), torch.randint(high=VOCAB_LEN, size=(6,)))]
     pred, target_seqs = vitomr(x)
@@ -205,15 +206,126 @@ def test_vitomr_with_fine_tune():
     optimizer.step()
     print(f"Prediction\n{pred}\nTarget sequences\n{target_seqs}")
     assert pred.shape == torch.Size([2, 7, VOCAB_LEN])
-    encoder_after = {name: param.clone().detach() for name, param in vitomr.encoder.named_parameters()}
+    encoder_after = {name: param for name, param in vitomr.encoder.named_parameters()}
 
     # ensure encoder finetuning is working properly
     for name, param in encoder_before.items():
         if "frozen" in name:
+            assert not param.requires_grad
+            assert torch.equal(param, encoder_after[name])
+        elif "pos_embedding" in name or "projection" in name:
+            assert not param.requires_grad
             assert torch.equal(param, encoder_after[name])
         else:
+            assert param.requires_grad
             assert not torch.equal(param, encoder_after[name])
 
+def test_create_param_groups():
+    # partial fine tune
+    encoder = FineTuneOMREncoder(16, PE_MAX_HEIGHT, PE_MAX_WIDTH, 1, **debug_kwargs)
+    vitomr = ViTOMR(encoder, debug_mae_state_dict, debug_decoder)
+    
+    base_lr = 100.0
+    base_fine_tune_lr = 50.0
+    lr_decay = 0.5
+    param_groups = vitomr.create_fine_tune_param_groups(base_lr, base_fine_tune_lr, lr_decay)
+    
+    # map all parameters in all the created groups to their group lr
+    param_to_lr = {}
+    for group in param_groups:
+        for param in group["params"]:
+            param_to_lr[param] = group["lr"]
+
+    print("PARTIAL FINE TUNE")
+    print(f"{'Parameter Name':<70} {'LR':<10}\n{'-' * 80}")
+    for name, param in vitomr.named_parameters():
+        if param.requires_grad:
+            # check parameter was assigned to a group/lr
+            lr = param_to_lr.get(param, None)
+            assert lr
+            print(f"{name:<70} {lr:<10}")
+            # check lrs look correct for each group
+            if "decoder" in name or "transition" in name:
+                assert lr == base_lr
+            else:
+                assert lr <= base_fine_tune_lr
+
+    # full fine tune
+    encoder = FineTuneOMREncoder(16, PE_MAX_HEIGHT, PE_MAX_WIDTH, 2, **debug_kwargs)
+    vitomr = ViTOMR(encoder, debug_mae_state_dict, debug_decoder)
+    
+    base_lr = 100.0
+    base_fine_tune_lr = 50.0
+    lr_decay = 0.5
+    param_groups = vitomr.create_fine_tune_param_groups(base_lr, base_fine_tune_lr, lr_decay)
+    
+    # map all parameters in all the created groups to their group lr
+    param_to_lr = {}
+    for group in param_groups:
+        for param in group["params"]:
+            param_to_lr[param] = group["lr"]
+
+    print("FULL FINE TUNE")
+    print(f"{'Parameter Name':<70} {'LR':<10}\n{'-' * 80}")
+    for name, param in vitomr.named_parameters():
+        if param.requires_grad:
+            # check parameter was assigned to a group/lr
+            lr = param_to_lr.get(param, None)
+            assert lr
+            print(f"{name:<70} {lr:<10}")
+            # check lrs look correct for each group
+            if "decoder" in name or "transition" in name:
+                assert lr == base_lr
+            else:
+                assert lr <= base_fine_tune_lr
+
+def test_fine_tune_with_llrd():
+    # partial fine-tune
+    encoder = FineTuneOMREncoder(16, PE_MAX_HEIGHT, PE_MAX_WIDTH, 1, **debug_kwargs)
+    print(encoder)
+    vitomr = ViTOMR(encoder, debug_mae_state_dict, debug_decoder)
+    loss_fn = OMRLoss(vitomr.decoder.padding_idx)
+    param_groups = vitomr.create_fine_tune_param_groups(100.0, 50.0, 0.99)
+    optimizer = torch.optim.SGD(param_groups)
+
+    vitomr_before = {name: param.clone() for name, param in vitomr.named_parameters()}
+    x = [(torch.rand(NUM_CHANNELS, 64, 128), torch.randint(high=VOCAB_LEN, size=(8,))),
+         (torch.rand(NUM_CHANNELS, 32, 32), torch.randint(high=VOCAB_LEN, size=(6,)))]
+    pred, target_seqs = vitomr(x)
+    loss = loss_fn(pred, target_seqs)
+    loss.backward()
+    optimizer.step()
+
+    for name, param in vitomr.named_parameters():
+        param_before = vitomr_before[name]
+        if any(x in name for x in ["decoder", "fine_tune", "transition_head"]):
+            assert not torch.equal(param, param_before)
+        else:
+            assert torch.equal(param, param_before)
+
+    # full fine-tune
+    encoder = FineTuneOMREncoder(16, PE_MAX_HEIGHT, PE_MAX_WIDTH, 2, **debug_kwargs)
+    print(encoder)
+    vitomr = ViTOMR(encoder, debug_mae_state_dict, debug_decoder)
+    loss_fn = OMRLoss(vitomr.decoder.padding_idx)
+    param_groups = vitomr.create_fine_tune_param_groups(100.0, 50.0, 0.99)
+    optimizer = torch.optim.SGD(param_groups)
+
+    vitomr_before = {name: param.clone() for name, param in vitomr.named_parameters()}
+    x = [(torch.rand(NUM_CHANNELS, 64, 128), torch.randint(high=VOCAB_LEN, size=(8,))),
+         (torch.rand(NUM_CHANNELS, 32, 32), torch.randint(high=VOCAB_LEN, size=(6,)))]
+    pred, target_seqs = vitomr(x)
+    loss = loss_fn(pred, target_seqs)
+    loss.backward()
+    optimizer.step()
+
+    for name, param in vitomr.named_parameters():
+        param_before = vitomr_before[name]
+        if any(x in name for x in ["decoder", "encoder", "transition_head"]):
+            assert not torch.equal(param, param_before)
+        else:
+            assert torch.equal(param, param_before)
+
 if __name__ == "__main__":
-    # test_vitomr()
-    test_vitomr_with_fine_tune()
+    # test_partial_fine_tune()
+    test_fine_tune_with_llrd()

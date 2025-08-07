@@ -410,11 +410,13 @@ class ViTOMR(nn.Module):
         if isinstance(self.encoder, FineTuneOMREncoder) and self.encoder.frozen_blocks:
             for param in self.encoder.frozen_blocks.parameters():
                 param.requires_grad = False
+            for param in self.encoder.projection.parameters():
+                param.requires_grad = False
+            self.encoder.pos_embedding.requires_grad = False
         elif isinstance(self.encoder, OMREncoder) and not isinstance(self.encoder, FineTuneOMREncoder):
             for param in self.encoder.parameters():
                 param.requires_grad = False
         # for full fine-tune, we leave the state_dict as is (everything has requires_grad)
-
 
         self.decoder = omr_decoder
 
@@ -500,6 +502,30 @@ class ViTOMR(nn.Module):
         # decode lmx with cross-attention to image latent
         pred = self.decoder(input_seqs, img_latent, lmx_attention_mask, latent_attention_mask)
         return pred, target_seqs # return target_seqs for later use in loss
+
+    # split each encoder attention block into a different parameter group and apply llrd. Encoder PE and projection to embedding space
+    # will be given the same lr as the earliest attention block (since they're the earliest encoding operations)
+    def create_fine_tune_param_groups(self, base_lr: float, fine_tune_base_lr: float, fine_tune_decay_factor: float):
+        param_groups = [
+            {"params": self.decoder.parameters(), "lr": base_lr}, 
+            {"params": self.transition_head.parameters(), "lr": base_lr}, 
+        ]
+        layer_lrs = []
+        for i, layer in enumerate(reversed(self.encoder.fine_tune_blocks.layers)):
+            layer_lr = fine_tune_base_lr * (fine_tune_decay_factor ** i)
+            param_groups.append({"params": layer.parameters(), "lr": layer_lr})
+            layer_lrs.append(layer_lr)
+        min_layer_lr = layer_lrs[-1]
+
+        # add encoder params that aren't part of individual nn.TransformerEncoderLayers: pe grid, projection into embedding space, nn.TransformerEncoder final norm
+        param_groups.append({"params": self.encoder.fine_tune_blocks.norm.parameters(), "lr": fine_tune_base_lr})
+        # optimizer expects parameters to be passed in some kind of iterable. Use a generator here for consistency with the others
+        param_groups.append({"params": (param for param in [self.encoder.pos_embedding]), "lr": min_layer_lr}) 
+        param_groups.append({"params": self.encoder.projection.parameters(), "lr": min_layer_lr})
+
+        # IMPORTANT NOTE: these parameters are generators so they can only be consumed once. Eg if in testing code they're consumed
+        # to be checked later, the optimizer will have no parameter generators to use to update the parameters
+        return param_groups
 
 # wrapper to handle the logic with cross entropy loss
 class OMRLoss(nn.Module):
