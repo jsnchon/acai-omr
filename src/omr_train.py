@@ -126,8 +126,8 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
     print(f"Dataset augmentation probability: {AUGMENTATION_P}")
 
     print(f"Creating optimizer parameter groups using base lr {BASE_LR} for transition head and decoder, {FINE_TUNE_BASE_LR} as encoder fine-tune base lr with {FINE_TUNE_DECAY_FACTOR} layer-wise decay factor")
-    param_groups = vitomr.create_fine_tune_param_groups(BASE_LR, FINE_TUNE_BASE_LR, FINE_TUNE_DECAY_FACTOR)
-    print(f"Encoder fine-tune lrs by layer: {[group["lr"] for group in param_groups]}")
+    param_groups, layer_lrs = vitomr.create_fine_tune_param_groups(BASE_LR, FINE_TUNE_BASE_LR, FINE_TUNE_DECAY_FACTOR)
+    print(f"Encoder fine-tune lrs by layer: {layer_lrs}")
 
     print(f"Setting up AdamW with betas {ADAMW_BETAS}, weight decay {ADAMW_WEIGHT_DECAY}")
     optimizer = torch.optim.AdamW(param_groups, betas=ADAMW_BETAS, weight_decay=ADAMW_WEIGHT_DECAY)

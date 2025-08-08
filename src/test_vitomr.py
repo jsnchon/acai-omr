@@ -296,11 +296,14 @@ def test_fine_tune_with_llrd():
     loss.backward()
     optimizer.step()
 
+    print("PARTIAL FINE-TUNE")
     for name, param in vitomr.named_parameters():
         param_before = vitomr_before[name]
         if any(x in name for x in ["decoder", "fine_tune", "transition_head"]):
+            print(f"Trainable: {name}")
             assert not torch.equal(param, param_before)
         else:
+            print(f"Frozen: {name}")
             assert torch.equal(param, param_before)
 
     # full fine-tune
@@ -319,12 +322,11 @@ def test_fine_tune_with_llrd():
     loss.backward()
     optimizer.step()
 
+    print("FULL FINE-TUNE")
     for name, param in vitomr.named_parameters():
         param_before = vitomr_before[name]
-        if any(x in name for x in ["decoder", "encoder", "transition_head"]):
-            assert not torch.equal(param, param_before)
-        else:
-            assert torch.equal(param, param_before)
+        print(f"Trainable: {name}")
+        assert not torch.equal(param, param_before)
 
 if __name__ == "__main__":
     # test_partial_fine_tune()

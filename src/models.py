@@ -525,7 +525,7 @@ class ViTOMR(nn.Module):
 
         # IMPORTANT NOTE: these parameters are generators so they can only be consumed once. Eg if in testing code they're consumed
         # to be checked later, the optimizer will have no parameter generators to use to update the parameters
-        return param_groups
+        return param_groups, layer_lrs
 
 # wrapper to handle the logic with cross entropy loss
 class OMRLoss(nn.Module):
