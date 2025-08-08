@@ -32,7 +32,7 @@ BASE_LR = 5e-5
 MIN_LR = 1e-6
 ADAMW_BETAS = (0.9, 0.95)
 ADAMW_WEIGHT_DECAY = 0.01
-WARMUP_EPOCHS = 10 # step scheduler per-batch since doing so little epochs
+WARMUP_EPOCHS = 20 # step scheduler per-batch since doing so little epochs
 BATCH_SIZE = 16
 GRAD_ACCUMULATION_STEPS = 2
 
@@ -127,7 +127,7 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
 
     print(f"Creating optimizer parameter groups using base lr {BASE_LR} for transition head and decoder, {FINE_TUNE_BASE_LR} as encoder fine-tune base lr with {FINE_TUNE_DECAY_FACTOR} layer-wise decay factor")
     param_groups, layer_lrs = vitomr.create_fine_tune_param_groups(BASE_LR, FINE_TUNE_BASE_LR, FINE_TUNE_DECAY_FACTOR)
-    print(f"Encoder fine-tune lrs by layer: {layer_lrs}")
+    print(f"Encoder fine-tune base lrs by layer: {layer_lrs}")
 
     print(f"Setting up AdamW with betas {ADAMW_BETAS}, weight decay {ADAMW_WEIGHT_DECAY}")
     optimizer = torch.optim.AdamW(param_groups, betas=ADAMW_BETAS, weight_decay=ADAMW_WEIGHT_DECAY)
