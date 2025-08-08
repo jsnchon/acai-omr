@@ -132,8 +132,8 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
     print(f"Setting up AdamW with betas {ADAMW_BETAS}, weight decay {ADAMW_WEIGHT_DECAY}")
     optimizer = torch.optim.AdamW(param_groups, betas=ADAMW_BETAS, weight_decay=ADAMW_WEIGHT_DECAY)
 
-    print(f"Accumulating gradients for {GRAD_ACCUMULATION_STEPS} for an effective batch size of {GRAD_ACCUMULATION_STEPS * BATCH_SIZE}")
-    num_batches = len(train_dataloader) / GRAD_ACCUMULATION_STEPS
+    print(f"Accumulating gradients for {GRAD_ACCUMULATION_STEPS} steps for an effective batch size of {GRAD_ACCUMULATION_STEPS * BATCH_SIZE}")
+    num_batches = -(len(train_dataloader) // -GRAD_ACCUMULATION_STEPS)
     print(f"Setting up scheduler with {WARMUP_EPOCHS} warm-up epochs, {EPOCHS} total epochs, {MIN_LR} minimum learning rate, {num_batches} (effective) batches per epoch")
     scheduler = cosine_anneal_with_warmup(optimizer, WARMUP_EPOCHS, EPOCHS, MIN_LR, num_train_batches=num_batches)
     
