@@ -399,7 +399,7 @@ class OMRDecoder(nn.Module):
 class ViTOMR(nn.Module):
     # masking logic for image encodings and padded LMX token sequences. Add prepare_for_decoder method to do this?
     
-    def __init__(self, omr_encoder, pretrained_mae_state_dict, omr_decoder, transition_head_dim=4096, transition_head_dropout_p=0.05):
+    def __init__(self, omr_encoder, pretrained_mae_state_dict, omr_decoder, transition_head_dim=4096, transition_head_dropout=0.05):
         super().__init__()
         self.encoder = omr_encoder
 
@@ -424,7 +424,7 @@ class ViTOMR(nn.Module):
         self.transition_head = nn.Sequential(
             nn.Linear(self.encoder.hidden_dim, transition_head_dim),
             nn.GELU(),
-            nn.Dropout(transition_head_dropout_p),
+            nn.Dropout(transition_head_dropout),
             nn.Linear(transition_head_dim, self.decoder.hidden_dim)
         )
 
@@ -531,7 +531,8 @@ class ViTOMR(nn.Module):
 class OMRLoss(nn.Module):
     def __init__(self, padding_idx, label_smoothing=0.05):
         super().__init__()
-        self.loss_fn = nn.CrossEntropyLoss(ignore_index=padding_idx, label_smoothing=label_smoothing)
+        self.label_smoothing = label_smoothing
+        self.loss_fn = nn.CrossEntropyLoss(ignore_index=padding_idx, label_smoothing=self.label_smoothing)
 
     def forward(self, pred, target_seqs):
         """
