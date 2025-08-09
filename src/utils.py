@@ -244,7 +244,7 @@ def graph_model_stats(train_losses, validation_losses, plot_file_path):
     fig.savefig(plot_file_path)
     plt.close(fig)
 
-def graph_lrs(epoch_lrs, lr_plot_file_path, fine_tuning):
+def graph_lrs(epoch_lrs, plot_file_path, fine_tuning):
     fig, ax = plt.subplots()
     fig.set_figheight(8)
     fig.set_figwidth(12)
@@ -260,17 +260,39 @@ def graph_lrs(epoch_lrs, lr_plot_file_path, fine_tuning):
         ax.legend()
     else:
         ax.plot(x_axis, epoch_lrs)
-    print(f"Saving plot to {lr_plot_file_path}")
-    fig.savefig(lr_plot_file_path)
+    print(f"Saving plot to {plot_file_path}")
+    fig.savefig(plot_file_path)
     plt.close(fig)
 
+def graph_grad_norms(epoch_grad_norm_snapshots, plot_file_path):
+    fig, ax = plt.subtplots()
+    fig.set_figheight(8)
+    fig.set_figwidth(12)
+    ax.set_title("Gradient norms")
+    ax.set_xlabel("Step count")
+    ax.set_ylabel("L2 norm")
+    ax.grid()
+    x_axis = np.arange(1, epoch_grad_norm_snapshots[-1].step_num)
+    encoder_norms = [snapshot.encoder_norm for snapshot in epoch_grad_norm_snapshots]
+    transition_head_norms = [snapshot.transition_head_norm for snapshot in epoch_grad_norm_snapshots]
+    decoder_norms = [snapshot.decoder_norm for snapshot in epoch_grad_norm_snapshots]
+    ax.plot(x_axis, encoder_norms, label="Encoder", color="blue")
+    ax.plot(x_axis, transition_head_norms, label="Transition head", color="orange")
+    ax.plot(x_axis, decoder_norms, label="Decoder", color="purple")
+    ax.legend()
+    print(f"Saving plot to {plot_file_path}")
+    fig.savefig(plot_file_path)
+    plt.close(fig)
+ 
 # saves everything to stats directory created in pretrain setup
-def save_training_stats(stats_dir_path, epoch_training_losses, epoch_validation_losses, epoch_lrs, fine_tuning=False):
+def save_training_stats(stats_dir_path, epoch_training_losses, epoch_validation_losses, epoch_lrs, epoch_grad_norm_snapshots, fine_tuning=False):
     loss_plot_path = stats_dir_path / "losses.png"
     lr_plot_path = stats_dir_path / "lrs.png"
+    grad_norms_plot_path = stats_dir_path / "grad_norms.png"
     csv_path = stats_dir_path / "training_stats.csv"
     graph_model_stats(epoch_training_losses, epoch_validation_losses, loss_plot_path)
     graph_lrs(epoch_lrs, lr_plot_path, fine_tuning)
+    graph_grad_norms(epoch_grad_norm_snapshots, grad_norms_plot_path)
     if fine_tuning:
         base_lrs, fine_tune_base_lrs = zip(*epoch_lrs)
         stats_df = pd.DataFrame({
