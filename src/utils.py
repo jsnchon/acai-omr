@@ -265,7 +265,7 @@ def graph_lrs(epoch_lrs, plot_file_path, fine_tuning):
     plt.close(fig)
 
 def graph_grad_norms(epoch_grad_norm_snapshots, plot_file_path):
-    fig, ax = plt.subtplots()
+    fig, ax = plt.subplots()
     fig.set_figheight(8)
     fig.set_figwidth(12)
     ax.set_title("Gradient norms")

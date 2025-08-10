@@ -43,7 +43,7 @@ TRANSITION_HEAD_DROPOUT = 0.025
 DECODER_DROPOUT = 0.05
 LABEL_SMOOTHING = 0.02
 
-GRAD_SNAPSHOT_FREQ = 200 # within each epoch, how often (in optimizer steps) to snapshot gradient norms
+GRAD_SNAPSHOT_FREQ = 2 # within each epoch, how often (in optimizer steps) to snapshot gradient norms
 
 # TODO:
 # implement omr autoregressive beam search inference
@@ -76,6 +76,7 @@ class GradNormSnapshot:
 
     def calc_overall_step_num(self, epoch, num_batches_per_epoch):
         self.step_num = epoch * num_batches_per_epoch + self.optim_step_num
+        return self
 
 def calc_grad_norms(vitomr):
     grad_norms = []
@@ -83,7 +84,7 @@ def calc_grad_norms(vitomr):
     for component in components:
         for param in component.parameters():
             component_norm = 0
-            if param.grad:
+            if param.grad is not None:
                 component_norm += param.grad.data.norm(2).item()
             grad_norms.append(component_norm)
     return grad_norms
@@ -237,7 +238,7 @@ else:
     pretrained_mae_state_dict = torch.load(PRETRAINED_MAE_STATE_DICT_PATH)
 print(f"Loaded pretrained mae state dict from {PRETRAINED_MAE_STATE_DICT_PATH}")
 print("Setting up ViTOMR model")
-vitomr = ViTOMR(encoder, pretrained_mae_state_dict, decoder, transition_head_dropout=TRANSITION_HEAD_DROPOUT)
+vitomr = ViTOMR(encoder, pretrained_mae_state_dict, decoder, transition_head_dropout_p=TRANSITION_HEAD_DROPOUT)
 vitomr = vitomr.to(device)
 
 base_img_transform = v2.Compose([

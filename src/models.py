@@ -531,6 +531,7 @@ class ViTOMR(nn.Module):
 class OMRLoss(nn.Module):
     def __init__(self, padding_idx, label_smoothing=0.05):
         super().__init__()
+        self.label_smoothing = label_smoothing
         self.loss_fn = nn.CrossEntropyLoss(ignore_index=padding_idx, label_smoothing=label_smoothing)
 
     def forward(self, pred, target_seqs):
