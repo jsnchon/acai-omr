@@ -203,6 +203,7 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
         train_end_time = time.perf_counter()
         epoch_training_losses.append(epoch_train_loss)
         epoch_grad_norm_snapshots += [snapshot.calc_overall_step_num(i, num_effective_batches) for snapshot in grad_norm_snapshots]
+        # if going to plot this, prob do one pt per epoch of avg, min, max sampled grad norms for each component over the epoch
         time_delta = train_end_time - train_start_time
         print(f"Time for this training epoch: {time_delta:>0.2f} seconds ({time_delta / 60:>0.2f} minutes)")
 
