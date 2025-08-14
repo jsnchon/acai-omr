@@ -20,23 +20,27 @@ ENCODER_FINE_TUNE_DEPTH = 12
 MAX_IMG_SEQ_LEN = 512 # for DynamicResize
 MAX_LMX_SEQ_LEN = 1536 # in tokens, max lmx token sequence length to support
 LMX_VOCAB_PATH = "lmx_vocab.txt"
+NUM_DECODER_LAYERS = 24
 
-AUGMENTATION_P = 0.3
+AUGMENTATION_P = 0.25
 NUM_WORKERS = 26
 
-EPOCHS = 60
-CHECKPOINT_FREQ = 5
-FINE_TUNE_BASE_LR = 5e-6
+EPOCHS = 20
+CHECKPOINT_FREQ = 2
+FINE_TUNE_BASE_LR = 1e-5 # 0.1x base lr
 FINE_TUNE_DECAY_FACTOR = 0.9
-BASE_LR = 5e-5
+BASE_LR = 1e-4
 MIN_LR = 1e-6
 ADAMW_BETAS = (0.9, 0.95)
-ADAMW_WEIGHT_DECAY = 0.01
-WARMUP_EPOCHS = 20 # step scheduler per-batch since doing so little epochs
+ADAMW_WEIGHT_DECAY = 2e-4
+WARMUP_EPOCHS = 2 # step scheduler per-batch since doing so little epochs
 BATCH_SIZE = 16
-GRAD_ACCUMULATION_STEPS = 2
+GRAD_ACCUMULATION_STEPS = 4
 
-# additional regularization: dropout of 0.05 in encoder and transition head, dropout of 0.1 in decoder, label smoothing of 0.05
+ENCODER_DROPOUT = 0.05
+TRANSITION_HEAD_DROPOUT = 0.05
+DECODER_DROPOUT = 0.1
+LABEL_SMOOTHING = 0.0
 
 # TODO:
 # implement omr autoregressive beam search inference
@@ -80,7 +84,7 @@ def train_loop(vitomr, dataloader, loss_fn, optimizer, grad_accumulation_steps, 
             current_ex = batch_idx * batch_size + len(batch)
             print(f"[{current_ex:>6d}/{len_dataset:>6d}]")
 
-        if (batch_idx + 1) % grad_accumulation_steps == 0:
+        if (batch_idx + 1) % grad_accumulation_steps == 0 or (batch_idx + 1) == len(dataloader):
             optimizer.step()
             optimizer.zero_grad()
             scheduler.step()
@@ -137,11 +141,12 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
     print(f"Setting up scheduler with {WARMUP_EPOCHS} warm-up epochs, {EPOCHS} total epochs, {MIN_LR} minimum learning rate, {num_batches} (effective) batches per epoch")
     scheduler = cosine_anneal_with_warmup(optimizer, WARMUP_EPOCHS, EPOCHS, MIN_LR, num_train_batches=num_batches)
     
-    loss_fn = OMRLoss(vitomr.decoder.padding_idx)
+    print(f"Using label smoothing of {LABEL_SMOOTHING} for cross entropy loss")
+    loss_fn = OMRLoss(vitomr.decoder.padding_idx, label_smoothing=LABEL_SMOOTHING)
 
-    MODEL_DIR_PATH.mkdir(exist_ok=True)
-    CHECKPOINTS_DIR_PATH.mkdir(exist_ok=True)
-    STATS_DIR_PATH.mkdir(exist_ok=True)
+    MODEL_DIR_PATH.mkdir()
+    CHECKPOINTS_DIR_PATH.mkdir()
+    STATS_DIR_PATH.mkdir()
     print(f"Created directories {MODEL_DIR_PATH}, {CHECKPOINTS_DIR_PATH}, {STATS_DIR_PATH}")
 
     epoch_training_losses = []
@@ -186,16 +191,16 @@ device = torch.accelerator.current_accelerator().type if torch.accelerator.is_av
 print(f"Using device {device}")
 
 print(f"Setting up encoder with patch size {PATCH_SIZE}, pe grid of {PE_MAX_HEIGHT} x {PE_MAX_WIDTH}, fine-tuning last {ENCODER_FINE_TUNE_DEPTH} layers")
-encoder = FineTuneOMREncoder(PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH, ENCODER_FINE_TUNE_DEPTH)
+encoder = FineTuneOMREncoder(PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH, ENCODER_FINE_TUNE_DEPTH, transformer_dropout=ENCODER_DROPOUT)
 print(f"Setting up decoder with max lmx sequence length {MAX_LMX_SEQ_LEN}, vocab file {LMX_VOCAB_PATH}")
-decoder = OMRDecoder(MAX_LMX_SEQ_LEN, LMX_VOCAB_PATH, num_layers=20)
+decoder = OMRDecoder(MAX_LMX_SEQ_LEN, LMX_VOCAB_PATH, num_layers=NUM_DECODER_LAYERS, transformer_dropout=DECODER_DROPOUT)
 if device == "cpu":
     pretrained_mae_state_dict = torch.load(PRETRAINED_MAE_STATE_DICT_PATH, map_location=torch.device("cpu"))
 else:
     pretrained_mae_state_dict = torch.load(PRETRAINED_MAE_STATE_DICT_PATH)
 print(f"Loaded pretrained mae state dict from {PRETRAINED_MAE_STATE_DICT_PATH}")
 print("Setting up ViTOMR model")
-vitomr = ViTOMR(encoder, pretrained_mae_state_dict, decoder)
+vitomr = ViTOMR(encoder, pretrained_mae_state_dict, decoder, transition_head_dropout=TRANSITION_HEAD_DROPOUT)
 vitomr = vitomr.to(device)
 
 base_img_transform = v2.Compose([
@@ -210,16 +215,16 @@ if __name__ == "__main__":
 
     # slightly stronger augmentation since this training stage should be aided by the pre-training
     camera_augment = v2.RandomApply(transforms=[
-        v2.GaussianBlur(kernel_size=15, sigma=1),
+        v2.GaussianBlur(kernel_size=15, sigma=(0.2, 0.7)),
         v2.GaussianNoise(sigma=0.03),
         v2.RandomRotation(degrees=(-2, 2), interpolation=InterpolationMode.BILINEAR),
-        v2.RandomPerspective(distortion_scale=0.15, p=1),
-        v2.ColorJitter(brightness=0.3, saturation=0.2, contrast=0.2, hue=0),
+        v2.RandomPerspective(distortion_scale=0.2, p=1),
+        v2.ColorJitter(brightness=0.15, saturation=0.2, contrast=0.2, hue=0),
     ], p=AUGMENTATION_P)
 
     grandstaff_camera_augment = v2.Compose([
-        v2.RandomPerspective(distortion_scale=0.15, p=1),
-        v2.ColorJitter(brightness=0.3, saturation=0.2, contrast=0.2, hue=0),
+        v2.RandomPerspective(distortion_scale=0.2, p=1),
+        v2.ColorJitter(brightness=0.15, saturation=0.2, contrast=0.2, hue=0),
     ])
 
     olimpic_img_transform = v2.Compose([base_img_transform, camera_augment])

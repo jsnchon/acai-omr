@@ -3,7 +3,7 @@ from config import GRAND_STAFF_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCA
 from utils import show_mae_prediction, show_vitomr_prediction, ragged_collate_fn
 from pathlib import Path
 from models import MAELoss, OMRLoss
-from datasets import GrandStaffLMXDataset, OlimpicDataset, OlimpicPreTrainWrapper, GrandStaffPreTrainWrapper
+from datasets import GrandStaffLMXDataset, OlimpicDataset, OlimpicPreTrainWrapper, GrandStaffPreTrainWrapper, GrandStaffOMRTrainWrapper
 from torch.utils.data import ConcatDataset, DataLoader
 from pre_train import mae, base_transform
 from omr_train import vitomr, base_img_transform, base_lmx_transform
@@ -41,7 +41,6 @@ def test_loop(model, model_type, dataloader, loss_fn, device):
             
     avg_loss = test_loss / num_batches
     print(f"Average test loss: {avg_loss}")
-    return avg_loss
 
 def sample_predictions(model, model_type, prediction_dir, test_dataset, device):
     num_predictions = args.num_predictions
@@ -53,12 +52,13 @@ def sample_predictions(model, model_type, prediction_dir, test_dataset, device):
 
     samples = torch.randint(0, len(test_dataset), (num_predictions, ))
     for sample_num, sample in enumerate(samples):
-        save_path = prediction_dir / f"sample_{sample_num}.png"
         ex = test_dataset[sample.item()]
         ex = (ex[0].to(device), ex[1].to(device))
         if model_type == Models.MAE:
+            save_path = prediction_dir / f"sample_{sample_num}.png"
             show_mae_prediction(model, ex, mae.patch_size, save_path)
         elif model_type == Models.VIT_OMR:
+            save_path = prediction_dir / f"sample_{sample_num}"
             show_vitomr_prediction(model, ex, save_path)
 
 def test_mae(mae, mae_state_dict, args, device):
@@ -93,7 +93,7 @@ def test_mae(mae, mae_state_dict, args, device):
         sample_predictions(mae, Models.MAE, prediction_dir, test_dataloader.dataset, device)
 
 def test_vitomr(vitomr, vitomr_state_dict, args, device):
-    print("Creatinv ViTOMR model from loaded state dict")
+    print("Creating ViTOMR model from loaded state dict")
     vitomr.load_state_dict(vitomr_state_dict)
     print("Model architecture\n--------------------")
     print(vitomr)
@@ -104,16 +104,16 @@ def test_vitomr(vitomr, vitomr_state_dict, args, device):
     olimpic_scanned = OlimpicDataset(OLIMPIC_SCANNED_ROOT_DIR, "samples.test.txt", img_transform=base_img_transform, lmx_transform=base_lmx_transform)
 
     test_dataset = ConcatDataset([
-        GrandStaffPreTrainWrapper(grand_staff),
-        OlimpicPreTrainWrapper(olimpic_synthetic),
-        OlimpicPreTrainWrapper(olimpic_scanned)
+        GrandStaffOMRTrainWrapper(grand_staff),
+        olimpic_synthetic,
+        olimpic_scanned,
     ])
 
     batch_size = args.batch_size
     num_workers = args.num_workers
     print(f"Using a batch size of {batch_size} and {num_workers} workers")
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=ragged_collate_fn, pin_memory=True)
-    loss_fn = OMRLoss()
+    loss_fn = OMRLoss(vitomr.decoder.padding_idx, label_smoothing=0.0)
 
     vitomr = vitomr.to(device)
 
