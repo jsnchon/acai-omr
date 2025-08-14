@@ -6,7 +6,6 @@ tests/__pycache__/
 .pytest_cache/
 *mae_pre_train/
 omr_train/
-*.png
 *.pth
 past_omr_trains/
 overfit_tests/
