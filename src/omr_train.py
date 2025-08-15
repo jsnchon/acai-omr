@@ -22,17 +22,17 @@ MAX_LMX_SEQ_LEN = 1536 # in tokens, max lmx token sequence length to support
 LMX_VOCAB_PATH = "lmx_vocab.txt"
 NUM_DECODER_LAYERS = 24
 
-AUGMENTATION_P = 0.25
+AUGMENTATION_P = 0.3
 NUM_WORKERS = 26
 
 EPOCHS = 20
-CHECKPOINT_FREQ = 2
+CHECKPOINT_FREQ = 5
 FINE_TUNE_BASE_LR = 1e-5 # 0.1x base lr
 FINE_TUNE_DECAY_FACTOR = 0.9
 BASE_LR = 1e-4
 MIN_LR = 1e-6
 ADAMW_BETAS = (0.9, 0.95)
-ADAMW_WEIGHT_DECAY = 2e-4
+ADAMW_WEIGHT_DECAY = 1e-3
 WARMUP_EPOCHS = 2 # step scheduler per-batch since doing so little epochs
 BATCH_SIZE = 16
 GRAD_ACCUMULATION_STEPS = 4
