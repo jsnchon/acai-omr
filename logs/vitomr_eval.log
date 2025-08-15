@@ -95,7 +95,7 @@ Starting evaluation
 [ 9616/10647]
 [10016/10647]
 [10416/10647]
-Average test loss: 0.08103396801568859
+Average test loss: 0.08059947922484607
 Creating directory at vitomr_predictions if it already doesn't exist
 Saving input image to vitomr_predictions/sample_0/input_image.png
 Saving predicted token sequence to vitomr_predictions/sample_0/pred.txt

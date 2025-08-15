@@ -529,7 +529,7 @@ class ViTOMR(nn.Module):
 
 # wrapper to handle the logic with cross entropy loss
 class OMRLoss(nn.Module):
-    def __init__(self, padding_idx, label_smoothing=0.05):
+    def __init__(self, padding_idx, label_smoothing=0.0):
         super().__init__()
         self.label_smoothing = label_smoothing
         self.loss_fn = nn.CrossEntropyLoss(ignore_index=padding_idx, label_smoothing=self.label_smoothing)
