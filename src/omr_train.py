@@ -42,9 +42,6 @@ TRANSITION_HEAD_DROPOUT = 0.05
 DECODER_DROPOUT = 0.1
 LABEL_SMOOTHING = 0.0
 
-# TODO:
-# implement omr autoregressive beam search inference
-
 class PrepareLMXSequence(nn.Module):
     def __init__(self, tokens_to_idxs):
         super().__init__()

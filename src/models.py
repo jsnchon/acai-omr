@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import torch.nn.functional as F
 from config import LMX_PAD_TOKEN
 import re
 
@@ -15,6 +16,7 @@ class Encoder(nn.Module):
         self.pe_max_height = pe_max_height
         self.pe_max_width = pe_max_width
         self.hidden_dim = hidden_dim
+        self.unfold = nn.Unfold(kernel_size=self.patch_size, stride=self.patch_size)
         self.pos_embedding = nn.Parameter(
             torch.zeros(self.pe_max_height, self.pe_max_width, self.hidden_dim)
         ) 
@@ -28,7 +30,6 @@ class Encoder(nn.Module):
         )
 
     def batchify(self, x: list[torch.Tensor]):
-        unfold = nn.Unfold(kernel_size=self.patch_size, stride=self.patch_size)
         seq_lens = []
         pos_embed_slices = []
         patchified_tensors = []
@@ -40,7 +41,7 @@ class Encoder(nn.Module):
             if h_p > self.pe_max_height or w_p > self.pe_max_width:
                 raise ValueError(f"{h_p} x {w_p} image is too large for max positional embedding grid of shape {self.pe_max_height} x {self.pe_max_width}")
 
-            t = unfold(t.unsqueeze(0)) # (1 x C x H x W) -> (1 x (CP^2) x L) where P is patch size, L is sequence length (h_p x w_p)
+            t = self.unfold(t.unsqueeze(0)) # (1 x C x H x W) -> (1 x (CP^2) x L) where P is patch size, L is sequence length (h_p x w_p)
             seq_lens.append(t.shape[-1]) 
             pos_embed_slice = self.pos_embedding[:h_p, :w_p, :].reshape(-1, self.hidden_dim) # (h_p x w_p x E) -> ((h_p x w_p) x E) = (L x E)
             pos_embed_slices.append(pos_embed_slice)
@@ -73,6 +74,24 @@ class Encoder(nn.Module):
         x = self.encoder_blocks(x, src_key_padding_mask=src_key_padding_mask)
         return x, src_key_padding_mask # return mask for later use in loss calculation and cross-attention masking
 
+    def embed_single_image(self, x):
+        h_p = x.shape[1] // self.patch_size
+        w_p = x.shape[2] // self.patch_size
+
+        print(x.shape)
+        x = self.unfold(x.unsqueeze(0))
+        x = x.transpose(dim0=1, dim1=2) # prepare for projection
+        x = self.projection(x)
+        pos_embed_slice = self.pos_embedding[:h_p, :w_p, :].reshape(-1, self.hidden_dim)
+        x = x + pos_embed_slice.unsqueeze(0)
+        return x
+
+    # x is a singular (C x H x W) image tensor
+    def generate(self, x: torch.Tensor):
+        x = self.embed_single_image(x)
+        x = self.encoder_blocks(x)
+        return x
+
 # identical model architecture to standard encoder superclass so learned state dict can be transferred to it after
 # pre-training. This subclass just modifies the forward logic to include MAE logic (patching -> shuffling -> masking -> encoding)
 class MAEEncoder(Encoder):
@@ -104,8 +123,6 @@ class MAEEncoder(Encoder):
 
     # x is a list of (C x H x W) image tensors
     def batchify(self, x: list[torch.Tensor]):
-        unfold = nn.Unfold(kernel_size=self.patch_size, stride=self.patch_size)
-
         unmasked_seq_lens = []
         kept_seq_lens = []
         pos_embed_slices = []
@@ -120,7 +137,7 @@ class MAEEncoder(Encoder):
                 raise ValueError(f"{h_p} x {w_p} image is too large for max positional embedding grid of shape {self.pe_max_height} x {self.pe_max_width}")
             patchified_dims.append((h_p, w_p))
 
-            t = unfold(t.unsqueeze(0)) # (1 x C x H x W) -> (1 x (CP^2) x L) where P is patch size, L is sequence length (h_p x w_p)
+            t = self.unfold(t.unsqueeze(0)) # (1 x C x H x W) -> (1 x (CP^2) x L) where P is patch size, L is sequence length (h_p x w_p)
             t_masked, pos_embed_slice, unmasked_seq_len, len_keep, seq_mask, ids_restore = self.mask_sequence(t, h_p, w_p)
             unmasked_seq_lens.append(unmasked_seq_len)
 
@@ -192,6 +209,8 @@ class MAE(nn.Module):
         nn.init.trunc_normal_(self.mask_token, std=0.1)
         nn.init.trunc_normal_(self.decoder_pos_embedding, std=0.1)
 
+        self.unfold = nn.Unfold(kernel_size=self.patch_size, stride=self.patch_size)
+
     # takes latent tensor projected to decoder dimension and for each sequence appends mask tokens and unshuffles
     # returns a padded batch tensor that's also been positionally embedded for the decoder
     def prepare_for_decoder(self, latent: torch.Tensor, kept_seq_lens: list[int], unmasked_seq_lens: list[int], batch_ids_restore: torch.Tensor, patchified_dims: list[tuple[int, int]]):
@@ -240,8 +259,7 @@ class MAE(nn.Module):
         loss_mask = loss_mask.to_padded_tensor(padding=False) # True = use patch in loss calculation, False = ignore patch
         
         # prepare target images for loss calculation (may be different from inputs) by patchifying, changing shape to (L, CP^2), padding
-        unfold = nn.Unfold(kernel_size=self.patch_size, stride=self.patch_size)
-        unfolded_targets = [unfold(t.unsqueeze(0)).squeeze(0).transpose(0, 1) for t in y]
+        unfolded_targets = [self.unfold(t.unsqueeze(0)).squeeze(0).transpose(0, 1) for t in y]
         target_nested = torch.nested.as_nested_tensor(unfolded_targets, layout=torch.jagged)
         target_padded = target_nested.to_padded_tensor(padding=0.0)
 
@@ -281,7 +299,6 @@ class OMREncoder(Encoder):
         return interpolated_pos_embedding.squeeze(0).permute(1, 2, 0) # (h_p x w_p x E)
 
     def batchify(self, x: list[torch.Tensor]):
-        unfold = nn.Unfold(kernel_size=self.patch_size, stride=self.patch_size)
         seq_lens = []
         pos_embed_slices = []
         patchified_tensors = []
@@ -289,7 +306,7 @@ class OMREncoder(Encoder):
             h_p = t.shape[-2] // self.patch_size
             w_p = t.shape[-1] // self.patch_size
 
-            t = unfold(t.unsqueeze(0)) 
+            t = self.unfold(t.unsqueeze(0)) 
             seq_lens.append(t.shape[-1]) 
 
             if h_p > self.pe_max_height or w_p > self.pe_max_width:
@@ -341,6 +358,15 @@ class FineTuneOMREncoder(OMREncoder):
             x = self.frozen_blocks(x, src_key_padding_mask=src_key_padding_mask)
         x = self.fine_tune_blocks(x, src_key_padding_mask=src_key_padding_mask)
         return x, src_key_padding_mask 
+
+    # x is a singular (C x H x W) image tensor
+    def generate(self, x: torch.Tensor):
+        x = self.embed_single_image(x)
+        if self.frozen_blocks:
+            x = self.frozen_blocks(x)
+        x = self.fine_tune_blocks(x)
+
+        return x
 
 class OMRDecoder(nn.Module):
     def __init__(self, max_lmx_seq_len, lmx_vocab_path, num_layers=10, hidden_dim=1024, num_heads=16, mlp_dim=4096, transformer_dropout=0.1):
@@ -396,9 +422,21 @@ class OMRDecoder(nn.Module):
         pred = self.unembed(hidden_state)
         return pred #(B, L_lmxmax, vocab_size)
 
+    def generate(self, input_seqs, img_latent):
+        seq_len = input_seqs.shape[1] 
+        if seq_len > self.max_lmx_seq_len:
+                raise ValueError(f"{seq_len} long lmx sequence length is too long for max sequence length of {self.max_lmx_seq_len}")
+
+        lmx_embeddings = self.vocab_embedding(input_seqs)
+
+        pos_embed_slice = self.pos_embedding[:seq_len, :]
+        lmx_embeddings = lmx_embeddings + pos_embed_slice.unsqueeze(0)
+
+        hidden_state = self.decoder_blocks(lmx_embeddings, memory=img_latent)
+        pred = self.unembed(hidden_state)
+        return pred
+
 class ViTOMR(nn.Module):
-    # masking logic for image encodings and padded LMX token sequences. Add prepare_for_decoder method to do this?
-    
     def __init__(self, omr_encoder, pretrained_mae_state_dict, omr_decoder, transition_head_dim=4096, transition_head_dropout=0.05):
         super().__init__()
         self.encoder = omr_encoder
@@ -480,7 +518,7 @@ class ViTOMR(nn.Module):
 
     """
     Input
-        x is a list of (image, lmx_sequence) tuples where each lmx_sequence is an int tensor of input token indices, with <bos> and <eos> tokens added to each already
+        x: a list of (image, lmx_sequence) tuples where each lmx_sequence is an int tensor of input token indices, with <bos> and <eos> tokens added to each already
     Output
         pred: (B, L_lmxmax, vocab_size)
         target_seqs: (B, L_lmxmax)
@@ -503,6 +541,27 @@ class ViTOMR(nn.Module):
         pred = self.decoder(input_seqs, img_latent, lmx_attention_mask, latent_attention_mask)
         return pred, target_seqs # return target_seqs for later use in loss
 
+    """
+    Input
+        img_latent: a (1, CP^2, E_dec) latent representation of the image to run inference on (must have already been fed through the transition head)
+        seqs: a (beam_width, seq_len) tensor of the sequences to append to. Unlike the regular forward method used for training,
+        for this method at the start each sequence should just be one <bos> token
+    Output
+        next_token_distr: a (beam_width, vocab_size) tensor of the probability distribution (in log probs) for the next token for each
+        sequence
+    A general note: all these generate() methods are optimized for inference (mainly by cutting out all the extra work needed to
+    deal with ragged image/sequence batches)
+    """
+    def generate(self, img_latent: torch.Tensor, seqs: torch.Tensor):
+        num_seqs = seqs.shape[0]
+        # expand() more memory efficient than repeat()
+        img_latent = img_latent.expand(num_seqs, -1, -1)
+        
+        logits = self.decoder.generate(seqs, img_latent)
+        next_token_distr = F.log_softmax(logits[:, -1, :], dim=-1)
+
+        return next_token_distr
+
     # split each encoder attention block into a different parameter group and apply llrd. Encoder PE and projection to embedding space
     # will be given the same lr as the earliest attention block (since they're the earliest encoding operations)
     def create_fine_tune_param_groups(self, base_lr: float, fine_tune_base_lr: float, fine_tune_decay_factor: float):
@@ -519,7 +578,7 @@ class ViTOMR(nn.Module):
 
         # add encoder params that aren't part of individual nn.TransformerEncoderLayers: pe grid, projection into embedding space, nn.TransformerEncoder final norm
         param_groups.append({"params": self.encoder.fine_tune_blocks.norm.parameters(), "lr": fine_tune_base_lr})
-        # optimizer expects parameters to be passed in some kind of iterable. Use a generator here for consistency with the others
+        # optimizer expects parameters to be passed in some kind of iterable (and not as nn.Parameter objects). Use a generator here for consistency with the others
         param_groups.append({"params": (param for param in [self.encoder.pos_embedding]), "lr": min_layer_lr}) 
         param_groups.append({"params": self.encoder.projection.parameters(), "lr": min_layer_lr})
 
