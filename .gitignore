@@ -9,3 +9,4 @@ omr_train/
 *.pth
 past_omr_trains/
 overfit_tests/
+misc_saved_images/

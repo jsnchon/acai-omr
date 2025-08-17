@@ -4,7 +4,7 @@ from omr_train import EPOCHS, WARMUP_EPOCHS, BASE_LR, MIN_LR, LMX_VOCAB_PATH, MA
 from pre_train import PE_MAX_HEIGHT, PE_MAX_WIDTH
 from test_pre_train import DEBUG_PRETRAINED_MAE_PATH, DEBUG_KWARGS, DEBUG_PATCH_SIZE
 from utils import cosine_anneal_with_warmup, plot_lr_schedule
-from models import OMREncoder, OMRDecoder, ViTOMR
+from models import FineTuneOMREncoder, OMRDecoder, ViTOMR
 from torch.utils.data import Dataset
 
 class DebugDataset(Dataset):
@@ -30,7 +30,7 @@ def test_prepare_lmx_seq(seq, expected):
 def test_omr_train():
     train_dataset = DebugDataset()
     validation_dataset = DebugDataset()
-    debug_encoder = OMREncoder(DEBUG_PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH, hidden_dim=10, **DEBUG_KWARGS)
+    debug_encoder = FineTuneOMREncoder(DEBUG_PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH, 1, hidden_dim=10, **DEBUG_KWARGS)
     debug_decoder = OMRDecoder(MAX_LMX_SEQ_LEN, LMX_VOCAB_PATH, hidden_dim=10, **DEBUG_KWARGS)
     debug_mae_state_dict = torch.load(DEBUG_PRETRAINED_MAE_PATH)
     debug_vitomr = ViTOMR(debug_encoder, debug_mae_state_dict, debug_decoder)

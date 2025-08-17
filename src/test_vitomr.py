@@ -228,7 +228,7 @@ def test_create_param_groups():
     base_lr = 100.0
     base_fine_tune_lr = 50.0
     lr_decay = 0.5
-    param_groups = vitomr.create_fine_tune_param_groups(base_lr, base_fine_tune_lr, lr_decay)
+    param_groups, _ = vitomr.create_fine_tune_param_groups(base_lr, base_fine_tune_lr, lr_decay)
     
     # map all parameters in all the created groups to their group lr
     param_to_lr = {}
@@ -257,7 +257,7 @@ def test_create_param_groups():
     base_lr = 100.0
     base_fine_tune_lr = 50.0
     lr_decay = 0.5
-    param_groups = vitomr.create_fine_tune_param_groups(base_lr, base_fine_tune_lr, lr_decay)
+    param_groups, _ = vitomr.create_fine_tune_param_groups(base_lr, base_fine_tune_lr, lr_decay)
     
     # map all parameters in all the created groups to their group lr
     param_to_lr = {}
@@ -285,7 +285,7 @@ def test_fine_tune_with_llrd():
     print(encoder)
     vitomr = ViTOMR(encoder, debug_mae_state_dict, debug_decoder)
     loss_fn = OMRLoss(vitomr.decoder.padding_idx)
-    param_groups = vitomr.create_fine_tune_param_groups(100.0, 50.0, 0.99)
+    param_groups, _ = vitomr.create_fine_tune_param_groups(100.0, 50.0, 0.99)
     optimizer = torch.optim.SGD(param_groups)
 
     vitomr_before = {name: param.clone() for name, param in vitomr.named_parameters()}
@@ -311,7 +311,7 @@ def test_fine_tune_with_llrd():
     print(encoder)
     vitomr = ViTOMR(encoder, debug_mae_state_dict, debug_decoder)
     loss_fn = OMRLoss(vitomr.decoder.padding_idx)
-    param_groups = vitomr.create_fine_tune_param_groups(100.0, 50.0, 0.99)
+    param_groups, _ = vitomr.create_fine_tune_param_groups(100.0, 50.0, 0.99)
     optimizer = torch.optim.SGD(param_groups)
 
     vitomr_before = {name: param.clone() for name, param in vitomr.named_parameters()}
