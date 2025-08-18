@@ -1,9 +1,12 @@
 [tool.poetry]
 name = "acai-omr"
-version = "0.0.1"
+version = "0.0.5"
 description = ""
 authors = ["jsnchon"]
 readme = "README.md"
+packages = [
+    { include = "acai_omr" }
+]
 
 [tool.poetry.dependencies]
 python = "^3.12"

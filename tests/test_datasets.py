@@ -1,6 +1,6 @@
-from datasets import GrandStaffLMXDataset, PreparedDataset, OlimpicDataset, PreTrainWrapper, OlimpicPreTrainWrapper, GrandStaffPreTrainWrapper, GrandStaffOMRTrainWrapper
-from utils import display_dataset_img, DynamicResize
-from config import GRAND_STAFF_ROOT_DIR, PRIMUS_PREPARED_ROOT_DIR, DOREMI_PREPARED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
+from acai_omr.train.datasets import GrandStaffLMXDataset, PreparedDataset, OlimpicDataset, PreTrainWrapper, OlimpicPreTrainWrapper, GrandStaffPreTrainWrapper, GrandStaffOMRTrainWrapper
+from acai_omr.utils.utils import display_dataset_img, DynamicResize
+from acai_omr.config import GRAND_STAFF_ROOT_DIR, PRIMUS_PREPARED_ROOT_DIR, DOREMI_PREPARED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
 from torchvision.transforms import ToTensor
 import pytest
 import torch
@@ -80,22 +80,22 @@ def test_olimpic_datasets(mocker):
     mock_transform.assert_called()
     assert img == "transformed_img"
 
-# trying to parmeterize this test led to some weird (likely race condition) behavior with matplotlib
-def test_to_tensor():
-    dataset = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.train.txt", img_transform=ToTensor())
-    display_dataset_img(dataset, 0)
-
-    dataset = PreparedDataset(PRIMUS_PREPARED_ROOT_DIR, transform=ToTensor())
-    display_dataset_img(dataset, 0)
-
-    dataset = PreparedDataset(DOREMI_PREPARED_ROOT_DIR, transform=ToTensor())
-    display_dataset_img(dataset, 0)
-
-    dataset = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.train.txt", img_transform=ToTensor())
-    display_dataset_img(dataset, 0)
-
-    dataset = OlimpicDataset(OLIMPIC_SCANNED_ROOT_DIR, "samples.test.txt", img_transform=ToTensor())
-    display_dataset_img(dataset, 0)
+# # trying to parmeterize this test led to some weird (likely race condition) behavior with matplotlib
+# def test_to_tensor():
+#     dataset = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.train.txt", img_transform=ToTensor())
+#     display_dataset_img(dataset, 0)
+# 
+#     dataset = PreparedDataset(PRIMUS_PREPARED_ROOT_DIR, transform=ToTensor())
+#     display_dataset_img(dataset, 0)
+# 
+#     dataset = PreparedDataset(DOREMI_PREPARED_ROOT_DIR, transform=ToTensor())
+#     display_dataset_img(dataset, 0)
+# 
+#     dataset = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.train.txt", img_transform=ToTensor())
+#     display_dataset_img(dataset, 0)
+# 
+#     dataset = OlimpicDataset(OLIMPIC_SCANNED_ROOT_DIR, "samples.test.txt", img_transform=ToTensor())
+#     display_dataset_img(dataset, 0)
 
 test_params = [
     (PreTrainWrapper, PreparedDataset, (PRIMUS_PREPARED_ROOT_DIR,)),

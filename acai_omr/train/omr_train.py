@@ -1,14 +1,14 @@
 import torch
 from torch import nn
 from pathlib import Path
-from models import FineTuneOMREncoder, OMRDecoder, ViTOMR, OMRLoss
-from datasets import GrandStaffLMXDataset, GrandStaffOMRTrainWrapper, OlimpicDataset
-from config import GRAND_STAFF_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, LMX_BOS_TOKEN, LMX_EOS_TOKEN
-from utils import DynamicResize, cosine_anneal_with_warmup, save_training_stats, ragged_collate_fn
+from acai_omr.models.models import FineTuneOMREncoder, OMRDecoder, ViTOMR, OMRLoss
+from acai_omr.train.datasets import GrandStaffLMXDataset, GrandStaffOMRTrainWrapper, OlimpicDataset
+from acai_omr.config import GRAND_STAFF_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, LMX_BOS_TOKEN, LMX_EOS_TOKEN
+from acai_omr.utils.utils import DynamicResize, cosine_anneal_with_warmup, save_training_stats, ragged_collate_fn
 from torch.utils.data import ConcatDataset, DataLoader
 from torchvision.transforms import v2, InterpolationMode
 from torch.amp import autocast
-from pre_train import PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH
+from acai_omr.train.pre_train import PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH
 import time
 
 MODEL_DIR_PATH = Path("omr_train")

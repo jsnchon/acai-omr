@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-from config import LMX_PAD_TOKEN
+from acai_omr.config import LMX_PAD_TOKEN
 import re
 
 NUM_CHANNELS = 1 # assume these images all are grayscale

@@ -12,4 +12,4 @@ echo "Installing python 3.12"
 sudo add-apt-repository -y ppa:deadsnakes/ppa && sudo apt update && sudo apt install -y python3.12
 
 echo "Installing poetry dependencies"
-(cd $project_dir && poetry env use "$(which python3.12)" && poetry install --no-root)
+(cd $project_dir && poetry env use "$(which python3.12)" && poetry install)

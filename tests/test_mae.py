@@ -1,7 +1,7 @@
 import torch
 from torch import nn
-from models import Encoder, MAEEncoder, MAE, MAELoss, NUM_CHANNELS
-from pre_train import PE_MAX_HEIGHT, PE_MAX_WIDTH
+from acai_omr.models.models import Encoder, MAEEncoder, MAE, MAELoss, NUM_CHANNELS
+from acai_omr.train.pre_train import PE_MAX_HEIGHT, PE_MAX_WIDTH
 import copy
 import time
 

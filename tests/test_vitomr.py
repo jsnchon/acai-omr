@@ -1,11 +1,11 @@
 import torch
 from torch import nn
-from models import OMREncoder, FineTuneOMREncoder, OMRDecoder, ViTOMR, NUM_CHANNELS, OMRLoss
-from pre_train import PE_MAX_HEIGHT, PE_MAX_WIDTH
-from datasets import OlimpicDataset
-from omr_train import MAX_LMX_SEQ_LEN, base_img_transform, base_lmx_transform
-from config import DEBUG_PRETRAINED_MAE_PATH, OLIMPIC_SYNTHETIC_ROOT_DIR
-from utils import show_vitomr_prediction
+from acai_omr.models.models import OMREncoder, FineTuneOMREncoder, OMRDecoder, ViTOMR, NUM_CHANNELS, OMRLoss
+from acai_omr.train.pre_train import PE_MAX_HEIGHT, PE_MAX_WIDTH
+from acai_omr.train.datasets import OlimpicDataset
+from acai_omr.train.omr_train import MAX_LMX_SEQ_LEN, base_img_transform, base_lmx_transform
+from acai_omr.config import DEBUG_PRETRAINED_MAE_PATH, OLIMPIC_SYNTHETIC_ROOT_DIR
+from acai_omr.utils.utils import show_vitomr_prediction
 
 VOCAB_LEN = 227
 

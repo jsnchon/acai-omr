@@ -1,10 +1,10 @@
 import torch
 import pytest
-from omr_train import EPOCHS, WARMUP_EPOCHS, BASE_LR, MIN_LR, LMX_VOCAB_PATH, MAX_LMX_SEQ_LEN, PrepareLMXSequence, omr_train
-from pre_train import PE_MAX_HEIGHT, PE_MAX_WIDTH
+from acai_omr.train.omr_train import EPOCHS, WARMUP_EPOCHS, BASE_LR, MIN_LR, LMX_VOCAB_PATH, MAX_LMX_SEQ_LEN, PrepareLMXSequence, omr_train
+from acai_omr.train.pre_train import PE_MAX_HEIGHT, PE_MAX_WIDTH
 from test_pre_train import DEBUG_PRETRAINED_MAE_PATH, DEBUG_KWARGS, DEBUG_PATCH_SIZE
-from utils import cosine_anneal_with_warmup, plot_lr_schedule
-from models import FineTuneOMREncoder, OMRDecoder, ViTOMR
+from acai_omr.utils.utils import cosine_anneal_with_warmup, plot_lr_schedule
+from acai_omr.models.models import FineTuneOMREncoder, OMRDecoder, ViTOMR
 from torch.utils.data import Dataset
 
 class DebugDataset(Dataset):

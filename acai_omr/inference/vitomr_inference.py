@@ -1,7 +1,7 @@
 import torch
-from models import ViTOMR
-from omr_train import vitomr, device, base_img_transform
-from config import LMX_BOS_TOKEN, LMX_EOS_TOKEN
+from acai_omr.models import ViTOMR
+from acai_omr.train.omr_train import vitomr, device, base_img_transform
+from acai_omr.config import LMX_BOS_TOKEN, LMX_EOS_TOKEN
 from torch.amp import autocast
 from PIL import Image
 
