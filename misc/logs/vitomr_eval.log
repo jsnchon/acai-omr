@@ -4,7 +4,7 @@ Setting up encoder with patch size 16, pe grid of 60 x 200, fine-tuning last 12 
 Setting up decoder with max lmx sequence length 1536, vocab file lmx_vocab.txt
 Loaded pretrained mae state dict from mae_pre_train/pretrained_mae.pth
 Setting up ViTOMR model
-Loading state dict from omr_train/vitomr.pth
+Loading state dict from omr_small/vitomr.pth
 Using device cuda
 Creating ViTOMR model from loaded state dict
 Model architecture
@@ -34,7 +34,7 @@ ViTOMR(
     (vocab_embedding): Embedding(227, 1024, padding_idx=1)
     (decoder_blocks): TransformerDecoder(
       (layers): ModuleList(
-        (0-23): 24 x TransformerDecoderLayer(
+        (0-11): 12 x TransformerDecoderLayer(
           (self_attn): MultiheadAttention(
             (out_proj): NonDynamicallyQuantizableLinear(in_features=1024, out_features=1024, bias=True)
           )
@@ -64,51 +64,29 @@ ViTOMR(
   )
 )
 Setting up test dataset and dataloader
-Using a batch size of 16 and 26 workers
+Using a batch size of 64 and 24 workers
 Starting evaluation
-/home/ubuntu/.cache/pypoetry/virtualenvs/acai-omr-BQvANxl_-py3.12/lib/python3.12/site-packages/torch/nested/__init__.py:117: UserWarning: The PyTorch API of nested tensors is in prototype stage and will change in the near future. We recommend specifying layout=torch.jagged when constructing a nested tensor, as this layout receives active development, has better operator coverage, and works with torch.compile. (Triggered internally at /pytorch/aten/src/ATen/NestedTensorImpl.cpp:178.)
-  return torch._nested_tensor_from_tensor_list(ts, dtype, None, device, None)
-[   16/10647]
-[  416/10647]
-[  816/10647]
-[ 1216/10647]
-[ 1616/10647]
-[ 2016/10647]
-[ 2416/10647]
-[ 2816/10647]
-[ 3216/10647]
-[ 3616/10647]
-[ 4016/10647]
-[ 4416/10647]
-[ 4816/10647]
-[ 5216/10647]
-[ 5616/10647]
-[ 6016/10647]
-[ 6416/10647]
-[ 6816/10647]
-[ 7216/10647]
-[ 7616/10647]
-[ 8016/10647]
-[ 8416/10647]
-[ 8816/10647]
-[ 9216/10647]
-[ 9616/10647]
-[10016/10647]
-[10416/10647]
-Average test loss: 0.08059947922484607
-Creating directory at vitomr_predictions if it already doesn't exist
-Saving input image to vitomr_predictions/sample_0/input_image.png
-Saving predicted token sequence to vitomr_predictions/sample_0/pred.txt
-Saving target token sequence to vitomr_predictions/sample_0/target_seq.txt
-Saving input image to vitomr_predictions/sample_1/input_image.png
-Saving predicted token sequence to vitomr_predictions/sample_1/pred.txt
-Saving target token sequence to vitomr_predictions/sample_1/target_seq.txt
-Saving input image to vitomr_predictions/sample_2/input_image.png
-Saving predicted token sequence to vitomr_predictions/sample_2/pred.txt
-Saving target token sequence to vitomr_predictions/sample_2/target_seq.txt
-Saving input image to vitomr_predictions/sample_3/input_image.png
-Saving predicted token sequence to vitomr_predictions/sample_3/pred.txt
-Saving target token sequence to vitomr_predictions/sample_3/target_seq.txt
-Saving input image to vitomr_predictions/sample_4/input_image.png
-Saving predicted token sequence to vitomr_predictions/sample_4/pred.txt
-Saving target token sequence to vitomr_predictions/sample_4/target_seq.txt
+[   64/10647]
+[ 1664/10647]
+[ 3264/10647]
+[ 4864/10647]
+[ 6464/10647]
+[ 8064/10647]
+[ 9664/10647]
+Average test loss: 0.07781969039829191
+Creating directory at omr_small_preds if it already doesn't exist
+Saving input image to omr_small_preds/sample_0/input_image.png
+Saving predicted token sequence to omr_small_preds/sample_0/pred.txt
+Saving target token sequence to omr_small_preds/sample_0/target_seq.txt
+Saving input image to omr_small_preds/sample_1/input_image.png
+Saving predicted token sequence to omr_small_preds/sample_1/pred.txt
+Saving target token sequence to omr_small_preds/sample_1/target_seq.txt
+Saving input image to omr_small_preds/sample_2/input_image.png
+Saving predicted token sequence to omr_small_preds/sample_2/pred.txt
+Saving target token sequence to omr_small_preds/sample_2/target_seq.txt
+Saving input image to omr_small_preds/sample_3/input_image.png
+Saving predicted token sequence to omr_small_preds/sample_3/pred.txt
+Saving target token sequence to omr_small_preds/sample_3/target_seq.txt
+Saving input image to omr_small_preds/sample_4/input_image.png
+Saving predicted token sequence to omr_small_preds/sample_4/pred.txt
+Saving target token sequence to omr_small_preds/sample_4/target_seq.txt

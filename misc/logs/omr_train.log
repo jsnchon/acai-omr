@@ -31,7 +31,7 @@ ViTOMR(
     (vocab_embedding): Embedding(227, 1024, padding_idx=1)
     (decoder_blocks): TransformerDecoder(
       (layers): ModuleList(
-        (0-23): 24 x TransformerDecoderLayer(
+        (0-11): 12 x TransformerDecoderLayer(
           (self_attn): MultiheadAttention(
             (out_proj): NonDynamicallyQuantizableLinear(in_features=1024, out_features=1024, bias=True)
           )
@@ -64,18 +64,18 @@ Trainable parameters count
 --------------------
 Encoder: 94469376
 Transition head: 7345152
-Decoder: 405160163
-Total: 506974691
-Setting up DataLoaders with batch size 16, shuffle, 26 workers, ragged collate function, pinned memory
-Dataset augmentation probability: 0.3
+Decoder: 203600099
+Total: 305414627
+Setting up DataLoaders with batch size 32, shuffle, 26 workers, ragged collate function, pinned memory
+Dataset augmentation probability: 0.4
 Creating optimizer parameter groups using base lr 0.0001 for transition head and decoder, 1e-05 as encoder fine-tune base lr with 0.9 layer-wise decay factor
 Encoder fine-tune base lrs by layer: [1e-05, 9e-06, 8.1e-06, 7.290000000000001e-06, 6.561e-06, 5.904900000000001e-06, 5.314410000000001e-06, 4.782969000000001e-06, 4.304672100000001e-06, 3.8742048900000015e-06, 3.486784401000001e-06, 3.138105960900001e-06]
-Setting up AdamW with betas (0.9, 0.95), weight decay 0.001
-Accumulating gradients for 4 steps for an effective batch size of 64
-Setting up scheduler with 2 warm-up epochs, 20 total epochs, 1e-06 minimum learning rate, 885 (effective) batches per epoch
+Setting up AdamW with betas (0.9, 0.95), weight decay 0.01
+Accumulating gradients for 2 steps for an effective batch size of 64
+Setting up scheduler with 2 warm-up epochs, 25 total epochs, 1e-06 minimum learning rate, 885 (effective) batches per epoch
 Using label smoothing of 0.0 for cross entropy loss
-Created directories omr_train, omr_train/checkpoints, omr_train/stats
-OMR training for 20 epochs. Checkpointing every 5 epochs
+Created directories omr_small, omr_small/checkpoints, omr_small/stats
+OMR training for 25 epochs. Checkpointing every 5 epochs
 Epoch 1
 --------------------
 Base learning rate at epoch start: 0.00000050
@@ -83,1131 +83,837 @@ Fine-tune learning rate at epoch start: 0.00000005
 Starting training
 /home/ubuntu/.cache/pypoetry/virtualenvs/acai-omr-BQvANxl_-py3.12/lib/python3.12/site-packages/torch/nested/__init__.py:117: UserWarning: The PyTorch API of nested tensors is in prototype stage and will change in the near future. We recommend specifying layout=torch.jagged when constructing a nested tensor, as this layout receives active development, has better operator coverage, and works with torch.compile. (Triggered internally at /pytorch/aten/src/ATen/NestedTensorImpl.cpp:178.)
   return torch._nested_tensor_from_tensor_list(ts, dtype, None, device, None)
-[    16/ 56612]
-[  1616/ 56612]
-[  3216/ 56612]
-[  4816/ 56612]
-[  6416/ 56612]
-[  8016/ 56612]
-[  9616/ 56612]
-[ 11216/ 56612]
-[ 12816/ 56612]
-[ 14416/ 56612]
-[ 16016/ 56612]
-[ 17616/ 56612]
-[ 19216/ 56612]
-[ 20816/ 56612]
-[ 22416/ 56612]
-[ 24016/ 56612]
-[ 25616/ 56612]
-[ 27216/ 56612]
-[ 28816/ 56612]
-[ 30416/ 56612]
-[ 32016/ 56612]
-[ 33616/ 56612]
-[ 35216/ 56612]
-[ 36816/ 56612]
-[ 38416/ 56612]
-[ 40016/ 56612]
-[ 41616/ 56612]
-[ 43216/ 56612]
-[ 44816/ 56612]
-[ 46416/ 56612]
-[ 48016/ 56612]
-[ 49616/ 56612]
-[ 51216/ 56612]
-[ 52816/ 56612]
-[ 54416/ 56612]
-[ 56016/ 56612]
-Average training loss over this epoch: 2.160780403818846
-Time for this training epoch: 1118.53 seconds (18.64 minutes)
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 1.9612709314472931
+Time for this training epoch: 694.19 seconds (11.57 minutes)
 Starting validation
-[   16/ 7499]
-[  816/ 7499]
-[ 1616/ 7499]
-[ 2416/ 7499]
-[ 3216/ 7499]
-[ 4016/ 7499]
-[ 4816/ 7499]
-[ 5616/ 7499]
-[ 6416/ 7499]
-[ 7216/ 7499]
-Average validation loss for this epoch: 1.1144873844280934
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 1.0667950858461095
 Epoch 2
 --------------------
 Base learning rate at epoch start: 0.00005025
 Fine-tune learning rate at epoch start: 0.00000503
 Starting training
-[    16/ 56612]
-[  1616/ 56612]
-[  3216/ 56612]
-[  4816/ 56612]
-[  6416/ 56612]
-[  8016/ 56612]
-[  9616/ 56612]
-[ 11216/ 56612]
-[ 12816/ 56612]
-[ 14416/ 56612]
-[ 16016/ 56612]
-[ 17616/ 56612]
-[ 19216/ 56612]
-[ 20816/ 56612]
-[ 22416/ 56612]
-[ 24016/ 56612]
-[ 25616/ 56612]
-[ 27216/ 56612]
-[ 28816/ 56612]
-[ 30416/ 56612]
-[ 32016/ 56612]
-[ 33616/ 56612]
-[ 35216/ 56612]
-[ 36816/ 56612]
-[ 38416/ 56612]
-[ 40016/ 56612]
-[ 41616/ 56612]
-[ 43216/ 56612]
-[ 44816/ 56612]
-[ 46416/ 56612]
-[ 48016/ 56612]
-[ 49616/ 56612]
-[ 51216/ 56612]
-[ 52816/ 56612]
-[ 54416/ 56612]
-[ 56016/ 56612]
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
 /home/ubuntu/.cache/pypoetry/virtualenvs/acai-omr-BQvANxl_-py3.12/lib/python3.12/site-packages/torch/optim/lr_scheduler.py:198: UserWarning: The epoch parameter in `scheduler.step()` was not necessary and is being deprecated where possible. Please use `scheduler.step()` to step the scheduler. During the deprecation, if epoch is different from None, the closed form is used instead of the new chainable form, where available. Please open an issue if you are unable to replicate your use case: https://github.com/pytorch/pytorch/issues/new/choose.
   warnings.warn(EPOCH_DEPRECATION_WARNING, UserWarning)
-Average training loss over this epoch: 0.8885706754416589
-Time for this training epoch: 1113.07 seconds (18.55 minutes)
+Average training loss over this epoch: 0.8616482258516517
+Time for this training epoch: 690.85 seconds (11.51 minutes)
 Starting validation
-[   16/ 7499]
-[  816/ 7499]
-[ 1616/ 7499]
-[ 2416/ 7499]
-[ 3216/ 7499]
-[ 4016/ 7499]
-[ 4816/ 7499]
-[ 5616/ 7499]
-[ 6416/ 7499]
-[ 7216/ 7499]
-Average validation loss for this epoch: 0.6719679277715906
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.6592989396541676
 Epoch 3
 --------------------
 Base learning rate at epoch start: 0.00010000
 Fine-tune learning rate at epoch start: 0.00001000
 Starting training
-[    16/ 56612]
-[  1616/ 56612]
-[  3216/ 56612]
-[  4816/ 56612]
-[  6416/ 56612]
-[  8016/ 56612]
-[  9616/ 56612]
-[ 11216/ 56612]
-[ 12816/ 56612]
-[ 14416/ 56612]
-[ 16016/ 56612]
-[ 17616/ 56612]
-[ 19216/ 56612]
-[ 20816/ 56612]
-[ 22416/ 56612]
-[ 24016/ 56612]
-[ 25616/ 56612]
-[ 27216/ 56612]
-[ 28816/ 56612]
-[ 30416/ 56612]
-[ 32016/ 56612]
-[ 33616/ 56612]
-[ 35216/ 56612]
-[ 36816/ 56612]
-[ 38416/ 56612]
-[ 40016/ 56612]
-[ 41616/ 56612]
-[ 43216/ 56612]
-[ 44816/ 56612]
-[ 46416/ 56612]
-[ 48016/ 56612]
-[ 49616/ 56612]
-[ 51216/ 56612]
-[ 52816/ 56612]
-[ 54416/ 56612]
-[ 56016/ 56612]
-Average training loss over this epoch: 0.5303503582625108
-Time for this training epoch: 1114.19 seconds (18.57 minutes)
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.5427026303306137
+Time for this training epoch: 687.66 seconds (11.46 minutes)
 Starting validation
-[   16/ 7499]
-[  816/ 7499]
-[ 1616/ 7499]
-[ 2416/ 7499]
-[ 3216/ 7499]
-[ 4016/ 7499]
-[ 4816/ 7499]
-[ 5616/ 7499]
-[ 6416/ 7499]
-[ 7216/ 7499]
-Average validation loss for this epoch: 0.40775746799735374
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.4132236786345218
 Epoch 4
 --------------------
-Base learning rate at epoch start: 0.00009925
-Fine-tune learning rate at epoch start: 0.00000993
+Base learning rate at epoch start: 0.00009954
+Fine-tune learning rate at epoch start: 0.00000996
 Starting training
-[    16/ 56612]
-[  1616/ 56612]
-[  3216/ 56612]
-[  4816/ 56612]
-[  6416/ 56612]
-[  8016/ 56612]
-[  9616/ 56612]
-[ 11216/ 56612]
-[ 12816/ 56612]
-[ 14416/ 56612]
-[ 16016/ 56612]
-[ 17616/ 56612]
-[ 19216/ 56612]
-[ 20816/ 56612]
-[ 22416/ 56612]
-[ 24016/ 56612]
-[ 25616/ 56612]
-[ 27216/ 56612]
-[ 28816/ 56612]
-[ 30416/ 56612]
-[ 32016/ 56612]
-[ 33616/ 56612]
-[ 35216/ 56612]
-[ 36816/ 56612]
-[ 38416/ 56612]
-[ 40016/ 56612]
-[ 41616/ 56612]
-[ 43216/ 56612]
-[ 44816/ 56612]
-[ 46416/ 56612]
-[ 48016/ 56612]
-[ 49616/ 56612]
-[ 51216/ 56612]
-[ 52816/ 56612]
-[ 54416/ 56612]
-[ 56016/ 56612]
-Average training loss over this epoch: 0.35217065029593636
-Time for this training epoch: 1172.54 seconds (19.54 minutes)
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.3761320055372971
+Time for this training epoch: 689.68 seconds (11.49 minutes)
 Starting validation
-[   16/ 7499]
-[  816/ 7499]
-[ 1616/ 7499]
-[ 2416/ 7499]
-[ 3216/ 7499]
-[ 4016/ 7499]
-[ 4816/ 7499]
-[ 5616/ 7499]
-[ 6416/ 7499]
-[ 7216/ 7499]
-Average validation loss for this epoch: 0.27126536491328973
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.2883324753096763
 Epoch 5
 --------------------
-Base learning rate at epoch start: 0.00009701
-Fine-tune learning rate at epoch start: 0.00000973
+Base learning rate at epoch start: 0.00009816
+Fine-tune learning rate at epoch start: 0.00000983
 Starting training
-[    16/ 56612]
-[  1616/ 56612]
-[  3216/ 56612]
-[  4816/ 56612]
-[  6416/ 56612]
-[  8016/ 56612]
-[  9616/ 56612]
-[ 11216/ 56612]
-[ 12816/ 56612]
-[ 14416/ 56612]
-[ 16016/ 56612]
-[ 17616/ 56612]
-[ 19216/ 56612]
-[ 20816/ 56612]
-[ 22416/ 56612]
-[ 24016/ 56612]
-[ 25616/ 56612]
-[ 27216/ 56612]
-[ 28816/ 56612]
-[ 30416/ 56612]
-[ 32016/ 56612]
-[ 33616/ 56612]
-[ 35216/ 56612]
-[ 36816/ 56612]
-[ 38416/ 56612]
-[ 40016/ 56612]
-[ 41616/ 56612]
-[ 43216/ 56612]
-[ 44816/ 56612]
-[ 46416/ 56612]
-[ 48016/ 56612]
-[ 49616/ 56612]
-[ 51216/ 56612]
-[ 52816/ 56612]
-[ 54416/ 56612]
-[ 56016/ 56612]
-Average training loss over this epoch: 0.25191416369298986
-Time for this training epoch: 1181.65 seconds (19.69 minutes)
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.2816188169569619
+Time for this training epoch: 689.61 seconds (11.49 minutes)
 Starting validation
-[   16/ 7499]
-[  816/ 7499]
-[ 1616/ 7499]
-[ 2416/ 7499]
-[ 3216/ 7499]
-[ 4016/ 7499]
-[ 4816/ 7499]
-[ 5616/ 7499]
-[ 6416/ 7499]
-[ 7216/ 7499]
-Average validation loss for this epoch: 0.20011529513894877
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.24779954159513434
 Checkpointing model, optimizer, scheduler state dicts
-Saving omr training state to omr_train/checkpoints/epoch_5_checkpoint.pth
+Saving omr training state to omr_small/checkpoints/epoch_5_checkpoint.pth
 Checkpointing stats plots
-Saving plot to omr_train/stats/losses.png
-Saving plot to omr_train/stats/lrs.png
-Writing training stats csv to omr_train/stats/training_stats.csv
+Saving plot to omr_small/stats/losses.png
+Saving plot to omr_small/stats/lrs.png
+Writing training stats csv to omr_small/stats/training_stats.csv
 Epoch 6
 --------------------
-Base learning rate at epoch start: 0.00009337
-Fine-tune learning rate at epoch start: 0.00000940
+Base learning rate at epoch start: 0.00009590
+Fine-tune learning rate at epoch start: 0.00000963
 Starting training
-[    16/ 56612]
-[  1616/ 56612]
-[  3216/ 56612]
-[  4816/ 56612]
-[  6416/ 56612]
-[  8016/ 56612]
-[  9616/ 56612]
-[ 11216/ 56612]
-[ 12816/ 56612]
-[ 14416/ 56612]
-[ 16016/ 56612]
-[ 17616/ 56612]
-[ 19216/ 56612]
-[ 20816/ 56612]
-[ 22416/ 56612]
-[ 24016/ 56612]
-[ 25616/ 56612]
-[ 27216/ 56612]
-[ 28816/ 56612]
-[ 30416/ 56612]
-[ 32016/ 56612]
-[ 33616/ 56612]
-[ 35216/ 56612]
-[ 36816/ 56612]
-[ 38416/ 56612]
-[ 40016/ 56612]
-[ 41616/ 56612]
-[ 43216/ 56612]
-[ 44816/ 56612]
-[ 46416/ 56612]
-[ 48016/ 56612]
-[ 49616/ 56612]
-[ 51216/ 56612]
-[ 52816/ 56612]
-[ 54416/ 56612]
-[ 56016/ 56612]
-Average training loss over this epoch: 0.18918902008007663
-Time for this training epoch: 1185.35 seconds (19.76 minutes)
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.21948018287029644
+Time for this training epoch: 688.44 seconds (11.47 minutes)
 Starting validation
-[   16/ 7499]
-[  816/ 7499]
-[ 1616/ 7499]
-[ 2416/ 7499]
-[ 3216/ 7499]
-[ 4016/ 7499]
-[ 4816/ 7499]
-[ 5616/ 7499]
-[ 6416/ 7499]
-[ 7216/ 7499]
-Average validation loss for this epoch: 0.15572431418242486
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.21363313829011105
 Epoch 7
 --------------------
-Base learning rate at epoch start: 0.00008842
-Fine-tune learning rate at epoch start: 0.00000895
+Base learning rate at epoch start: 0.00009279
+Fine-tune learning rate at epoch start: 0.00000934
 Starting training
-[    16/ 56612]
-[  1616/ 56612]
-[  3216/ 56612]
-[  4816/ 56612]
-[  6416/ 56612]
-[  8016/ 56612]
-[  9616/ 56612]
-[ 11216/ 56612]
-[ 12816/ 56612]
-[ 14416/ 56612]
-[ 16016/ 56612]
-[ 17616/ 56612]
-[ 19216/ 56612]
-[ 20816/ 56612]
-[ 22416/ 56612]
-[ 24016/ 56612]
-[ 25616/ 56612]
-[ 27216/ 56612]
-[ 28816/ 56612]
-[ 30416/ 56612]
-[ 32016/ 56612]
-[ 33616/ 56612]
-[ 35216/ 56612]
-[ 36816/ 56612]
-[ 38416/ 56612]
-[ 40016/ 56612]
-[ 41616/ 56612]
-[ 43216/ 56612]
-[ 44816/ 56612]
-[ 46416/ 56612]
-[ 48016/ 56612]
-[ 49616/ 56612]
-[ 51216/ 56612]
-[ 52816/ 56612]
-[ 54416/ 56612]
-[ 56016/ 56612]
-Average training loss over this epoch: 0.14794468127273172
-Time for this training epoch: 1177.10 seconds (19.62 minutes)
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.17819323504375198
+Time for this training epoch: 694.48 seconds (11.57 minutes)
 Starting validation
-[   16/ 7499]
-[  816/ 7499]
-[ 1616/ 7499]
-[ 2416/ 7499]
-[ 3216/ 7499]
-[ 4016/ 7499]
-[ 4816/ 7499]
-[ 5616/ 7499]
-[ 6416/ 7499]
-[ 7216/ 7499]
-Average validation loss for this epoch: 0.12626937221584797
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.1459460621818583
 Epoch 8
 --------------------
-Base learning rate at epoch start: 0.00008232
-Fine-tune learning rate at epoch start: 0.00000839
+Base learning rate at epoch start: 0.00008890
+Fine-tune learning rate at epoch start: 0.00000899
 Starting training
-[    16/ 56612]
-[  1616/ 56612]
-[  3216/ 56612]
-[  4816/ 56612]
-[  6416/ 56612]
-[  8016/ 56612]
-[  9616/ 56612]
-[ 11216/ 56612]
-[ 12816/ 56612]
-[ 14416/ 56612]
-[ 16016/ 56612]
-[ 17616/ 56612]
-[ 19216/ 56612]
-[ 20816/ 56612]
-[ 22416/ 56612]
-[ 24016/ 56612]
-[ 25616/ 56612]
-[ 27216/ 56612]
-[ 28816/ 56612]
-[ 30416/ 56612]
-[ 32016/ 56612]
-[ 33616/ 56612]
-[ 35216/ 56612]
-[ 36816/ 56612]
-[ 38416/ 56612]
-[ 40016/ 56612]
-[ 41616/ 56612]
-[ 43216/ 56612]
-[ 44816/ 56612]
-[ 46416/ 56612]
-[ 48016/ 56612]
-[ 49616/ 56612]
-[ 51216/ 56612]
-[ 52816/ 56612]
-[ 54416/ 56612]
-[ 56016/ 56612]
-Average training loss over this epoch: 0.11992709125926616
-Time for this training epoch: 1182.40 seconds (19.71 minutes)
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.14761420303987244
+Time for this training epoch: 691.66 seconds (11.53 minutes)
 Starting validation
-[   16/ 7499]
-[  816/ 7499]
-[ 1616/ 7499]
-[ 2416/ 7499]
-[ 3216/ 7499]
-[ 4016/ 7499]
-[ 4816/ 7499]
-[ 5616/ 7499]
-[ 6416/ 7499]
-[ 7216/ 7499]
-Average validation loss for this epoch: 0.11002258841258122
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.12399453875866343
 Epoch 9
 --------------------
-Base learning rate at epoch start: 0.00007525
-Fine-tune learning rate at epoch start: 0.00000775
+Base learning rate at epoch start: 0.00008429
+Fine-tune learning rate at epoch start: 0.00000857
 Starting training
-[    16/ 56612]
-[  1616/ 56612]
-[  3216/ 56612]
-[  4816/ 56612]
-[  6416/ 56612]
-[  8016/ 56612]
-[  9616/ 56612]
-[ 11216/ 56612]
-[ 12816/ 56612]
-[ 14416/ 56612]
-[ 16016/ 56612]
-[ 17616/ 56612]
-[ 19216/ 56612]
-[ 20816/ 56612]
-[ 22416/ 56612]
-[ 24016/ 56612]
-[ 25616/ 56612]
-[ 27216/ 56612]
-[ 28816/ 56612]
-[ 30416/ 56612]
-[ 32016/ 56612]
-[ 33616/ 56612]
-[ 35216/ 56612]
-[ 36816/ 56612]
-[ 38416/ 56612]
-[ 40016/ 56612]
-[ 41616/ 56612]
-[ 43216/ 56612]
-[ 44816/ 56612]
-[ 46416/ 56612]
-[ 48016/ 56612]
-[ 49616/ 56612]
-[ 51216/ 56612]
-[ 52816/ 56612]
-[ 54416/ 56612]
-[ 56016/ 56612]
-Average training loss over this epoch: 0.09680685740807411
-Time for this training epoch: 1177.04 seconds (19.62 minutes)
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.12481263522795365
+Time for this training epoch: 692.29 seconds (11.54 minutes)
 Starting validation
-[   16/ 7499]
-[  816/ 7499]
-[ 1616/ 7499]
-[ 2416/ 7499]
-[ 3216/ 7499]
-[ 4016/ 7499]
-[ 4816/ 7499]
-[ 5616/ 7499]
-[ 6416/ 7499]
-[ 7216/ 7499]
-Average validation loss for this epoch: 0.10645109249044583
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.11576055067967861
 Epoch 10
 --------------------
-Base learning rate at epoch start: 0.00006743
-Fine-tune learning rate at epoch start: 0.00000704
+Base learning rate at epoch start: 0.00007905
+Fine-tune learning rate at epoch start: 0.00000810
 Starting training
-[    16/ 56612]
-[  1616/ 56612]
-[  3216/ 56612]
-[  4816/ 56612]
-[  6416/ 56612]
-[  8016/ 56612]
-[  9616/ 56612]
-[ 11216/ 56612]
-[ 12816/ 56612]
-[ 14416/ 56612]
-[ 16016/ 56612]
-[ 17616/ 56612]
-[ 19216/ 56612]
-[ 20816/ 56612]
-[ 22416/ 56612]
-[ 24016/ 56612]
-[ 25616/ 56612]
-[ 27216/ 56612]
-[ 28816/ 56612]
-[ 30416/ 56612]
-[ 32016/ 56612]
-[ 33616/ 56612]
-[ 35216/ 56612]
-[ 36816/ 56612]
-[ 38416/ 56612]
-[ 40016/ 56612]
-[ 41616/ 56612]
-[ 43216/ 56612]
-[ 44816/ 56612]
-[ 46416/ 56612]
-[ 48016/ 56612]
-[ 49616/ 56612]
-[ 51216/ 56612]
-[ 52816/ 56612]
-[ 54416/ 56612]
-[ 56016/ 56612]
-Average training loss over this epoch: 0.07973528370381193
-Time for this training epoch: 1175.67 seconds (19.59 minutes)
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.10645761132492858
+Time for this training epoch: 691.12 seconds (11.52 minutes)
 Starting validation
-[   16/ 7499]
-[  816/ 7499]
-[ 1616/ 7499]
-[ 2416/ 7499]
-[ 3216/ 7499]
-[ 4016/ 7499]
-[ 4816/ 7499]
-[ 5616/ 7499]
-[ 6416/ 7499]
-[ 7216/ 7499]
-Average validation loss for this epoch: 0.09064056459012063
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.10373621167654687
 Checkpointing model, optimizer, scheduler state dicts
-Saving omr training state to omr_train/checkpoints/epoch_10_checkpoint.pth
+Saving omr training state to omr_small/checkpoints/epoch_10_checkpoint.pth
 Checkpointing stats plots
-Saving plot to omr_train/stats/losses.png
-Saving plot to omr_train/stats/lrs.png
-Writing training stats csv to omr_train/stats/training_stats.csv
+Saving plot to omr_small/stats/losses.png
+Saving plot to omr_small/stats/lrs.png
+Writing training stats csv to omr_small/stats/training_stats.csv
 Epoch 11
 --------------------
-Base learning rate at epoch start: 0.00005910
-Fine-tune learning rate at epoch start: 0.00000628
+Base learning rate at epoch start: 0.00007327
+Fine-tune learning rate at epoch start: 0.00000757
 Starting training
-[    16/ 56612]
-[  1616/ 56612]
-[  3216/ 56612]
-[  4816/ 56612]
-[  6416/ 56612]
-[  8016/ 56612]
-[  9616/ 56612]
-[ 11216/ 56612]
-[ 12816/ 56612]
-[ 14416/ 56612]
-[ 16016/ 56612]
-[ 17616/ 56612]
-[ 19216/ 56612]
-[ 20816/ 56612]
-[ 22416/ 56612]
-[ 24016/ 56612]
-[ 25616/ 56612]
-[ 27216/ 56612]
-[ 28816/ 56612]
-[ 30416/ 56612]
-[ 32016/ 56612]
-[ 33616/ 56612]
-[ 35216/ 56612]
-[ 36816/ 56612]
-[ 38416/ 56612]
-[ 40016/ 56612]
-[ 41616/ 56612]
-[ 43216/ 56612]
-[ 44816/ 56612]
-[ 46416/ 56612]
-[ 48016/ 56612]
-[ 49616/ 56612]
-[ 51216/ 56612]
-[ 52816/ 56612]
-[ 54416/ 56612]
-[ 56016/ 56612]
-Average training loss over this epoch: 0.06652212247418782
-Time for this training epoch: 1177.46 seconds (19.62 minutes)
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.09184052558394812
+Time for this training epoch: 690.73 seconds (11.51 minutes)
 Starting validation
-[   16/ 7499]
-[  816/ 7499]
-[ 1616/ 7499]
-[ 2416/ 7499]
-[ 3216/ 7499]
-[ 4016/ 7499]
-[ 4816/ 7499]
-[ 5616/ 7499]
-[ 6416/ 7499]
-[ 7216/ 7499]
-Average validation loss for this epoch: 0.08496004071380538
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.09207530795259679
 Epoch 12
 --------------------
-Base learning rate at epoch start: 0.00005050
-Fine-tune learning rate at epoch start: 0.00000550
+Base learning rate at epoch start: 0.00006708
+Fine-tune learning rate at epoch start: 0.00000701
 Starting training
-[    16/ 56612]
-[  1616/ 56612]
-[  3216/ 56612]
-[  4816/ 56612]
-[  6416/ 56612]
-[  8016/ 56612]
-[  9616/ 56612]
-[ 11216/ 56612]
-[ 12816/ 56612]
-[ 14416/ 56612]
-[ 16016/ 56612]
-[ 17616/ 56612]
-[ 19216/ 56612]
-[ 20816/ 56612]
-[ 22416/ 56612]
-[ 24016/ 56612]
-[ 25616/ 56612]
-[ 27216/ 56612]
-[ 28816/ 56612]
-[ 30416/ 56612]
-[ 32016/ 56612]
-[ 33616/ 56612]
-[ 35216/ 56612]
-[ 36816/ 56612]
-[ 38416/ 56612]
-[ 40016/ 56612]
-[ 41616/ 56612]
-[ 43216/ 56612]
-[ 44816/ 56612]
-[ 46416/ 56612]
-[ 48016/ 56612]
-[ 49616/ 56612]
-[ 51216/ 56612]
-[ 52816/ 56612]
-[ 54416/ 56612]
-[ 56016/ 56612]
-Average training loss over this epoch: 0.05541043642747281
-Time for this training epoch: 1178.56 seconds (19.64 minutes)
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.07992178771413315
+Time for this training epoch: 690.85 seconds (11.51 minutes)
 Starting validation
-[   16/ 7499]
-[  816/ 7499]
-[ 1616/ 7499]
-[ 2416/ 7499]
-[ 3216/ 7499]
-[ 4016/ 7499]
-[ 4816/ 7499]
-[ 5616/ 7499]
-[ 6416/ 7499]
-[ 7216/ 7499]
-Average validation loss for this epoch: 0.07840265383693709
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.08634059576595084
 Epoch 13
 --------------------
-Base learning rate at epoch start: 0.00004190
-Fine-tune learning rate at epoch start: 0.00000472
+Base learning rate at epoch start: 0.00006057
+Fine-tune learning rate at epoch start: 0.00000642
 Starting training
-[    16/ 56612]
-[  1616/ 56612]
-[  3216/ 56612]
-[  4816/ 56612]
-[  6416/ 56612]
-[  8016/ 56612]
-[  9616/ 56612]
-[ 11216/ 56612]
-[ 12816/ 56612]
-[ 14416/ 56612]
-[ 16016/ 56612]
-[ 17616/ 56612]
-[ 19216/ 56612]
-[ 20816/ 56612]
-[ 22416/ 56612]
-[ 24016/ 56612]
-[ 25616/ 56612]
-[ 27216/ 56612]
-[ 28816/ 56612]
-[ 30416/ 56612]
-[ 32016/ 56612]
-[ 33616/ 56612]
-[ 35216/ 56612]
-[ 36816/ 56612]
-[ 38416/ 56612]
-[ 40016/ 56612]
-[ 41616/ 56612]
-[ 43216/ 56612]
-[ 44816/ 56612]
-[ 46416/ 56612]
-[ 48016/ 56612]
-[ 49616/ 56612]
-[ 51216/ 56612]
-[ 52816/ 56612]
-[ 54416/ 56612]
-[ 56016/ 56612]
-Average training loss over this epoch: 0.04617619010698504
-Time for this training epoch: 1180.74 seconds (19.68 minutes)
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.06913602906936979
+Time for this training epoch: 691.02 seconds (11.52 minutes)
 Starting validation
-[   16/ 7499]
-[  816/ 7499]
-[ 1616/ 7499]
-[ 2416/ 7499]
-[ 3216/ 7499]
-[ 4016/ 7499]
-[ 4816/ 7499]
-[ 5616/ 7499]
-[ 6416/ 7499]
-[ 7216/ 7499]
-Average validation loss for this epoch: 0.07622277507308259
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.0867205116977083
 Epoch 14
 --------------------
-Base learning rate at epoch start: 0.00003357
-Fine-tune learning rate at epoch start: 0.00000396
+Base learning rate at epoch start: 0.00005388
+Fine-tune learning rate at epoch start: 0.00000581
 Starting training
-[    16/ 56612]
-[  1616/ 56612]
-[  3216/ 56612]
-[  4816/ 56612]
-[  6416/ 56612]
-[  8016/ 56612]
-[  9616/ 56612]
-[ 11216/ 56612]
-[ 12816/ 56612]
-[ 14416/ 56612]
-[ 16016/ 56612]
-[ 17616/ 56612]
-[ 19216/ 56612]
-[ 20816/ 56612]
-[ 22416/ 56612]
-[ 24016/ 56612]
-[ 25616/ 56612]
-[ 27216/ 56612]
-[ 28816/ 56612]
-[ 30416/ 56612]
-[ 32016/ 56612]
-[ 33616/ 56612]
-[ 35216/ 56612]
-[ 36816/ 56612]
-[ 38416/ 56612]
-[ 40016/ 56612]
-[ 41616/ 56612]
-[ 43216/ 56612]
-[ 44816/ 56612]
-[ 46416/ 56612]
-[ 48016/ 56612]
-[ 49616/ 56612]
-[ 51216/ 56612]
-[ 52816/ 56612]
-[ 54416/ 56612]
-[ 56016/ 56612]
-Average training loss over this epoch: 0.03869224033747674
-Time for this training epoch: 1173.47 seconds (19.56 minutes)
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.06015763697714287
+Time for this training epoch: 691.68 seconds (11.53 minutes)
 Starting validation
-[   16/ 7499]
-[  816/ 7499]
-[ 1616/ 7499]
-[ 2416/ 7499]
-[ 3216/ 7499]
-[ 4016/ 7499]
-[ 4816/ 7499]
-[ 5616/ 7499]
-[ 6416/ 7499]
-[ 7216/ 7499]
-Average validation loss for this epoch: 0.07349053549486945
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.0791338231018249
 Epoch 15
 --------------------
-Base learning rate at epoch start: 0.00002575
-Fine-tune learning rate at epoch start: 0.00000325
+Base learning rate at epoch start: 0.00004712
+Fine-tune learning rate at epoch start: 0.00000519
 Starting training
-[    16/ 56612]
-[  1616/ 56612]
-[  3216/ 56612]
-[  4816/ 56612]
-[  6416/ 56612]
-[  8016/ 56612]
-[  9616/ 56612]
-[ 11216/ 56612]
-[ 12816/ 56612]
-[ 14416/ 56612]
-[ 16016/ 56612]
-[ 17616/ 56612]
-[ 19216/ 56612]
-[ 20816/ 56612]
-[ 22416/ 56612]
-[ 24016/ 56612]
-[ 25616/ 56612]
-[ 27216/ 56612]
-[ 28816/ 56612]
-[ 30416/ 56612]
-[ 32016/ 56612]
-[ 33616/ 56612]
-[ 35216/ 56612]
-[ 36816/ 56612]
-[ 38416/ 56612]
-[ 40016/ 56612]
-[ 41616/ 56612]
-[ 43216/ 56612]
-[ 44816/ 56612]
-[ 46416/ 56612]
-[ 48016/ 56612]
-[ 49616/ 56612]
-[ 51216/ 56612]
-[ 52816/ 56612]
-[ 54416/ 56612]
-[ 56016/ 56612]
-Average training loss over this epoch: 0.03272961064245248
-Time for this training epoch: 1177.38 seconds (19.62 minutes)
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.053022670716384036
+Time for this training epoch: 691.65 seconds (11.53 minutes)
 Starting validation
-[   16/ 7499]
-[  816/ 7499]
-[ 1616/ 7499]
-[ 2416/ 7499]
-[ 3216/ 7499]
-[ 4016/ 7499]
-[ 4816/ 7499]
-[ 5616/ 7499]
-[ 6416/ 7499]
-[ 7216/ 7499]
-Average validation loss for this epoch: 0.07262840755045541
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.07909018665235093
 Checkpointing model, optimizer, scheduler state dicts
-Saving omr training state to omr_train/checkpoints/epoch_15_checkpoint.pth
+Saving omr training state to omr_small/checkpoints/epoch_15_checkpoint.pth
 Checkpointing stats plots
-Saving plot to omr_train/stats/losses.png
-Saving plot to omr_train/stats/lrs.png
-Writing training stats csv to omr_train/stats/training_stats.csv
+Saving plot to omr_small/stats/losses.png
+Saving plot to omr_small/stats/lrs.png
+Writing training stats csv to omr_small/stats/training_stats.csv
 Epoch 16
 --------------------
-Base learning rate at epoch start: 0.00001868
-Fine-tune learning rate at epoch start: 0.00000261
+Base learning rate at epoch start: 0.00004043
+Fine-tune learning rate at epoch start: 0.00000458
 Starting training
-[    16/ 56612]
-[  1616/ 56612]
-[  3216/ 56612]
-[  4816/ 56612]
-[  6416/ 56612]
-[  8016/ 56612]
-[  9616/ 56612]
-[ 11216/ 56612]
-[ 12816/ 56612]
-[ 14416/ 56612]
-[ 16016/ 56612]
-[ 17616/ 56612]
-[ 19216/ 56612]
-[ 20816/ 56612]
-[ 22416/ 56612]
-[ 24016/ 56612]
-[ 25616/ 56612]
-[ 27216/ 56612]
-[ 28816/ 56612]
-[ 30416/ 56612]
-[ 32016/ 56612]
-[ 33616/ 56612]
-[ 35216/ 56612]
-[ 36816/ 56612]
-[ 38416/ 56612]
-[ 40016/ 56612]
-[ 41616/ 56612]
-[ 43216/ 56612]
-[ 44816/ 56612]
-[ 46416/ 56612]
-[ 48016/ 56612]
-[ 49616/ 56612]
-[ 51216/ 56612]
-[ 52816/ 56612]
-[ 54416/ 56612]
-[ 56016/ 56612]
-Average training loss over this epoch: 0.02804236143577963
-Time for this training epoch: 1177.28 seconds (19.62 minutes)
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.04667071265057992
+Time for this training epoch: 690.84 seconds (11.51 minutes)
 Starting validation
-[   16/ 7499]
-[  816/ 7499]
-[ 1616/ 7499]
-[ 2416/ 7499]
-[ 3216/ 7499]
-[ 4016/ 7499]
-[ 4816/ 7499]
-[ 5616/ 7499]
-[ 6416/ 7499]
-[ 7216/ 7499]
-Average validation loss for this epoch: 0.07299675490421209
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.07375300788974508
 Epoch 17
 --------------------
-Base learning rate at epoch start: 0.00001258
-Fine-tune learning rate at epoch start: 0.00000205
+Base learning rate at epoch start: 0.00003392
+Fine-tune learning rate at epoch start: 0.00000399
 Starting training
-[    16/ 56612]
-[  1616/ 56612]
-[  3216/ 56612]
-[  4816/ 56612]
-[  6416/ 56612]
-[  8016/ 56612]
-[  9616/ 56612]
-[ 11216/ 56612]
-[ 12816/ 56612]
-[ 14416/ 56612]
-[ 16016/ 56612]
-[ 17616/ 56612]
-[ 19216/ 56612]
-[ 20816/ 56612]
-[ 22416/ 56612]
-[ 24016/ 56612]
-[ 25616/ 56612]
-[ 27216/ 56612]
-[ 28816/ 56612]
-[ 30416/ 56612]
-[ 32016/ 56612]
-[ 33616/ 56612]
-[ 35216/ 56612]
-[ 36816/ 56612]
-[ 38416/ 56612]
-[ 40016/ 56612]
-[ 41616/ 56612]
-[ 43216/ 56612]
-[ 44816/ 56612]
-[ 46416/ 56612]
-[ 48016/ 56612]
-[ 49616/ 56612]
-[ 51216/ 56612]
-[ 52816/ 56612]
-[ 54416/ 56612]
-[ 56016/ 56612]
-Average training loss over this epoch: 0.024540723940422303
-Time for this training epoch: 1175.28 seconds (19.59 minutes)
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.041270517114823484
+Time for this training epoch: 690.52 seconds (11.51 minutes)
 Starting validation
-[   16/ 7499]
-[  816/ 7499]
-[ 1616/ 7499]
-[ 2416/ 7499]
-[ 3216/ 7499]
-[ 4016/ 7499]
-[ 4816/ 7499]
-[ 5616/ 7499]
-[ 6416/ 7499]
-[ 7216/ 7499]
-Average validation loss for this epoch: 0.07296940436495393
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.0729864998542248
 Epoch 18
 --------------------
-Base learning rate at epoch start: 0.00000763
-Fine-tune learning rate at epoch start: 0.00000160
+Base learning rate at epoch start: 0.00002773
+Fine-tune learning rate at epoch start: 0.00000343
 Starting training
-[    16/ 56612]
-[  1616/ 56612]
-[  3216/ 56612]
-[  4816/ 56612]
-[  6416/ 56612]
-[  8016/ 56612]
-[  9616/ 56612]
-[ 11216/ 56612]
-[ 12816/ 56612]
-[ 14416/ 56612]
-[ 16016/ 56612]
-[ 17616/ 56612]
-[ 19216/ 56612]
-[ 20816/ 56612]
-[ 22416/ 56612]
-[ 24016/ 56612]
-[ 25616/ 56612]
-[ 27216/ 56612]
-[ 28816/ 56612]
-[ 30416/ 56612]
-[ 32016/ 56612]
-[ 33616/ 56612]
-[ 35216/ 56612]
-[ 36816/ 56612]
-[ 38416/ 56612]
-[ 40016/ 56612]
-[ 41616/ 56612]
-[ 43216/ 56612]
-[ 44816/ 56612]
-[ 46416/ 56612]
-[ 48016/ 56612]
-[ 49616/ 56612]
-[ 51216/ 56612]
-[ 52816/ 56612]
-[ 54416/ 56612]
-[ 56016/ 56612]
-Average training loss over this epoch: 0.02195806084945482
-Time for this training epoch: 1181.94 seconds (19.70 minutes)
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.03656886907946844
+Time for this training epoch: 691.58 seconds (11.53 minutes)
 Starting validation
-[   16/ 7499]
-[  816/ 7499]
-[ 1616/ 7499]
-[ 2416/ 7499]
-[ 3216/ 7499]
-[ 4016/ 7499]
-[ 4816/ 7499]
-[ 5616/ 7499]
-[ 6416/ 7499]
-[ 7216/ 7499]
-Average validation loss for this epoch: 0.07143930236159611
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.07473573783769252
 Epoch 19
 --------------------
-Base learning rate at epoch start: 0.00000399
-Fine-tune learning rate at epoch start: 0.00000127
+Base learning rate at epoch start: 0.00002195
+Fine-tune learning rate at epoch start: 0.00000290
 Starting training
-[    16/ 56612]
-[  1616/ 56612]
-[  3216/ 56612]
-[  4816/ 56612]
-[  6416/ 56612]
-[  8016/ 56612]
-[  9616/ 56612]
-[ 11216/ 56612]
-[ 12816/ 56612]
-[ 14416/ 56612]
-[ 16016/ 56612]
-[ 17616/ 56612]
-[ 19216/ 56612]
-[ 20816/ 56612]
-[ 22416/ 56612]
-[ 24016/ 56612]
-[ 25616/ 56612]
-[ 27216/ 56612]
-[ 28816/ 56612]
-[ 30416/ 56612]
-[ 32016/ 56612]
-[ 33616/ 56612]
-[ 35216/ 56612]
-[ 36816/ 56612]
-[ 38416/ 56612]
-[ 40016/ 56612]
-[ 41616/ 56612]
-[ 43216/ 56612]
-[ 44816/ 56612]
-[ 46416/ 56612]
-[ 48016/ 56612]
-[ 49616/ 56612]
-[ 51216/ 56612]
-[ 52816/ 56612]
-[ 54416/ 56612]
-[ 56016/ 56612]
-Average training loss over this epoch: 0.020362118898024327
-Time for this training epoch: 1177.27 seconds (19.62 minutes)
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.03258004511659176
+Time for this training epoch: 690.78 seconds (11.51 minutes)
 Starting validation
-[   16/ 7499]
-[  816/ 7499]
-[ 1616/ 7499]
-[ 2416/ 7499]
-[ 3216/ 7499]
-[ 4016/ 7499]
-[ 4816/ 7499]
-[ 5616/ 7499]
-[ 6416/ 7499]
-[ 7216/ 7499]
-Average validation loss for this epoch: 0.07150380169627255
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.06994527521285605
 Epoch 20
 --------------------
-Base learning rate at epoch start: 0.00000175
-Fine-tune learning rate at epoch start: 0.00000107
+Base learning rate at epoch start: 0.00001671
+Fine-tune learning rate at epoch start: 0.00000243
 Starting training
-[    16/ 56612]
-[  1616/ 56612]
-[  3216/ 56612]
-[  4816/ 56612]
-[  6416/ 56612]
-[  8016/ 56612]
-[  9616/ 56612]
-[ 11216/ 56612]
-[ 12816/ 56612]
-[ 14416/ 56612]
-[ 16016/ 56612]
-[ 17616/ 56612]
-[ 19216/ 56612]
-[ 20816/ 56612]
-[ 22416/ 56612]
-[ 24016/ 56612]
-[ 25616/ 56612]
-[ 27216/ 56612]
-[ 28816/ 56612]
-[ 30416/ 56612]
-[ 32016/ 56612]
-[ 33616/ 56612]
-[ 35216/ 56612]
-[ 36816/ 56612]
-[ 38416/ 56612]
-[ 40016/ 56612]
-[ 41616/ 56612]
-[ 43216/ 56612]
-[ 44816/ 56612]
-[ 46416/ 56612]
-[ 48016/ 56612]
-[ 49616/ 56612]
-[ 51216/ 56612]
-[ 52816/ 56612]
-[ 54416/ 56612]
-[ 56016/ 56612]
-Average training loss over this epoch: 0.0194479135286424
-Time for this training epoch: 1178.52 seconds (19.64 minutes)
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.02929495088492999
+Time for this training epoch: 691.97 seconds (11.53 minutes)
 Starting validation
-[   16/ 7499]
-[  816/ 7499]
-[ 1616/ 7499]
-[ 2416/ 7499]
-[ 3216/ 7499]
-[ 4016/ 7499]
-[ 4816/ 7499]
-[ 5616/ 7499]
-[ 6416/ 7499]
-[ 7216/ 7499]
-Average validation loss for this epoch: 0.07190635188945385
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.07082338599448508
 Checkpointing model, optimizer, scheduler state dicts
-Saving omr training state to omr_train/checkpoints/epoch_20_checkpoint.pth
+Saving omr training state to omr_small/checkpoints/epoch_20_checkpoint.pth
 Checkpointing stats plots
-Saving plot to omr_train/stats/losses.png
-Saving plot to omr_train/stats/lrs.png
-Writing training stats csv to omr_train/stats/training_stats.csv
+Saving plot to omr_small/stats/losses.png
+Saving plot to omr_small/stats/lrs.png
+Writing training stats csv to omr_small/stats/training_stats.csv
+Epoch 21
+--------------------
+Base learning rate at epoch start: 0.00001210
+Fine-tune learning rate at epoch start: 0.00000201
+Starting training
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.02685880494004084
+Time for this training epoch: 690.60 seconds (11.51 minutes)
+Starting validation
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.0703725479384686
+Epoch 22
+--------------------
+Base learning rate at epoch start: 0.00000821
+Fine-tune learning rate at epoch start: 0.00000166
+Starting training
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.025047848649628165
+Time for this training epoch: 693.80 seconds (11.56 minutes)
+Starting validation
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.07018283455771335
+Epoch 23
+--------------------
+Base learning rate at epoch start: 0.00000510
+Fine-tune learning rate at epoch start: 0.00000137
+Starting training
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.023677389234262335
+Time for this training epoch: 691.83 seconds (11.53 minutes)
+Starting validation
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.0696916056995062
+Epoch 24
+--------------------
+Base learning rate at epoch start: 0.00000284
+Fine-tune learning rate at epoch start: 0.00000117
+Starting training
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.022504985944951993
+Time for this training epoch: 693.93 seconds (11.57 minutes)
+Starting validation
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.06973140406164717
+Epoch 25
+--------------------
+Base learning rate at epoch start: 0.00000146
+Fine-tune learning rate at epoch start: 0.00000104
+Starting training
+[    32/ 56612]
+[  3232/ 56612]
+[  6432/ 56612]
+[  9632/ 56612]
+[ 12832/ 56612]
+[ 16032/ 56612]
+[ 19232/ 56612]
+[ 22432/ 56612]
+[ 25632/ 56612]
+[ 28832/ 56612]
+[ 32032/ 56612]
+[ 35232/ 56612]
+[ 38432/ 56612]
+[ 41632/ 56612]
+[ 44832/ 56612]
+[ 48032/ 56612]
+[ 51232/ 56612]
+[ 54432/ 56612]
+Average training loss over this epoch: 0.022113142536668958
+Time for this training epoch: 694.81 seconds (11.58 minutes)
+Starting validation
+[   32/ 7499]
+[ 1632/ 7499]
+[ 3232/ 7499]
+[ 4832/ 7499]
+[ 6432/ 7499]
+Average validation loss for this epoch: 0.06979516616210024
+Checkpointing model, optimizer, scheduler state dicts
+Saving omr training state to omr_small/checkpoints/epoch_25_checkpoint.pth
+Checkpointing stats plots
+Saving plot to omr_small/stats/losses.png
+Saving plot to omr_small/stats/lrs.png
+Writing training stats csv to omr_small/stats/training_stats.csv
 Plotting final stats
-Saving plot to omr_train/stats/losses.png
-Saving plot to omr_train/stats/lrs.png
-Writing training stats csv to omr_train/stats/training_stats.csv
+Saving plot to omr_small/stats/losses.png
+Saving plot to omr_small/stats/lrs.png
+Writing training stats csv to omr_small/stats/training_stats.csv
 Saving final omr training state
-Saving omr training state to omr_train/ending_omr_train_state.pth
-Saving final model state dict separately to omr_train/vitomr.pth
+Saving omr training state to omr_small/ending_omr_train_state.pth
+Saving final model state dict separately to omr_small/vitomr.pth

@@ -1,0 +1,12 @@
+:root {
+    --text-color: white;
+    --accent-color: #de0bcf;
+    --background-color: #1a1a1a;
+}
+
+body {
+    color: var(--text-color);
+    background-color: var(--background-color);
+    font-family: Iosevka;
+    min-height: 100vh;
+}
