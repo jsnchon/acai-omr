@@ -11,7 +11,6 @@ from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
 from acai_omr.models.models import MAELoss, OMRLoss
 import pandas as pd
 from pathlib import Path
-import sys
 
 # num_train_batches is the number of batches in each epoch. If passed, the scheduler will configure to be called
 # each minibatch instead of each epoch
@@ -289,17 +288,6 @@ def save_training_stats(stats_dir_path, epoch_training_losses, epoch_validation_
         })
         print(f"Writing training stats csv to {csv_path}")
         stats_df.to_csv(csv_path)
-
-def set_up_logger(logger_name, logger_level=logging.INFO):
-    logger = logging.getLogger(logger_name)
-    logger.setLevel(logger_level)
-    stream_handler = logging.StreamHandler(sys.stdout)
-    formatter = logging.Formatter(
-        "%(module)s -- %(levelname)s: %(message)s"
-    )
-    stream_handler.setFormatter(formatter)
-    logger.addHandler(stream_handler)
-    return logger
 
 # previous code wrote loss and validation curves to separate plots. This little utility function will use the stats
 # csv to reformat the training stats to the new plot versions. The args should be pathlib Path instances

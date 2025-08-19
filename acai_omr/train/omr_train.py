@@ -184,6 +184,8 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
     print(f"Saving final model state dict separately to {model_path}")
     torch.save(vitomr.state_dict(), model_path)
 
+# constructing/loading the model definition into memory can be intensive, so instead of doing this whenever this module is imported,
+# separate it into a function that can be called when it's needed
 def set_up_omr_train():
     device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
     print(f"Using device {device}")

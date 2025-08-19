@@ -2,7 +2,6 @@ import torch
 from acai_omr.models.models import ViTOMR
 from acai_omr.train.omr_train import set_up_omr_train
 from acai_omr.config import LMX_BOS_TOKEN, LMX_EOS_TOKEN
-from acai_omr.utils.utils import set_up_logger
 from torch.amp import autocast
 from PIL import Image
 import logging
@@ -10,7 +9,7 @@ import logging
 VITOMR_WEIGHTS_PATH = "omr_train/vitomr.pth"
 IMAGE_PATH = "inference_test.png"
 
-logger = set_up_logger(__name__, logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 # split seqs and corresponding log_probs into individual sequences, calculate normalized beam scores for each sequence,
 # and return a list of (seq, score) tuples
@@ -20,8 +19,8 @@ def split_and_score_seqs(seqs, log_probs):
     split_seqs = torch.split(seqs, 1, dim=0)
     split_seqs_log_probs = torch.split(log_probs, 1, dim=0)
     for seq, log_prob in zip(split_seqs, split_seqs_log_probs):
-        seq = seq.squeeze(0)
-        seq_len = seq.shape[0]
+        seq = seq
+        seq_len = seq.shape[1]
         score = log_prob / seq_len
         result.append((seq, score))
     
@@ -90,7 +89,9 @@ def beam_search(
 
     logger.debug(f"completed_beams before sort: {completed_beams}")
     completed_beams.sort(key=lambda x: x[1], reverse=True) # sort sequences by score
-    yield completed_beams[0][0]
+    best_seq = completed_beams[0][0]
+    logger.info(f"INFERENCE RESULT\n{'-' * 20}\n{best_seq}")
+    yield best_seq # (1 x best_seq_len)
 
 # non-streamed local (ie back-end only) inference
 def inference(
@@ -110,6 +111,7 @@ def inference(
     return inference_result
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
     logger.info("Loading state dict")
 
     vitomr, base_img_transform, _, device = set_up_omr_train()
@@ -129,5 +131,5 @@ if __name__ == "__main__":
     # make sure to transform any images using patch transform
     logger.info("Starting inference")
     lmx_seq = inference(vitomr, image, bos_token_idx, eos_token_idx, device)
-    lmx_seq = [vitomr.decoder.idxs_to_tokens[idx.item()] for idx in lmx_seq]
-    logger.info(f"INFERENCE RESULT\n{'-' * 20}\n{" ".join(lmx_seq)}")
+    lmx_seq = [vitomr.decoder.idxs_to_tokens[idx.item()] for idx in lmx_seq.squeeze(0)]
+    logger.info(f"Decoded inference result: {' '.join(lmx_seq)}")
