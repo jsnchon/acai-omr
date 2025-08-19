@@ -1,3 +1,7 @@
+from enum import Enum
+import json
+import pathlib
+
 # this file stores a bunch of useful constants used across many files in one place (also helps avoid circular imports)
 
 GRAND_STAFF_ROOT_DIR = "data/grandstaff-lmx.2024-02-12/grandstaff-lmx"
@@ -14,3 +18,17 @@ LMX_EOS_TOKEN = "<eos>"
 LMX_PAD_TOKEN = "<pad>" # token used for padding lmx sequences
 
 DEFAULT_VITOMR_PATH = "omr_train/vitomr.pth"
+
+# inference streaming events. Python back-end can import this Enum while javascript in the front-end can
+# use the saved .json for more type safety
+class InferenceEvent(Enum):
+    ENCODING_START = "encoding_start"
+    ENCODING_FINISH = "encoding_finish"
+    STEP = "step" # each inference step yields both beam(s) and log prob(s)
+    FINAL_STEP = "final_step" # want to treat the result from the last step differently (eg only has one sequence, want to stream its score to the ui)
+    INFERENCE_FINISH = "inference_finish"
+
+INFERENCE_EVENT_JSON_PATH = pathlib.Path("acai_omr/ui/inference_events.json")
+
+inference_events = {e.name: e.value for e in InferenceEvent}
+INFERENCE_EVENT_JSON_PATH.write_text(json.dumps(inference_events, indent=2))

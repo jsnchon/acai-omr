@@ -1,7 +1,7 @@
 import torch
 from acai_omr.models.models import ViTOMR
 from acai_omr.train.omr_train import set_up_omr_train
-from acai_omr.config import LMX_BOS_TOKEN, LMX_EOS_TOKEN
+from acai_omr.config import LMX_BOS_TOKEN, LMX_EOS_TOKEN, InferenceEvent
 from torch.amp import autocast
 from PIL import Image
 import logging
@@ -26,8 +26,11 @@ def split_and_score_seqs(seqs, log_probs):
     
     return result
 
-# autoregressive beam search inference using average log probability as length normalization. This is a generator to allow for
-# the possibility of streaming beam exploration to the ui during inference
+"""
+Autoregressive beam search inference using average log probability as length normalization. This is a generator of events (dicts of event_type: payload_dict)
+to allow for the possibility of streaming each stage of the inference pipeline to the ui. If this module is ran as a stand-alone,
+it'll only be concerned with the final generated result
+"""
 def beam_search(
     vitomr: ViTOMR, 
     img: torch.Tensor, 
@@ -40,10 +43,12 @@ def beam_search(
     vitomr.eval()
     # encode image latent once to avoid redundant encoder computations
     logger.debug("Encoding image latent")
+    yield {"type": InferenceEvent.ENCODING_START.value, "payload": {"message": "Encoding image"}}
     with torch.no_grad():
         with autocast(device_type=device, dtype=torch.bfloat16):
             img_latent = vitomr.encoder.generate(img)
             img_latent = vitomr.transition_head(img_latent)
+    yield {"type": InferenceEvent.ENCODING_FINISH.value, "payload": {"message": "Finished encoding image"}}
 
     completed_beams = [] # tuples of (sequence, score) where score is length-normalized log prob
 
@@ -53,7 +58,7 @@ def beam_search(
 
     logger.debug("Starting inference loop")
     for _ in range(max_inference_len - 1):
-        logger.debug(f"Active beams:\n{active_seqs}")
+        logger.debug(f"Active beams:\n{active_seqs} with log probs {log_probs}")
         with torch.no_grad():
             with autocast(device_type=device, dtype=torch.bfloat16):
                 next_token_distr = vitomr.generate(img_latent, active_seqs) # (num_seqs, vocab_size), num_seqs is 1 in first iteration and beam_width otherwise
@@ -79,21 +84,22 @@ def beam_search(
             completed_beams += split_and_score_seqs(finished_seqs, finished_seqs_log_probs)
             logger.debug(f"completed_beams after appending newly finished beams: {completed_beams}")
 
-        yield active_seqs
+        yield {"type": InferenceEvent.STEP.value, "payload": {"beams": active_seqs, "log_probs": log_probs}}
 
         if len(completed_beams) >= beam_width:
             break
     
+    logger.debug(f"Active beams at inference end:\n{active_seqs} with log probs {log_probs}")
     if len(completed_beams) < beam_width: # didn't finish early and instead ran out of inference steps
         completed_beams += split_and_score_seqs(active_seqs, log_probs) # add whatever incomplete beams we have as candidates
 
     logger.debug(f"completed_beams before sort: {completed_beams}")
     completed_beams.sort(key=lambda x: x[1], reverse=True) # sort sequences by score
-    best_seq = completed_beams[0][0]
-    logger.info(f"INFERENCE RESULT\n{'-' * 20}\n{best_seq}")
-    yield best_seq # (1 x best_seq_len)
+    best_seq, score = completed_beams[0] # best_seq is (1 x best_seq_len)
+    logger.info(f"INFERENCE RESULT\n{'-' * 20}\n{best_seq}\nScore: {score}")
+    yield {"type": InferenceEvent.FINAL_STEP.value, "payload": {"beams": best_seq, "log_probs": score}}
 
-# non-streamed local (ie back-end only) inference
+# non-streamed local (ie back-end only) inference. We just consume the generator until we get the final result
 def inference(
     vitomr: ViTOMR, 
     img: torch.Tensor, 
@@ -103,12 +109,12 @@ def inference(
     beam_width=3, 
     max_inference_len=1536):
 
-    inference_result = None
-    for beams in beam_search(vitomr, img, bos_token_idx, eos_token_idx, device, beam_width, max_inference_len):
-        inference_result = beams 
+    inference_event = None
+    for event in beam_search(vitomr, img, bos_token_idx, eos_token_idx, device, beam_width, max_inference_len):
+        inference_event = event 
 
-    # last yielded value by beam_search is the best sequence
-    return inference_result
+    # last yielded value by beam_search is the best sequence and its normalized score
+    return inference_event["payload"]["beams"], inference_event["payload"]["log_probs"]
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
@@ -130,6 +136,6 @@ if __name__ == "__main__":
 
     # make sure to transform any images using patch transform
     logger.info("Starting inference")
-    lmx_seq = inference(vitomr, image, bos_token_idx, eos_token_idx, device)
+    lmx_seq, score = inference(vitomr, image, bos_token_idx, eos_token_idx, device)
     lmx_seq = [vitomr.decoder.idxs_to_tokens[idx.item()] for idx in lmx_seq.squeeze(0)]
-    logger.info(f"Decoded inference result: {' '.join(lmx_seq)}")
+    logger.info(f"Decoded inference result: {' '.join(lmx_seq)}\nSequence score: {score}")
