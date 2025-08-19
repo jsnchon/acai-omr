@@ -1,7 +1,8 @@
 import torch
 from acai_omr.models.models import ViTOMR
-from acai_omr.train.omr_train import vitomr, device, base_img_transform
+from acai_omr.train.omr_train import set_up_omr_train
 from acai_omr.config import LMX_BOS_TOKEN, LMX_EOS_TOKEN
+from acai_omr.utils.utils import set_up_logger
 from torch.amp import autocast
 from PIL import Image
 import logging
@@ -9,7 +10,7 @@ import logging
 VITOMR_WEIGHTS_PATH = "omr_train/vitomr.pth"
 IMAGE_PATH = "inference_test.png"
 
-logger = logging.getLogger(__name__)
+logger = set_up_logger(__name__, logging.DEBUG)
 
 # split seqs and corresponding log_probs into individual sequences, calculate normalized beam scores for each sequence,
 # and return a list of (seq, score) tuples
@@ -26,15 +27,16 @@ def split_and_score_seqs(seqs, log_probs):
     
     return result
 
-# autoregressive beam search inference using average log probability as length normalization
+# autoregressive beam search inference using average log probability as length normalization. This is a generator to allow for
+# the possibility of streaming beam exploration to the ui during inference
 def beam_search(
     vitomr: ViTOMR, 
     img: torch.Tensor, 
     bos_token_idx: int, 
     eos_token_idx: int, 
     device, 
-    beam_width=3, 
-    max_inference_len=1536): # <bos> token is counted as contributing one step to this limit
+    beam_width: int, 
+    max_inference_len: int): # <bos> token is counted as contributing one step to this limit
 
     vitomr.eval()
     # encode image latent once to avoid redundant encoder computations
@@ -78,6 +80,8 @@ def beam_search(
             completed_beams += split_and_score_seqs(finished_seqs, finished_seqs_log_probs)
             logger.debug(f"completed_beams after appending newly finished beams: {completed_beams}")
 
+        yield active_seqs
+
         if len(completed_beams) >= beam_width:
             break
     
@@ -86,12 +90,29 @@ def beam_search(
 
     logger.debug(f"completed_beams before sort: {completed_beams}")
     completed_beams.sort(key=lambda x: x[1], reverse=True) # sort sequences by score
-    return completed_beams[0][0]
+    yield completed_beams[0][0]
+
+# non-streamed local (ie back-end only) inference
+def inference(
+    vitomr: ViTOMR, 
+    img: torch.Tensor, 
+    bos_token_idx: int, 
+    eos_token_idx: int, 
+    device, 
+    beam_width=3, 
+    max_inference_len=1536):
+
+    inference_result = None
+    for beams in beam_search(vitomr, img, bos_token_idx, eos_token_idx, device, beam_width, max_inference_len):
+        inference_result = beams 
+
+    # last yielded value by beam_search is the best sequence
+    return inference_result
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
-
     logger.info("Loading state dict")
+
+    vitomr, base_img_transform, _, device = set_up_omr_train()
     if device == "cpu":
         vitomr_state_dict = torch.load(VITOMR_WEIGHTS_PATH, map_location=torch.device("cpu"))
     else:
@@ -99,11 +120,6 @@ if __name__ == "__main__":
 
     vitomr.load_state_dict(vitomr_state_dict)
     
-#    # DEBUG purposes
-#    from test_vitomr import debug_vitomr
-#    vitomr = debug_vitomr
-#    # end debug
-
     bos_token_idx = vitomr.decoder.tokens_to_idxs[LMX_BOS_TOKEN]
     eos_token_idx = vitomr.decoder.tokens_to_idxs[LMX_EOS_TOKEN]
 
@@ -112,6 +128,6 @@ if __name__ == "__main__":
 
     # make sure to transform any images using patch transform
     logger.info("Starting inference")
-    lmx_seq = beam_search(vitomr, image, bos_token_idx, eos_token_idx, device)
+    lmx_seq = inference(vitomr, image, bos_token_idx, eos_token_idx, device)
     lmx_seq = [vitomr.decoder.idxs_to_tokens[idx.item()] for idx in lmx_seq]
     logger.info(f"INFERENCE RESULT\n{'-' * 20}\n{" ".join(lmx_seq)}")

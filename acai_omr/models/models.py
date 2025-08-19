@@ -78,7 +78,6 @@ class Encoder(nn.Module):
         h_p = x.shape[1] // self.patch_size
         w_p = x.shape[2] // self.patch_size
 
-        print(x.shape)
         x = self.unfold(x.unsqueeze(0))
         x = x.transpose(dim0=1, dim1=2) # prepare for projection
         x = self.projection(x)

@@ -1,4 +1,4 @@
-from acai_omr.train.pre_train import pre_train, PE_MAX_HEIGHT, PE_MAX_WIDTH, base_transform, EPOCHS, WARMUP_EPOCHS, BASE_LR, MIN_LR
+from acai_omr.train.pre_train import pre_train, set_up_mae, PE_MAX_HEIGHT, PE_MAX_WIDTH, base_transform, EPOCHS, WARMUP_EPOCHS, BASE_LR, MIN_LR
 from acai_omr.models.models import MAE, Encoder
 from torch.utils.data import Dataset
 from acai_omr.utils.utils import show_mae_prediction, cosine_anneal_with_warmup, plot_lr_schedule
@@ -6,7 +6,8 @@ from acai_omr.config import PRIMUS_PREPARED_ROOT_DIR, GRAND_STAFF_ROOT_DIR, DEBU
 from torchvision.transforms import v2, InterpolationMode
 from acai_omr.train.datasets import PreparedDataset, PreTrainWrapper, GrandStaffLMXDataset, GrandStaffPreTrainWrapper
 import torch
-from acai_omr.train.pre_train import mae as pre_train_mae
+
+pre_train_mae = set_up_mae()
 
 # for debug purposes, hidden dims are 10
 DEBUG_KWARGS = {"num_layers": 2, "num_heads": 1, "mlp_dim": 1}

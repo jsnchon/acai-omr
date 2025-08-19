@@ -184,31 +184,36 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
     print(f"Saving final model state dict separately to {model_path}")
     torch.save(vitomr.state_dict(), model_path)
 
-device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
-print(f"Using device {device}")
+def set_up_omr_train():
+    device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
+    print(f"Using device {device}")
 
-print(f"Setting up encoder with patch size {PATCH_SIZE}, pe grid of {PE_MAX_HEIGHT} x {PE_MAX_WIDTH}, fine-tuning last {ENCODER_FINE_TUNE_DEPTH} layers")
-encoder = FineTuneOMREncoder(PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH, ENCODER_FINE_TUNE_DEPTH, transformer_dropout=ENCODER_DROPOUT)
-print(f"Setting up decoder with max lmx sequence length {MAX_LMX_SEQ_LEN}, vocab file {LMX_VOCAB_PATH}")
-decoder = OMRDecoder(MAX_LMX_SEQ_LEN, LMX_VOCAB_PATH, num_layers=NUM_DECODER_LAYERS, transformer_dropout=DECODER_DROPOUT)
-if device == "cpu":
-    pretrained_mae_state_dict = torch.load(PRETRAINED_MAE_STATE_DICT_PATH, map_location=torch.device("cpu"))
-else:
-    pretrained_mae_state_dict = torch.load(PRETRAINED_MAE_STATE_DICT_PATH)
-print(f"Loaded pretrained mae state dict from {PRETRAINED_MAE_STATE_DICT_PATH}")
-print("Setting up ViTOMR model")
-vitomr = ViTOMR(encoder, pretrained_mae_state_dict, decoder, transition_head_dropout=TRANSITION_HEAD_DROPOUT)
-vitomr = vitomr.to(device)
+    print(f"Setting up encoder with patch size {PATCH_SIZE}, pe grid of {PE_MAX_HEIGHT} x {PE_MAX_WIDTH}, fine-tuning last {ENCODER_FINE_TUNE_DEPTH} layers")
+    encoder = FineTuneOMREncoder(PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH, ENCODER_FINE_TUNE_DEPTH, transformer_dropout=ENCODER_DROPOUT)
+    print(f"Setting up decoder with max lmx sequence length {MAX_LMX_SEQ_LEN}, vocab file {LMX_VOCAB_PATH}")
+    decoder = OMRDecoder(MAX_LMX_SEQ_LEN, LMX_VOCAB_PATH, num_layers=NUM_DECODER_LAYERS, transformer_dropout=DECODER_DROPOUT)
+    if device == "cpu":
+        pretrained_mae_state_dict = torch.load(PRETRAINED_MAE_STATE_DICT_PATH, map_location=torch.device("cpu"))
+    else:
+        pretrained_mae_state_dict = torch.load(PRETRAINED_MAE_STATE_DICT_PATH)
 
-base_img_transform = v2.Compose([
-    v2.ToImage(),
-    v2.ToDtype(torch.float32, scale=True),
-    DynamicResize(PATCH_SIZE, MAX_IMG_SEQ_LEN, PE_MAX_HEIGHT, PE_MAX_WIDTH, False)
-])
+    print(f"Loaded pretrained mae state dict from {PRETRAINED_MAE_STATE_DICT_PATH}")
+    print("Setting up ViTOMR model")
+    vitomr = ViTOMR(encoder, pretrained_mae_state_dict, decoder, transition_head_dropout=TRANSITION_HEAD_DROPOUT)
+    vitomr = vitomr.to(device)
 
-base_lmx_transform = PrepareLMXSequence(decoder.tokens_to_idxs)
+    base_img_transform = v2.Compose([
+        v2.ToImage(),
+        v2.ToDtype(torch.float32, scale=True),
+        DynamicResize(PATCH_SIZE, MAX_IMG_SEQ_LEN, PE_MAX_HEIGHT, PE_MAX_WIDTH, False)
+    ])
+
+    base_lmx_transform = PrepareLMXSequence(decoder.tokens_to_idxs)
+
+    return vitomr, base_img_transform, base_lmx_transform, device
 
 if __name__ == "__main__":
+    vitomr, base_img_transform, base_lmx_transform, device = set_up_omr_train()
 
     # slightly stronger augmentation since this training stage should be aided by the pre-training
     camera_augment = v2.RandomApply(transforms=[

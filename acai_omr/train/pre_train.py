@@ -8,7 +8,7 @@ from acai_omr.models.models import MAE, MAELoss
 from pathlib import Path
 import time
 
-MODEL_DIR_PATH = Path("mae_pre_train")
+MODEL_DIR_PATH = Path("foo")
 CHECKPOINTS_DIR_PATH = MODEL_DIR_PATH / "checkpoints"
 STATS_DIR_PATH = MODEL_DIR_PATH / "stats"
 
@@ -107,9 +107,9 @@ def pre_train(mae, train_dataset, validation_dataset):
     scheduler = cosine_anneal_with_warmup(optimizer, WARMUP_EPOCHS, EPOCHS, MIN_LR)
     loss_fn = MAELoss()
 
-    MODEL_DIR_PATH.mkdir(exist_ok=True)
-    CHECKPOINTS_DIR_PATH.mkdir(exist_ok=True)
-    STATS_DIR_PATH.mkdir(exist_ok=True)
+    MODEL_DIR_PATH.mkdir()
+    CHECKPOINTS_DIR_PATH.mkdir()
+    STATS_DIR_PATH.mkdir()
     print(f"Created directories {MODEL_DIR_PATH}, {CHECKPOINTS_DIR_PATH}, {STATS_DIR_PATH}")
 
     device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
@@ -153,8 +153,10 @@ def pre_train(mae, train_dataset, validation_dataset):
     print(f"Saving final model state dict separately to {model_path}")
     torch.save(mae.state_dict(), model_path)
 
-print(f"Setting up MAE with mask ratio {MASK_RATIO} and patch size {PATCH_SIZE}")
-mae = MAE(MASK_RATIO, PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH)
+def set_up_mae():
+    print(f"Setting up MAE with mask ratio {MASK_RATIO} and patch size {PATCH_SIZE}")
+    mae = MAE(MASK_RATIO, PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH)
+    return mae
 
 # base transform for all images: convert to tensor, scale to patch divisible size within token budget
 base_transform = v2.Compose([
@@ -164,6 +166,8 @@ base_transform = v2.Compose([
 ])
 
 if __name__ == "__main__":
+    mae = set_up_mae()
+
     # base train datasets
     grand_staff = GrandStaffLMXDataset(GRAND_STAFF_ROOT_DIR, "samples.train.txt", img_transform=base_transform)
     primus = PreparedDataset(PRIMUS_PREPARED_ROOT_DIR, transform=base_transform)

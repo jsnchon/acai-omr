@@ -5,8 +5,8 @@ from pathlib import Path
 from models import MAELoss, OMRLoss
 from acai_omr.train.datasets import GrandStaffLMXDataset, OlimpicDataset, OlimpicPreTrainWrapper, GrandStaffPreTrainWrapper, GrandStaffOMRTrainWrapper
 from torch.utils.data import ConcatDataset, DataLoader
-from acai_omr.train.pre_train import mae, base_transform
-from acai_omr.train.omr_train import vitomr, base_img_transform, base_lmx_transform
+from acai_omr.train.pre_train import set_up_mae, base_transform
+from acai_omr.train.omr_train import set_up_omr_train
 from torch.amp import autocast
 from enum import Enum
 import argparse
@@ -123,6 +123,9 @@ def test_vitomr(vitomr, vitomr_state_dict, args, device):
     if prediction_dir:
         sample_predictions(vitomr, Models.VIT_OMR, prediction_dir, test_dataloader.dataset, device)
 
+mae = set_up_mae()
+vitomr, base_img_transform, base_lmx_transform, _ = set_up_omr_train()
+
 parser = argparse.ArgumentParser()
 parser.add_argument("model_type", choices=[Models.MAE.value, Models.VIT_OMR.value])
 parser.add_argument("weight_path", help="Path to .pth weight or checkpoint file")
@@ -137,19 +140,25 @@ parser.add_argument("-w", "--num-workers", type=int, default=24)
 args = parser.parse_args()
 model_type = args.model_type
 
+device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
+print(f"Using device {device}")
+
 weight_path = args.weight_path
 print(f"Loading state dict from {weight_path}")
 if args.checkpoint:
-    checkpoint = torch.load(weight_path)
+    if device == "cpu":
+        checkpoint = torch.load(weight_path, map_location=torch.device("cpu"))
+    else:
+        checkpoint = torch.load(weight_path)
     if args.model_type == Models.MAE:
         model_state_dict = checkpoint["mae_state_dict"]
     elif args.model_type == Models.VIT_OMR:
         model_state_dict = checkpoint["vitomr_state_dict"]
 else:
-    model_state_dict = torch.load(weight_path)
-
-device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
-print(f"Using device {device}")
+    if device == "cpu":
+        model_state_dict = torch.load(weight_path, map_location=torch.device("cpu"))
+    else:
+        model_state_dict = torch.load(weight_path)
 
 if model_type == Models.MAE.value: # use Enum.value here since those strings (not actual Enum objects) are the command line options
     test_mae(mae, model_state_dict, args, device)

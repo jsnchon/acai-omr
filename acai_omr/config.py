@@ -12,3 +12,5 @@ DEBUG_PRETRAINED_MAE_PATH = "debug_pretrained_mae.pth"
 LMX_BOS_TOKEN = "<bos>"
 LMX_EOS_TOKEN = "<eos>"
 LMX_PAD_TOKEN = "<pad>" # token used for padding lmx sequences
+
+DEFAULT_VITOMR_PATH = "omr_train/vitomr.pth"
