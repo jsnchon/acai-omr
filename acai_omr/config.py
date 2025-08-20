@@ -17,7 +17,7 @@ LMX_BOS_TOKEN = "<bos>"
 LMX_EOS_TOKEN = "<eos>"
 LMX_PAD_TOKEN = "<pad>" # token used for padding lmx sequences
 
-DEFAULT_VITOMR_PATH = "omr_train/vitomr.pth"
+INFERENCE_VITOMR_PATH = "omr_train/vitomr.pth" # path to weights to use for inference
 
 # inference streaming events. Python back-end can import this Enum while javascript in the front-end can
 # use the saved .json for more type safety
@@ -31,3 +31,5 @@ INFERENCE_EVENT_JSON_PATH = pathlib.Path("acai_omr/ui/static/inference_events.js
 
 inference_events = {e.name: e.value for e in InferenceEvent}
 INFERENCE_EVENT_JSON_PATH.write_text(json.dumps(inference_events, indent=2))
+
+OLIMPIC_ROOT_DIR = "olimpic-icdar24/"

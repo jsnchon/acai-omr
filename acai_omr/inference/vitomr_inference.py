@@ -1,10 +1,11 @@
 import torch
 from acai_omr.models.models import ViTOMR
 from acai_omr.train.omr_train import set_up_omr_train
-from acai_omr.config import LMX_BOS_TOKEN, LMX_EOS_TOKEN, InferenceEvent
+from acai_omr.config import LMX_BOS_TOKEN, LMX_EOS_TOKEN, InferenceEvent, OLIMPIC_ROOT_DIR
 from torch.amp import autocast
 from PIL import Image
 import logging
+import subprocess
 
 VITOMR_WEIGHTS_PATH = "omr_train/vitomr.pth"
 IMAGE_PATH = "inference_test.png"
@@ -98,6 +99,12 @@ def beam_search(
     best_seq, score = completed_beams[0] # best_seq is (1 x best_seq_len)
     logger.info(f"INFERENCE RESULT\n{'-' * 20}\n{best_seq}\nScore: {score}")
     yield {"type": InferenceEvent.INFERENCE_FINISH.value, "payload": {"lmx_seq": best_seq, "score": score}}
+
+def delinearize(lmx_seq: str, lmx_seq_path: str, xml_file_path: str):
+    subprocess.run(cwd=OLIMPIC_ROOT_DIR)
+
+# show how accurate translation was
+# def convert_back_to_img(xml_file_path: str, img_file_path: str):
 
 # non-streamed local (ie back-end only) inference. We just consume the generator until we get the final result
 def inference(
