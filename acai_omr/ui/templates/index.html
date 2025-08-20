@@ -9,6 +9,42 @@
 <body>
     <main>
         Hello world
+        <form id="inference-form" class="toggleable-section">
+            <label for="beam-width">Beam width</label><br>
+            <input type="number" class="interactive-el num-input" id="beam-width" name="beam_width" value="3" min="1"><br>
+
+            <label for="beam-width">Max inference token length</label><br>
+            <!--TODO: after testing change value to 1536-->
+            <input type="number" class="interactive-el num-input" id="max-inference-len" name="max_inference_len" value="5" min="2" max="1536"><br>
+            <button type="submit" class="interactive-el">Start inference</button>
+        </form>
+        <section id="setup-progress-view" class="toggleable-section">
+            <div class="dot-load-wrapper">
+                <p>Setting up model</p>
+                <div class="dot-load-indicator">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </div>
+            </div>
+        </section>
+        <section id="encoding-progress-view" class="toggleable-section">
+            <div class="dot-load-wrapper">
+                <p>Encoding image latent</p>
+                <div class="dot-load-indicator">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </div>
+            </div>
+        </section>
+        <section id="token-stream-view" class="token-stream-view"><!--class="toggleable-section"-->
+            <h3>Current sequences</h3>
+            <article id="token-stream">
+                <div class="stream-output gradient-border"></div>
+            </article>
+        </section>
+        <script src="{{ url_for('static', filename='inference.js') }}" type="module"></script>
     </main>
 </body>
 </html>

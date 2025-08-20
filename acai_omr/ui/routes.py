@@ -31,22 +31,38 @@ def stream_beam_search_wrapper(vitomr, image, bos_token_idx, eos_token_idx, devi
                 decoded_beam = " ".join(decoded_beam)
                 beams_dict[i] = decoded_beam
             event["payload"] = beams_dict
-        elif event["type"] == InferenceEvent.FINAL_STEP.value:
-            # process payload for final yielded inference event before streaming
-            decoded_lmx_seq = [vitomr.decoder.idxs_to_tokens[idx.item()] for idx in inference_event["payload"]["beams"].squeeze(0)]
+        elif event["type"] == InferenceEvent.INFERENCE_FINISH.value:
+            # process payload for final yielded inference event before streaming. Including "done": True will signal the stream should be closed
+            decoded_lmx_seq = [vitomr.decoder.idxs_to_tokens[idx.item()] for idx in inference_event["payload"]["lmx_seq"].squeeze(0)]
             decoded_lmx_seq = " ".join(decoded_lmx_seq)
-            final_payload = {"lmx_seq": decoded_lmx_seq, "score": inference_event["payload"]["log_probs"].item()}
+            final_payload = {"lmx_seq": decoded_lmx_seq, "score": inference_event["payload"]["score"].item()}
             event["payload"] = final_payload
 
-        yield f"data: {json.dumps(event)}" # treat this endpoint as streaming whole event objects
+        yield f"data: {json.dumps(event)}\n\n" # two \n to add a blank line which SSE uses as a signal for the event end
 
-@main.route("/stream/inference/")
-def streamed_inference():
+@main.route("/inference/stream")
+def stream_inference():
     vitomr, base_img_transform, _, device = set_up_omr_train()
 
     weights_path = request.args.get("weights_path", DEFAULT_VITOMR_PATH)
     beam_width = int(request.args.get("beam_width", 3))
     max_inference_len = int(request.args.get("max_inference_len", 1536))
+
+    # DEBUG
+#    from acai_omr.models.models import FineTuneOMREncoder, OMRDecoder, ViTOMR, MAE
+#    from acai_omr.train.pre_train import PE_MAX_HEIGHT, PE_MAX_WIDTH
+#    from acai_omr.train.omr_train import PE_MAX_HEIGHT, PE_MAX_WIDTH, MAX_LMX_SEQ_LEN, LMX_VOCAB_PATH
+#    from acai_omr.config import DEBUG_PRETRAINED_MAE_PATH
+#    DEBUG_KWARGS = {"num_layers": 2, "num_heads": 1, "mlp_dim": 1}
+#    DEBUG_PATCH_SIZE = 16
+#
+#    debug_encoder = FineTuneOMREncoder(DEBUG_PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH, 1, hidden_dim=10, **DEBUG_KWARGS)
+#    debug_decoder = OMRDecoder(MAX_LMX_SEQ_LEN, LMX_VOCAB_PATH, hidden_dim=10, **DEBUG_KWARGS)
+#    debug_mae_state_dict = torch.load(DEBUG_PRETRAINED_MAE_PATH)
+#    debug_vitomr = ViTOMR(debug_encoder, debug_mae_state_dict, debug_decoder)
+#    vitomr = debug_vitomr
+#    weights_path = "debug_omr_train/debug_vitomr.pth"
+    # end debug
     
     logger.info(f"Loading state dict from {weights_path}")
     if device == "cpu":
@@ -63,7 +79,7 @@ def streamed_inference():
     image = base_img_transform(image)
 
     # make sure to transform any images using patch transform
-    logger.info("Starting inference and streaming from this endpoint")
+    logger.info("Starting inference and streaming from endpoint")
     logger.info(f"Running beam search with beam width {beam_width} and max inference length {max_inference_len}")
 
     return Response(stream_beam_search_wrapper(vitomr, image, bos_token_idx, eos_token_idx, device, beam_width, max_inference_len), mimetype="text/event-stream")

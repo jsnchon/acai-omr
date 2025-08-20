@@ -97,7 +97,7 @@ def beam_search(
     completed_beams.sort(key=lambda x: x[1], reverse=True) # sort sequences by score
     best_seq, score = completed_beams[0] # best_seq is (1 x best_seq_len)
     logger.info(f"INFERENCE RESULT\n{'-' * 20}\n{best_seq}\nScore: {score}")
-    yield {"type": InferenceEvent.FINAL_STEP.value, "payload": {"beams": best_seq, "log_probs": score}}
+    yield {"type": InferenceEvent.INFERENCE_FINISH.value, "payload": {"lmx_seq": best_seq, "score": score}}
 
 # non-streamed local (ie back-end only) inference. We just consume the generator until we get the final result
 def inference(
@@ -114,11 +114,12 @@ def inference(
         inference_event = event 
 
     # last yielded value by beam_search is the best sequence and its normalized score
-    return inference_event["payload"]["beams"], inference_event["payload"]["log_probs"]
+    return inference_event["payload"]["lmx_seq"], inference_event["payload"]["score"]
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    logger.info("Loading state dict")
+
+    logger.info(f"Loading state dict from {VITOMR_WEIGHTS_PATH}")
 
     vitomr, base_img_transform, _, device = set_up_omr_train()
     if device == "cpu":
