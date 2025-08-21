@@ -1,0 +1,6 @@
+{
+  "ENCODING_START": "encoding_start",
+  "ENCODING_FINISH": "encoding_finish",
+  "STEP": "step",
+  "INFERENCE_FINISH": "inference_finish"
+}

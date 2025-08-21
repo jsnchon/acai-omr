@@ -1,9 +1,13 @@
 [tool.poetry]
 name = "acai-omr"
-version = "0.0.1"
+version = "0.0.5"
 description = ""
 authors = ["jsnchon"]
 readme = "README.md"
+packages = [
+    { include = "acai_omr" },
+    { include = "olimpic_app", from = "olimpic-icdar24" }
+]
 
 [tool.poetry.dependencies]
 python = "^3.12"
@@ -14,6 +18,7 @@ pytest = "^8.4.1"
 tqdm = "^4.67.1"
 pytest-mock = "^3.14.1"
 matplotlib = "^3.10.3"
+flask = "^3.1.1"
 
 [build-system]
 requires = ["poetry-core"]
