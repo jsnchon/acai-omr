@@ -42,13 +42,13 @@ def stream_beam_search_wrapper(vitomr, image, bos_token_idx, eos_token_idx, devi
 
         if event["type"] == InferenceEvent.STEP.value:
             # for intermediate inference steps, process the payload to only include the decoded/stringified beam tensors
-            beams_dict = {}
-            for i, beam in enumerate(event["payload"]["beams"]):
+            beams_list = []
+            for beam in event["payload"]["beams"]:
                 decoded_beam = [vitomr.decoder.idxs_to_tokens[idx.item()] for idx in beam]
                 decoded_beam = " ".join(decoded_beam)
-                beams_dict[i] = decoded_beam
+                beams_list.append(decoded_beam)
             # always yield whole beams instead of new tokens since newly generated tokens can be extensions for any beam(s) (eg all on one beam)
-            event["payload"] = {"beams": beams_dict}
+            event["payload"] = {"beams": beams_list}
         elif event["type"] == InferenceEvent.INFERENCE_FINISH.value:
             # process payload for final yielded inference event before streaming. Including "done": True will signal the stream should be closed
             decoded_lmx_seq = [vitomr.decoder.idxs_to_tokens[idx.item()] for idx in inference_event["payload"]["lmx_seq"].squeeze(0)]

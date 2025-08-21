@@ -5,7 +5,8 @@ description = ""
 authors = ["jsnchon"]
 readme = "README.md"
 packages = [
-    { include = "acai_omr" }
+    { include = "acai_omr" },
+    { include = "olimpic_app", from = "olimpic-icdar24" }
 ]
 
 [tool.poetry.dependencies]

@@ -1,14 +1,15 @@
 import torch
 from acai_omr.models.models import ViTOMR
 from acai_omr.train.omr_train import set_up_omr_train
-from acai_omr.config import LMX_BOS_TOKEN, LMX_EOS_TOKEN, InferenceEvent, OLIMPIC_ROOT_DIR
+from acai_omr.config import LMX_BOS_TOKEN, LMX_EOS_TOKEN, InferenceEvent, INFERENCE_VITOMR_PATH
 from torch.amp import autocast
 from PIL import Image
 import logging
 import subprocess
+from pathlib import Path
+import os
 
-VITOMR_WEIGHTS_PATH = "omr_train/vitomr.pth"
-IMAGE_PATH = "inference_test.png"
+INFERENCE_IMAGE_PATH = "inference_test.png"
 
 logger = logging.getLogger(__name__)
 
@@ -100,11 +101,48 @@ def beam_search(
     logger.info(f"INFERENCE RESULT\n{'-' * 20}\n{best_seq}\nScore: {score}")
     yield {"type": InferenceEvent.INFERENCE_FINISH.value, "payload": {"lmx_seq": best_seq, "score": score}}
 
+# convert list of tokens into a single lmx token string. Remove <bos> and <eos> tokens since Olimpic wasn't designed to handle those
+def stringify_lmx_seq(lmx_seq: list[str]):
+    if lmx_seq[-1] == LMX_EOS_TOKEN:
+        lmx_seq.pop(-1)
+    lmx_seq = lmx_seq[1: ]
+    lmx_seq = " ".join(lmx_seq)
+    return lmx_seq
+
+# lmx_seq is the sequence of decoded lmx tokens (excluding <bos> and <eos>), lmx_seq_path and xml_file_path are where the lmx and xml files should be saved to
 def delinearize(lmx_seq: str, lmx_seq_path: str, xml_file_path: str):
-    subprocess.run(cwd=OLIMPIC_ROOT_DIR)
+    logger.info(f"Delinearizing lmx sequence:\n{lmx_seq}")
+    logger.info(f"Writing sequence to {lmx_seq_path}")
+    lmx_seq_path = Path(lmx_seq_path)
+    lmx_seq_path.write_text(lmx_seq)
+
+    logger.info(f"Delinearizing and saving xml file to {xml_file_path}")
+    try:
+        delinearize_result = subprocess.run(
+            ["python3", "-m", "olimpic_app.linearization", "delinearize", lmx_seq_path, xml_file_path], 
+            capture_output=True, text=True
+        )
+
+        delinearize_result.check_returncode()
+        delinearize_problems = delinearize_result.stderr.splitlines()
+        if delinearize_problems:
+            logger.warning(f"Caught problems with delinearization: {delinearize_problems}")
+        return {"ok": True, "xml_file_path": xml_file_path, "delinearize_problems": delinearize_problems}
+
+    except subprocess.CalledProcessError as e:
+        logger.warning(f"Olimpic delinearization catastrophically failed: {e.stderr}")
+        return {"ok": False, "error": e.stderr}
 
 # show how accurate translation was
-# def convert_back_to_img(xml_file_path: str, img_file_path: str):
+def convert_back_to_img(xml_file_path: str, img_file_path: str):
+    logger.info(f"Converting {xml_file_path} to image and saving image to {img_file_path}")
+    subprocess.run(["musescore3", "-o", "mscore_out.png", xml_file_path])
+    # musescore CLI renders images with a transparent background, so treat its output as an intermediate file and convert it
+    # to a png with a white background using imagemagick (also note CLI adds numbers to the filename)
+    subprocess.run(["convert", "mscore_out-1.png", "-background", "white", "-alpha", "remove", "-alpha", "off", img_file_path])
+    os.remove("mscore_out-1.png")
+    logger.info("Final image saved!")
+    return {"img_file_path": img_file_path}
 
 # non-streamed local (ie back-end only) inference. We just consume the generator until we get the final result
 def inference(
@@ -126,24 +164,35 @@ def inference(
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
 
-    logger.info(f"Loading state dict from {VITOMR_WEIGHTS_PATH}")
+    logger.info(f"Loading state dict from {INFERENCE_VITOMR_PATH}")
 
     vitomr, base_img_transform, _, device = set_up_omr_train()
     if device == "cpu":
-        vitomr_state_dict = torch.load(VITOMR_WEIGHTS_PATH, map_location=torch.device("cpu"))
+        vitomr_state_dict = torch.load(INFERENCE_VITOMR_PATH, map_location=torch.device("cpu"))
     else:
-        vitomr_state_dict = torch.load(VITOMR_WEIGHTS_PATH)
+        vitomr_state_dict = torch.load(INFERENCE_VITOMR_PATH)
 
     vitomr.load_state_dict(vitomr_state_dict)
     
     bos_token_idx = vitomr.decoder.tokens_to_idxs[LMX_BOS_TOKEN]
     eos_token_idx = vitomr.decoder.tokens_to_idxs[LMX_EOS_TOKEN]
 
-    image = Image.open(IMAGE_PATH).convert("L")
+    # note to future self: make sure to convert any images to grayscale/transform using patch transform
+    image = Image.open(INFERENCE_IMAGE_PATH).convert("L")
     image = base_img_transform(image)
 
-    # make sure to transform any images using patch transform
+    # these are low so I can debug on my weak laptop
+    beam_width = 2
+    max_inference_len = 40
+
     logger.info("Starting inference")
-    lmx_seq, score = inference(vitomr, image, bos_token_idx, eos_token_idx, device)
+    lmx_seq, score = inference(vitomr, image, bos_token_idx, eos_token_idx, device, beam_width=beam_width, max_inference_len=max_inference_len)
     lmx_seq = [vitomr.decoder.idxs_to_tokens[idx.item()] for idx in lmx_seq.squeeze(0)]
-    logger.info(f"Decoded inference result: {' '.join(lmx_seq)}\nSequence score: {score}")
+    lmx_seq = stringify_lmx_seq(lmx_seq)
+    logger.info(f"Decoded inference result: {lmx_seq}\nSequence score: {score}")
+
+    response = delinearize(lmx_seq, "inference_result.lmx", "inference_result.musicxml")
+    if response["ok"]:
+        convert_back_to_img(response["xml_file_path"], "inference_result.png")
+    else:
+        logger.info("Delinearization failed, skipping conversion into image. You should check the .lmx file")

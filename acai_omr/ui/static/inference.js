@@ -63,9 +63,9 @@ function streamInference(source, inferenceEvents) {
 function displayTokenStream(outputElem, inferenceStepEvent) {
     const beams = inferenceStepEvent.payload.beams;
     let beamDisplays = [];
-    for (const beam_idx in beams) {
+    for (const beam of beams) {
         const beamDisplay = document.createElement("span");
-        beamDisplay.textContent = beams[beam_idx];
+        beamDisplay.textContent = beam; 
         beamDisplay.classList.add("slide-in");
         beamDisplays.push(beamDisplay);
     }
