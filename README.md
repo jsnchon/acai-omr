@@ -5,6 +5,8 @@ for inference just need to poetry install, install musescore CLI and imagemagick
 sudo apt install musescore3
 sudo apt install imagemagick
 
+also need to make sure git clone with submodules flag or init them after pulling/cloning
+
 training stuff will be helped along by new machine setup util script, need to also download data
 
 important papers in this project:

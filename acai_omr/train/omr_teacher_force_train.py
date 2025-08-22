@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from pathlib import Path
-from acai_omr.models.models import FineTuneOMREncoder, OMRDecoder, ViTOMR, OMRLoss
+from acai_omr.models.models import FineTuneOMREncoder, OMRDecoder, ScheduledSamplingVITOMR, OMRLoss
 from acai_omr.train.datasets import GrandStaffLMXDataset, GrandStaffOMRTrainWrapper, OlimpicDataset
 from acai_omr.config import GRAND_STAFF_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, LMX_BOS_TOKEN, LMX_EOS_TOKEN
 from acai_omr.utils.utils import DynamicResize, cosine_anneal_with_warmup, ragged_collate_fn, save_teacher_force_training_stats
@@ -236,7 +236,7 @@ def set_up_omr_teacher_force_train():
 
     print(f"Loaded pretrained mae state dict from {PRETRAINED_MAE_STATE_DICT_PATH}")
     print("Setting up ViTOMR model")
-    vitomr = ViTOMR(encoder, pretrained_mae_state_dict, decoder, transition_head_dropout=TRANSITION_HEAD_DROPOUT)
+    vitomr = ScheduledSamplingViTOMR(encoder, pretrained_mae_state_dict, decoder, transition_head_dropout=TRANSITION_HEAD_DROPOUT)
     vitomr = vitomr.to(device)
 
     base_img_transform = v2.Compose([
