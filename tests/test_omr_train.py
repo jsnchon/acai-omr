@@ -39,6 +39,3 @@ def test_omr_train():
 
 if __name__ == "__main__":
     test_omr_train()
-
-# TODO: test new sampling forward, add in train loop linear decay for sampling ratio, annealing tau and eventually using hard, plot
-# annealing ratio, tau, hardness?

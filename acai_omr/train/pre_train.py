@@ -1,7 +1,7 @@
 import torch
 from acai_omr.train.datasets import GrandStaffLMXDataset, PreparedDataset, OlimpicDataset, GrandStaffPreTrainWrapper, OlimpicPreTrainWrapper, PreTrainWrapper
 from acai_omr.config import GRAND_STAFF_ROOT_DIR, PRIMUS_PREPARED_ROOT_DIR, DOREMI_PREPARED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
-from acai_omr.utils.utils import DynamicResize, cosine_anneal_with_warmup, save_training_stats, ragged_collate_fn
+from acai_omr.utils.utils import DynamicResize, cosine_anneal_with_warmup, save_pre_train_stats, ragged_collate_fn
 from torch.utils.data import ConcatDataset, DataLoader
 from torchvision.transforms import InterpolationMode, v2
 from acai_omr.models.models import MAE, MAELoss

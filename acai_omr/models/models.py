@@ -398,12 +398,12 @@ class OMRDecoder(nn.Module):
 
         self.unembed = nn.Linear(self.hidden_dim, self.vocab_size)
 
-    def forward(self, input_seqs, img_latent, lmx_attention_mask, latent_attention_mask, already_vocab_embedded=False):
+    def forward(self, input_seqs, img_latent, lmx_attention_mask, latent_attention_mask, token_idxs_input=True):
         """
         input_seqs: 
-            if not already_vocab_embedded: (B, L_lmxmax), batch tensor of input sequences where each sequence is an 
+            if token_idxs_input = True: (B, L_lmxmax), batch tensor of input sequences where each sequence is an 
                 int tensor of a right-shifted original sequence
-            if already_vocab_embedded: (B, L_lmxmax, E), batch tensor of input sequences of vocab embeddings. 
+            if token_idxs_input = False: (B, L_lmxmax, E), batch tensor of input sequences of embeddings in vocab space. 
                 Important for scheduled sampling where we need to mix embeddings and input those instead of hard indices
         img_latent: (B, L_imgmax, E)
         lmx_attention_mask: (B, L_lmxmax), records which lmx tokens are pad tokens
@@ -412,7 +412,7 @@ class OMRDecoder(nn.Module):
         batch_max_lmx_seq_len = input_seqs.shape[1] 
         if batch_max_lmx_seq_len > self.max_lmx_seq_len:
                 raise ValueError(f"{batch_max_lmx_seq_len} long lmx sequence length is too long for max sequence length of {self.max_lmx_seq_len}")
-        if not already_vocab_embedded:
+        if token_idxs_input:
             lmx_embeddings = self.vocab_embedding(input_seqs) # (B, L_lmxmax, E)
         else:
             lmx_embeddings = input_seqs 
@@ -608,13 +608,14 @@ class OMRLoss(nn.Module):
 class ScheduledSamplingVITOMR(ViTOMR):
     # mix teacher forced sequence with first pass predictions: at each time step i, if sample = True we use the first 
     # pass' predicted distribution for the ith token to create an expected embedding and use that as the second pass' ith input embedding
-    def sample_and_mix_seqs(self, sampling_ratio, tf_input_seqs, tf_pred_logits, sample_tau, sample_hard, device):
+    def sample_and_mix_seqs(self, teacher_forcing_prob, tf_input_seqs, tf_pred_logits, sample_tau, use_hard_sampling, device):
+        sampling_ratio = 1 - teacher_forcing_prob
         sample_mask = torch.rand(tf_input_seqs.shape, device=device) < sampling_ratio # (B, T)
 
         gold_token_embeddings = self.decoder.vocab_embedding(tf_input_seqs)
 
         # create expected embeddings at each token position using teacher-forced pass predictions
-        tf_pred_distrs = F.gumbel_softmax(tf_pred_logits, tau=sample_tau, hard=sample_hard) # (B, T, V)
+        tf_pred_distrs = F.gumbel_softmax(tf_pred_logits, tau=sample_tau, hard=use_hard_sampling) # (B, T, V)
         tf_expected_embeddings = tf_pred_distrs @ self.decoder.vocab_embedding.weight # (B x T x V) x (V x E) = (B x V x E)
 
         # rightshift predicted sequence to align it with rightshifted teacher forced inputs for sampling
@@ -625,7 +626,7 @@ class ScheduledSamplingVITOMR(ViTOMR):
         mixed_input_seqs = torch.where(sample_mask.unsqueeze(-1), tf_expected_embeddings, gold_token_embeddings)
         return mixed_input_seqs
 
-    def forward(self, x: list[tuple[torch.Tensor, torch.Tensor]], sampling_ratio: float, sample_tau: float, sample_hard: bool):
+    def forward_train(self, x: list[tuple[torch.Tensor, torch.Tensor]], teacher_forcing_prob: float, sample_tau: float, use_hard_sampling: bool):
         imgs, lmx_seqs = zip(*x)
 
         img_latent, latent_attention_mask = self.encoder(imgs)
@@ -637,7 +638,11 @@ class ScheduledSamplingVITOMR(ViTOMR):
         # first decoder pass: generate logits from completely gold inputs
         tf_pred_logits = self.decoder(tf_input_seqs, img_latent, lmx_attention_mask, latent_attention_mask) # (B, T, V)
 
-        mixed_input_seqs = self.sample_and_mix_seqs(sampling_ratio, tf_input_seqs, tf_pred_logits, sample_tau, sample_hard, device)
+        mixed_input_seqs = self.sample_and_mix_seqs(teacher_forcing_prob, tf_input_seqs, tf_pred_logits, sample_tau, use_hard_sampling, device)
 
-        pred = self.decoder(mixed_input_seqs, img_latent, lmx_attention_mask, latent_attention_mask, already_vocab_embedded=True)
+        pred = self.decoder(mixed_input_seqs, img_latent, lmx_attention_mask, latent_attention_mask, token_idxs_input=False)
         return pred, target_seqs # target sequences for loss calculation remain the same
+
+    # for validation/evaluation, we stick with regular teacher forcing
+    def forward_eval(self, x: list[tuple[torch.Tensor, torch.Tensor]]):
+        return super().forward(x)

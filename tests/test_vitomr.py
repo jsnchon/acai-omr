@@ -334,7 +334,7 @@ def test_sample_and_mix_seqs():
     vitomr = ScheduledSamplingVITOMR(pretrained_debug_encoder, debug_mae_state_dict, debug_decoder)
     bos_token_idx = vitomr.decoder.tokens_to_idxs[LMX_BOS_TOKEN]
 
-    sampling_ratio = 0.2
+    teacher_forcing_prob = 0.8
     sample_tau = 0.1
     hard = False
     tf_input_seqs = torch.full([1, 5], dtype=torch.long, fill_value=10)
@@ -343,14 +343,14 @@ def test_sample_and_mix_seqs():
     tf_pred_logits[:, :, 2] = 100.0 # set token at index 2 in vocab to have highest probability
 
     print(f"Input token indices:\n{tf_input_seqs}\nFirst pass predicted vocab distributions:\n{tf_pred_logits}")
-    mixed_seqs = vitomr.sample_and_mix_seqs(sampling_ratio, tf_input_seqs, tf_pred_logits, sample_tau, hard, "cpu")
+    mixed_seqs = vitomr.sample_and_mix_seqs(teacher_forcing_prob, tf_input_seqs, tf_pred_logits, sample_tau, hard, "cpu")
     print(f"Result from sampling and mixing:\n{mixed_seqs}")
     assert mixed_seqs.shape == torch.Size([1, 5, vitomr.encoder.hidden_dim])
     assert torch.equal(mixed_seqs[:, 0, :], vitomr.decoder.vocab_embedding(torch.tensor([bos_token_idx])))
 
-    sampling_ratio = 1.0
+    teacher_forcing_prob = 0
     hard = True
-    mixed_seqs = vitomr.sample_and_mix_seqs(sampling_ratio, tf_input_seqs, tf_pred_logits, sample_tau, hard, "cpu")
+    mixed_seqs = vitomr.sample_and_mix_seqs(teacher_forcing_prob, tf_input_seqs, tf_pred_logits, sample_tau, hard, "cpu")
     print(f"Result from hard-sampling all positions:\n{mixed_seqs}")
     # <bos> token embedding should still be there and different from all others, but everything else should be the same un-mixed embedding since essentially
     # just indexing the vocab embedding matrix
@@ -367,7 +367,7 @@ def test_scheduled_sampling_vitomr():
 
     x = [(torch.rand(NUM_CHANNELS, 64, 128), torch.randint(high=VOCAB_LEN, size=(8,))),
          (torch.rand(NUM_CHANNELS, 32, 32), torch.randint(high=VOCAB_LEN, size=(6,)))]
-    pred, target_seqs = vitomr(x, 0.3, 0.5, False)
+    pred, target_seqs = vitomr.forward_train(x, 0.7, 0.5, False)
     loss = loss_fn(pred, target_seqs)
     loss.backward()
     optimizer.step()

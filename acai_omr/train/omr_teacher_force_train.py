@@ -4,12 +4,14 @@ from pathlib import Path
 from acai_omr.models.models import FineTuneOMREncoder, OMRDecoder, ViTOMR, OMRLoss
 from acai_omr.train.datasets import GrandStaffLMXDataset, GrandStaffOMRTrainWrapper, OlimpicDataset
 from acai_omr.config import GRAND_STAFF_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, LMX_BOS_TOKEN, LMX_EOS_TOKEN
-from acai_omr.utils.utils import DynamicResize, cosine_anneal_with_warmup, save_training_stats, ragged_collate_fn
+from acai_omr.utils.utils import DynamicResize, cosine_anneal_with_warmup, ragged_collate_fn, save_teacher_force_training_stats
 from torch.utils.data import ConcatDataset, DataLoader
 from torchvision.transforms import v2, InterpolationMode
 from torch.amp import autocast
 from acai_omr.train.pre_train import PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH
 import time
+import pandas as pd
+from dataclasses import dataclass
 
 MODEL_DIR_PATH = Path("debug")
 CHECKPOINTS_DIR_PATH = MODEL_DIR_PATH / "checkpoints"
@@ -22,10 +24,8 @@ MAX_LMX_SEQ_LEN = 1536 # in tokens, max lmx token sequence length to support
 LMX_VOCAB_PATH = "lmx_vocab.txt"
 NUM_DECODER_LAYERS = 12
 
-AUGMENTATION_P = 0.4
-NUM_WORKERS = 26
-
-EPOCHS = 25
+# training settings
+EPOCHS = 30
 CHECKPOINT_FREQ = 5
 FINE_TUNE_BASE_LR = 1e-5 # 0.1x base lr
 FINE_TUNE_DECAY_FACTOR = 0.9
@@ -33,14 +33,31 @@ BASE_LR = 1e-4
 MIN_LR = 1e-6
 ADAMW_BETAS = (0.9, 0.95)
 ADAMW_WEIGHT_DECAY = 0.01
-WARMUP_EPOCHS = 2 # step scheduler per-batch since doing so little epochs
+WARMUP_EPOCHS = 3 # step scheduler per-batch since doing so little epochs
 BATCH_SIZE = 32
 GRAD_ACCUMULATION_STEPS = 2
+NUM_WORKERS = 26
 
+# regularization settings
+AUGMENTATION_P = 0.4
 ENCODER_DROPOUT = 0.05
 TRANSITION_HEAD_DROPOUT = 0.05
 DECODER_DROPOUT = 0.1
 LABEL_SMOOTHING = 0.0
+
+# teacher forcing/scheduled sampling settings. Teacher forcing prob decreases linearly, tau decreases exponentially
+INITIAL_TEACHER_FORCING_PROB = 1.0
+MIN_TEACHER_FORCING_PROB = 0.5
+INITIAL_TAU = 5.0
+MIN_TAU = 0.1
+NUM_SOFT_EPOCHS = EPOCHS // 2
+
+@dataclass
+class HyperparamConfig:
+    grad_accumulation_steps: int
+    teacher_forcing_prob: float
+    tau: float
+    use_hard_sampling: bool
 
 class PrepareLMXSequence(nn.Module):
     def __init__(self, tokens_to_idxs):
@@ -61,7 +78,7 @@ def save_omr_training_state(path, vitomr, optimizer, scheduler):
         "scheduler_state_dict": scheduler.state_dict(),
     }, path)
 
-def train_loop(vitomr, dataloader, loss_fn, optimizer, grad_accumulation_steps, scheduler, device):
+def train_loop(vitomr, dataloader, loss_fn, optimizer, scheduler, device, hyperparams: HyperparamConfig):
     print("Starting training")
     vitomr.train()
     epoch_loss = 0
@@ -72,16 +89,16 @@ def train_loop(vitomr, dataloader, loss_fn, optimizer, grad_accumulation_steps, 
     for batch_idx, batch in enumerate(dataloader):
         batch = [(x.to(device, non_blocking=True), y.to(device, non_blocking=True)) for x, y in batch]
         with autocast(device_type=device, dtype=torch.bfloat16):
-            pred, target_seqs = vitomr(batch)
+            pred, target_seqs = vitomr.forward_train(batch, hyperparams.teacher_forcing_prob, hyperparams.tau, hyperparams.use_hard_sampling)
             loss = loss_fn(pred, target_seqs)
         epoch_loss += loss.item()
         loss.backward()
 
         if batch_idx % 100 == 0:
             current_ex = batch_idx * batch_size + len(batch)
-            print(f"[{current_ex:>6d}/{len_dataset:>6d}]")
+            print(f"[{current_ex:>5d}/{len_dataset:>5d}]")
 
-        if (batch_idx + 1) % grad_accumulation_steps == 0 or (batch_idx + 1) == len(dataloader):
+        if (batch_idx + 1) % hyperparams.grad_accumulation_steps == 0 or (batch_idx + 1) == len(dataloader):
             optimizer.step()
             optimizer.zero_grad()
             scheduler.step()
@@ -102,7 +119,7 @@ def validation_loop(vitomr, dataloader, loss_fn, device):
         with autocast(device_type=device, dtype=torch.bfloat16):
             for batch_idx, batch in enumerate(dataloader):
                 batch = [(x.to(device, non_blocking=True), y.to(device, non_blocking=True)) for x, y in batch]
-                pred, target_seqs = vitomr(batch)
+                pred, target_seqs = vitomr.forward_eval(batch)
                 epoch_loss += loss_fn(pred, target_seqs).item()
 
                 if batch_idx % 50 == 0:
@@ -112,6 +129,15 @@ def validation_loop(vitomr, dataloader, loss_fn, device):
     avg_loss = epoch_loss / num_batches
     print(f"Average validation loss for this epoch: {avg_loss}")
     return avg_loss
+
+# this should be called at each epoch's start (ie before the train loop). Both epoch and max_epochs should be 0-indexed
+def calc_teacher_forcing_prob(epoch, max_epochs, initial_prob, min_prob):
+    return max(initial_prob - epoch / max_epochs, min_prob)
+
+# same use as calc_teacher_forcing_prob
+def calc_tau(epoch, max_epochs, initial_tau, min_tau):
+    progress = epoch / max_epochs
+    return initial_tau * (min_tau / initial_tau) ** progress
 
 def omr_teacher_force_train(vitomr, train_dataset, validation_dataset, device):
     print("Model architecture\n--------------------")
@@ -141,42 +167,51 @@ def omr_teacher_force_train(vitomr, train_dataset, validation_dataset, device):
     print(f"Using label smoothing of {LABEL_SMOOTHING} for cross entropy loss")
     loss_fn = OMRLoss(vitomr.decoder.padding_idx, label_smoothing=LABEL_SMOOTHING)
 
+    print(f"""Teacher forcing settings\n{'-' * 20}\nInitial teacher forcing per-token probability: {INITIAL_TEACHER_FORCING_PROB}\n
+Minimup teacher forcing probability: {MIN_TEACHER_FORCING_PROB}\nInitial Gumbel-Softmax tau: {INITIAL_TAU}\n
+Minimum Gumbel-Softmax tau: {MIN_TAU}\nNumber of epochs with soft prediction sampling: {NUM_SOFT_EPOCHS}""")
+
     MODEL_DIR_PATH.mkdir()
     CHECKPOINTS_DIR_PATH.mkdir()
     STATS_DIR_PATH.mkdir()
     print(f"Created directories {MODEL_DIR_PATH}, {CHECKPOINTS_DIR_PATH}, {STATS_DIR_PATH}")
 
-    epoch_training_losses = []
-    epoch_validation_losses = []
-    epoch_lrs = [] # tuples of (base_lr, fine_tune_lr)
+    train_stats_df = pd.DataFrame(columns=["Train loss", "Validation loss", "Base lr at start", 
+                                           "Fine-tune lr at start", "Teacher forcing probability", "Gumbel-softmax tau", 
+                                           "Using hard sampling"]) # list of EpochStats instances
 
     print(f"OMR training for {EPOCHS} epochs. Checkpointing every {CHECKPOINT_FREQ} epochs")
     for i in range(EPOCHS):
-        print(f"Epoch {i + 1}\n--------------------")
+        print(f"Epoch {i + 1}\n{'-' * 30}")
         base_lr = optimizer.param_groups[0]["lr"] # assuming transition head/decoder lr is the same
         fine_tune_base_lr = optimizer.param_groups[2]["lr"] # record the highest fine-tune lr all the decayed ones are based on
-        print(f"Base learning rate at epoch start: {base_lr:>0.8f}\nFine-tune learning rate at epoch start: {fine_tune_base_lr:>0.8f}")
-        epoch_lrs.append((base_lr, fine_tune_base_lr))
+        print(f"Hyperparameters at epoch start:")
+        print(f"Base learning rate: {base_lr:>0.8f}\nFine-tune learning rate: {fine_tune_base_lr:>0.8f}")
+        tf_prob = calc_teacher_forcing_prob(i, EPOCHS - 1, INITIAL_TEACHER_FORCING_PROB, MIN_TEACHER_FORCING_PROB)
+        tau = calc_tau(i, EPOCHS - 1, INITIAL_TAU, MIN_TAU)
+        use_hard_sampling = i >= NUM_SOFT_EPOCHS
+        print(f"Teacher forcing probability: {tf_prob}\nGumbel-softmax tau: {tau}\nUsing hard sampling: {use_hard_sampling}")
+        hyperparams = HyperparamConfig(GRAD_ACCUMULATION_STEPS, tf_prob, tau, use_hard_sampling)
 
         train_start_time = time.perf_counter()
-        epoch_train_loss = train_loop(vitomr, train_dataloader, loss_fn, optimizer, GRAD_ACCUMULATION_STEPS, scheduler, device)
+        epoch_train_loss = train_loop(vitomr, train_dataloader, loss_fn, optimizer, scheduler, device, hyperparams)
         train_end_time = time.perf_counter()
-        epoch_training_losses.append(epoch_train_loss)
         time_delta = train_end_time - train_start_time
         print(f"Time for this training epoch: {time_delta:>0.2f} seconds ({time_delta / 60:>0.2f} minutes)")
 
         epoch_validation_loss = validation_loop(vitomr, validation_dataloader, loss_fn, device)
-        epoch_validation_losses.append(epoch_validation_loss)
+        epoch_stats = [epoch_train_loss, epoch_validation_loss, base_lr, fine_tune_base_lr, tf_prob, tau, use_hard_sampling]
+        train_stats_df.loc[i] = epoch_stats
 
         if (i + 1) % CHECKPOINT_FREQ == 0:
             print("Checkpointing model, optimizer, scheduler state dicts")
             checkpoint_path = CHECKPOINTS_DIR_PATH / f"epoch_{i+1}_checkpoint.pth"
             save_omr_training_state(checkpoint_path, vitomr, optimizer, scheduler)
             print("Checkpointing stats plots")
-            save_training_stats(STATS_DIR_PATH, epoch_training_losses, epoch_validation_losses, epoch_lrs, fine_tuning=True)
+            save_teacher_force_training_stats(STATS_DIR_PATH, train_stats_df)
 
     print("Plotting final stats")
-    save_training_stats(STATS_DIR_PATH, epoch_training_losses, epoch_validation_losses, epoch_lrs, fine_tuning=True)
+    save_teacher_force_training_stats(STATS_DIR_PATH, train_stats_df)
     print("Saving final omr training state")
     omr_train_state_path = MODEL_DIR_PATH / f"ending_omr_train_state.pth"
     save_omr_training_state(omr_train_state_path, vitomr, optimizer, scheduler)
@@ -215,7 +250,7 @@ def set_up_omr_teacher_force_train():
     return vitomr, base_img_transform, base_lmx_transform, device
 
 if __name__ == "__main__":
-    vitomr, base_img_transform, base_lmx_transform, device = set_up_omr_train()
+    vitomr, base_img_transform, base_lmx_transform, device = set_up_omr_teacher_force_train()
 
     # slightly stronger augmentation since this training stage should be aided by the pre-training
     camera_augment = v2.RandomApply(transforms=[
@@ -251,4 +286,4 @@ if __name__ == "__main__":
         olimpic_scanned_validate,
     ])
 
-    omr_train(vitomr, train_dataset, validation_dataset, device)
+    omr_teacher_force_train(vitomr, train_dataset, validation_dataset, device)
