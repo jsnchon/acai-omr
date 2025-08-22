@@ -297,7 +297,7 @@ class OMREncoder(Encoder):
 
         return interpolated_pos_embedding.squeeze(0).permute(1, 2, 0) # (h_p x w_p x E)
 
-    def batchify(self, x: list[torch.Tensor]):
+    def batchify(self, x: tuple[torch.Tensor]):
         seq_lens = []
         pos_embed_slices = []
         patchified_tensors = []
@@ -351,7 +351,7 @@ class FineTuneOMREncoder(OMREncoder):
             norm=nn.LayerNorm(self.hidden_dim, eps=1e-6)
         )
 
-    def forward(self, x: list[torch.Tensor]):
+    def forward(self, x: tuple[torch.Tensor]):
         x, src_key_padding_mask = self.batchify(x)
         if self.frozen_blocks:
             x = self.frozen_blocks(x, src_key_padding_mask=src_key_padding_mask)
@@ -398,9 +398,13 @@ class OMRDecoder(nn.Module):
 
         self.unembed = nn.Linear(self.hidden_dim, self.vocab_size)
 
-    def forward(self, input_seqs, img_latent, lmx_attention_mask, latent_attention_mask):
+    def forward(self, input_seqs, img_latent, lmx_attention_mask, latent_attention_mask, already_vocab_embedded=False):
         """
-        input_seqs: (B, L_lmxmax), batch tensor of input sequences where each sequence is an int tensor of a right-shifted original sequence
+        input_seqs: 
+            if not already_vocab_embedded: (B, L_lmxmax), batch tensor of input sequences where each sequence is an 
+                int tensor of a right-shifted original sequence
+            if already_vocab_embedded: (B, L_lmxmax, E), batch tensor of input sequences of vocab embeddings. 
+                Important for scheduled sampling where we need to mix embeddings and input those instead of hard indices
         img_latent: (B, L_imgmax, E)
         lmx_attention_mask: (B, L_lmxmax), records which lmx tokens are pad tokens
         latent_attention_mask: (B, L_imgmax), records which encoded patches in image batch are padding
@@ -408,7 +412,10 @@ class OMRDecoder(nn.Module):
         batch_max_lmx_seq_len = input_seqs.shape[1] 
         if batch_max_lmx_seq_len > self.max_lmx_seq_len:
                 raise ValueError(f"{batch_max_lmx_seq_len} long lmx sequence length is too long for max sequence length of {self.max_lmx_seq_len}")
-        lmx_embeddings = self.vocab_embedding(input_seqs) # (B, L_lmxmax, E)
+        if not already_vocab_embedded:
+            lmx_embeddings = self.vocab_embedding(input_seqs) # (B, L_lmxmax, E)
+        else:
+            lmx_embeddings = input_seqs 
 
         # positionally embed lmx tokens
         pos_embed_slice = self.pos_embedding[:batch_max_lmx_seq_len, :]
@@ -503,7 +510,7 @@ class ViTOMR(nn.Module):
    
     # lmx_seqs is a list of int tensors containing the unmodified lmx sequences associated with the input images,
     # in lmx token indices
-    def batchify_and_split_lmx_seqs(self, lmx_seqs: list[torch.Tensor], device):
+    def batchify_and_split_lmx_seqs(self, lmx_seqs: tuple[torch.Tensor], device):
         # split lmx sequences into right-shifted inputs and left-shifted targets
         padding_idx = self.decoder.padding_idx
         lmx_seqs = torch.nested.as_nested_tensor(lmx_seqs)
@@ -524,8 +531,6 @@ class ViTOMR(nn.Module):
     """
     def forward(self, x: list[tuple[torch.Tensor, torch.Tensor]]):
         imgs, lmx_seqs = zip(*x)
-        imgs = list(imgs)
-        lmx_seqs = list(lmx_seqs)
 
         # encode images
         img_latent, latent_attention_mask = self.encoder(imgs)        
@@ -599,3 +604,40 @@ class OMRLoss(nn.Module):
         """
         # flatten tensors since target tensor needs to be shape (N, )
         return self.loss_fn(pred.reshape(-1, pred.shape[-1]), target_seqs.reshape(-1))
+
+class ScheduledSamplingVITOMR(ViTOMR):
+    # mix teacher forced sequence with first pass predictions: at each time step i, if sample = True we use the first 
+    # pass' predicted distribution for the ith token to create an expected embedding and use that as the second pass' ith input embedding
+    def sample_and_mix_seqs(self, sampling_ratio, tf_input_seqs, tf_pred_logits, sample_tau, sample_hard, device):
+        sample_mask = torch.rand(tf_input_seqs.shape, device=device) < sampling_ratio # (B, T)
+
+        gold_token_embeddings = self.decoder.vocab_embedding(tf_input_seqs)
+
+        # create expected embeddings at each token position using teacher-forced pass predictions
+        tf_pred_distrs = F.gumbel_softmax(tf_pred_logits, tau=sample_tau, hard=sample_hard) # (B, T, V)
+        tf_expected_embeddings = tf_pred_distrs @ self.decoder.vocab_embedding.weight # (B x T x V) x (V x E) = (B x V x E)
+
+        # rightshift predicted sequence to align it with rightshifted teacher forced inputs for sampling
+        bos_stem = gold_token_embeddings[:, 0:1, :]
+        tf_expected_embeddings = torch.cat([bos_stem, tf_expected_embeddings], dim=1)
+        tf_expected_embeddings = tf_expected_embeddings[:, :-1]
+
+        mixed_input_seqs = torch.where(sample_mask.unsqueeze(-1), tf_expected_embeddings, gold_token_embeddings)
+        return mixed_input_seqs
+
+    def forward(self, x: list[tuple[torch.Tensor, torch.Tensor]], sampling_ratio: float, sample_tau: float, sample_hard: bool):
+        imgs, lmx_seqs = zip(*x)
+
+        img_latent, latent_attention_mask = self.encoder(imgs)
+        img_latent = self.transition_head(img_latent)
+        device = img_latent.device
+
+        tf_input_seqs, target_seqs, lmx_attention_mask = self.batchify_and_split_lmx_seqs(lmx_seqs, device)
+
+        # first decoder pass: generate logits from completely gold inputs
+        tf_pred_logits = self.decoder(tf_input_seqs, img_latent, lmx_attention_mask, latent_attention_mask) # (B, T, V)
+
+        mixed_input_seqs = self.sample_and_mix_seqs(sampling_ratio, tf_input_seqs, tf_pred_logits, sample_tau, sample_hard, device)
+
+        pred = self.decoder(mixed_input_seqs, img_latent, lmx_attention_mask, latent_attention_mask, already_vocab_embedded=True)
+        return pred, target_seqs # target sequences for loss calculation remain the same

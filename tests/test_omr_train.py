@@ -1,10 +1,10 @@
 import torch
 import pytest
-from acai_omr.train.omr_train import EPOCHS, WARMUP_EPOCHS, BASE_LR, MIN_LR, LMX_VOCAB_PATH, MAX_LMX_SEQ_LEN, PrepareLMXSequence, omr_train
+from acai_omr.train.omr_teacher_force_train import EPOCHS, WARMUP_EPOCHS, BASE_LR, MIN_LR, LMX_VOCAB_PATH, MAX_LMX_SEQ_LEN, PrepareLMXSequence, omr_teacher_force_train
 from acai_omr.train.pre_train import PE_MAX_HEIGHT, PE_MAX_WIDTH
 from test_pre_train import DEBUG_PRETRAINED_MAE_PATH, DEBUG_KWARGS, DEBUG_PATCH_SIZE
 from acai_omr.utils.utils import cosine_anneal_with_warmup, plot_lr_schedule
-from acai_omr.models.models import FineTuneOMREncoder, OMRDecoder, ViTOMR
+from acai_omr.models.models import FineTuneOMREncoder, OMRDecoder, ViTOMR, ScheduledSamplingVITOMR
 from torch.utils.data import Dataset
 
 class DebugDataset(Dataset):
@@ -33,9 +33,12 @@ def test_omr_train():
     debug_encoder = FineTuneOMREncoder(DEBUG_PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH, 1, hidden_dim=10, **DEBUG_KWARGS)
     debug_decoder = OMRDecoder(MAX_LMX_SEQ_LEN, LMX_VOCAB_PATH, hidden_dim=10, **DEBUG_KWARGS)
     debug_mae_state_dict = torch.load(DEBUG_PRETRAINED_MAE_PATH)
-    debug_vitomr = ViTOMR(debug_encoder, debug_mae_state_dict, debug_decoder)
+    debug_vitomr = ScheduledSamplingVITOMR(debug_encoder, debug_mae_state_dict, debug_decoder)
 
-    omr_train(debug_vitomr, train_dataset, validation_dataset, "cpu") 
+    omr_teacher_force_train(debug_vitomr, train_dataset, validation_dataset, "cpu") 
 
 if __name__ == "__main__":
     test_omr_train()
+
+# TODO: test new sampling forward, add in train loop linear decay for sampling ratio, annealing tau and eventually using hard, plot
+# annealing ratio, tau, hardness?

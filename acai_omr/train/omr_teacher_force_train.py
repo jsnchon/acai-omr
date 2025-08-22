@@ -11,7 +11,7 @@ from torch.amp import autocast
 from acai_omr.train.pre_train import PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH
 import time
 
-MODEL_DIR_PATH = Path("omr_train")
+MODEL_DIR_PATH = Path("debug")
 CHECKPOINTS_DIR_PATH = MODEL_DIR_PATH / "checkpoints"
 STATS_DIR_PATH = MODEL_DIR_PATH / "stats"
 
@@ -113,7 +113,7 @@ def validation_loop(vitomr, dataloader, loss_fn, device):
     print(f"Average validation loss for this epoch: {avg_loss}")
     return avg_loss
 
-def omr_train(vitomr, train_dataset, validation_dataset, device):
+def omr_teacher_force_train(vitomr, train_dataset, validation_dataset, device):
     print("Model architecture\n--------------------")
     print(vitomr)
     encoder_params_count = sum(p.numel() for p in vitomr.encoder.parameters() if p.requires_grad)
@@ -186,7 +186,7 @@ def omr_train(vitomr, train_dataset, validation_dataset, device):
 
 # constructing/loading the model definition into memory can be intensive, so instead of doing this whenever this module is imported,
 # separate it into a function that can be called when it's needed
-def set_up_omr_train():
+def set_up_omr_teacher_force_train():
     device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
     print(f"Using device {device}")
 

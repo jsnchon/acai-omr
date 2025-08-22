@@ -86,6 +86,10 @@ def beam_search(
             completed_beams += split_and_score_seqs(finished_seqs, finished_seqs_log_probs)
             logger.debug(f"completed_beams after appending newly finished beams: {completed_beams}")
 
+            # only keep unfinished beams to further extend
+            active_seqs = active_seqs[~finished_seqs_filter]
+            log_probs = log_probs[~finished_seqs_filter]
+
         yield {"type": InferenceEvent.STEP.value, "payload": {"beams": active_seqs, "log_probs": log_probs}}
 
         if len(completed_beams) >= beam_width:

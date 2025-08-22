@@ -1,10 +1,10 @@
 import torch
 from torch import nn
-from acai_omr.models.models import OMREncoder, FineTuneOMREncoder, OMRDecoder, ViTOMR, NUM_CHANNELS, OMRLoss
+from acai_omr.models.models import OMREncoder, FineTuneOMREncoder, OMRDecoder, ViTOMR, NUM_CHANNELS, OMRLoss, ScheduledSamplingVITOMR
 from acai_omr.train.pre_train import PE_MAX_HEIGHT, PE_MAX_WIDTH
 from acai_omr.train.datasets import OlimpicDataset
-from acai_omr.train.omr_train import MAX_LMX_SEQ_LEN, base_img_transform, base_lmx_transform
-from acai_omr.config import DEBUG_PRETRAINED_MAE_PATH, OLIMPIC_SYNTHETIC_ROOT_DIR
+from acai_omr.train.omr_teacher_force_train import MAX_LMX_SEQ_LEN, set_up_omr_teacher_force_train
+from acai_omr.config import DEBUG_PRETRAINED_MAE_PATH, OLIMPIC_SYNTHETIC_ROOT_DIR, LMX_BOS_TOKEN
 from acai_omr.utils.utils import show_vitomr_prediction
 
 VOCAB_LEN = 227
@@ -15,6 +15,8 @@ pretrained_debug_encoder = OMREncoder(16, PE_MAX_HEIGHT, PE_MAX_WIDTH, **debug_k
 debug_mae_state_dict = torch.load(DEBUG_PRETRAINED_MAE_PATH)
 debug_decoder = OMRDecoder(MAX_LMX_SEQ_LEN, "lmx_vocab.txt", **debug_kwargs)
 debug_vitomr = ViTOMR(pretrained_debug_encoder, debug_mae_state_dict, debug_decoder)
+
+_, _, base_img_transform, base_lmx_transform = set_up_omr_teacher_force_train()
  
 def test_encoder_batchify():
     patch_size = 2
@@ -328,6 +330,48 @@ def test_fine_tune_with_llrd():
         print(f"Trainable: {name}")
         assert not torch.equal(param, param_before)
 
+def test_sample_and_mix_seqs():
+    vitomr = ScheduledSamplingVITOMR(pretrained_debug_encoder, debug_mae_state_dict, debug_decoder)
+    bos_token_idx = vitomr.decoder.tokens_to_idxs[LMX_BOS_TOKEN]
+
+    sampling_ratio = 0.2
+    sample_tau = 0.1
+    hard = False
+    tf_input_seqs = torch.full([1, 5], dtype=torch.long, fill_value=10)
+    tf_input_seqs[:, 0] = bos_token_idx
+    tf_pred_logits = torch.full([1, 5, VOCAB_LEN], fill_value=5.0)
+    tf_pred_logits[:, :, 2] = 100.0 # set token at index 2 in vocab to have highest probability
+
+    print(f"Input token indices:\n{tf_input_seqs}\nFirst pass predicted vocab distributions:\n{tf_pred_logits}")
+    mixed_seqs = vitomr.sample_and_mix_seqs(sampling_ratio, tf_input_seqs, tf_pred_logits, sample_tau, hard, "cpu")
+    print(f"Result from sampling and mixing:\n{mixed_seqs}")
+    assert mixed_seqs.shape == torch.Size([1, 5, vitomr.encoder.hidden_dim])
+    assert torch.equal(mixed_seqs[:, 0, :], vitomr.decoder.vocab_embedding(torch.tensor([bos_token_idx])))
+
+    sampling_ratio = 1.0
+    hard = True
+    mixed_seqs = vitomr.sample_and_mix_seqs(sampling_ratio, tf_input_seqs, tf_pred_logits, sample_tau, hard, "cpu")
+    print(f"Result from hard-sampling all positions:\n{mixed_seqs}")
+    # <bos> token embedding should still be there and different from all others, but everything else should be the same un-mixed embedding since essentially
+    # just indexing the vocab embedding matrix
+    assert torch.equal(mixed_seqs[:, 0, :], vitomr.decoder.vocab_embedding(torch.tensor([bos_token_idx])))
+    assert torch.equal(mixed_seqs[:, 1:, :], vitomr.decoder.vocab_embedding(torch.tensor([2])).expand(4, -1).unsqueeze(0))
+
+def test_scheduled_sampling_vitomr():
+    encoder = FineTuneOMREncoder(16, PE_MAX_HEIGHT, PE_MAX_WIDTH, 2, **debug_kwargs)
+    vitomr = ScheduledSamplingVITOMR(encoder, debug_mae_state_dict, debug_decoder)
+
+    loss_fn = OMRLoss(vitomr.decoder.padding_idx)
+    param_groups, _ = vitomr.create_fine_tune_param_groups(100.0, 50.0, 0.99)
+    optimizer = torch.optim.SGD(param_groups)
+
+    x = [(torch.rand(NUM_CHANNELS, 64, 128), torch.randint(high=VOCAB_LEN, size=(8,))),
+         (torch.rand(NUM_CHANNELS, 32, 32), torch.randint(high=VOCAB_LEN, size=(6,)))]
+    pred, target_seqs = vitomr(x, 0.3, 0.5, False)
+    loss = loss_fn(pred, target_seqs)
+    loss.backward()
+    optimizer.step()
+
 if __name__ == "__main__":
     # test_partial_fine_tune()
-    test_fine_tune_with_llrd()
+    test_sample_and_mix_seqs()
