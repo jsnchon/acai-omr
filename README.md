@@ -13,5 +13,7 @@ attention is all you need
 (maybes:)
 scheduled sampling for transformers 
 Differentiable Scheduled Sampling for Credit Assignment
+CATEGORICAL REPARAMETERIZATION
+WITH GUMBEL-SOFTMAX
 DeepSeekMath: Pushing the Limits of Mathematical
 Reasoning in Open Language Models (GRPO)

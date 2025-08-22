@@ -13,7 +13,7 @@ import time
 import pandas as pd
 from dataclasses import dataclass
 
-MODEL_DIR_PATH = Path("debug")
+MODEL_DIR_PATH = Path("tf_omr_train")
 CHECKPOINTS_DIR_PATH = MODEL_DIR_PATH / "checkpoints"
 STATS_DIR_PATH = MODEL_DIR_PATH / "stats"
 
