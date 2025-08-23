@@ -1,11 +1,12 @@
 import torch
 from torch import nn
-from acai_omr.models.models import OMREncoder, FineTuneOMREncoder, OMRDecoder, ViTOMR, NUM_CHANNELS, OMRLoss, ScheduledSamplingVITOMR
+from acai_omr.models.models import OMREncoder, FineTuneOMREncoder, OMRDecoder, ViTOMR, NUM_CHANNELS, OMRLoss, ScheduledSamplingViTOMR, GRPOViTOMR
 from acai_omr.train.pre_train import PE_MAX_HEIGHT, PE_MAX_WIDTH
 from acai_omr.train.datasets import OlimpicDataset
 from acai_omr.train.omr_teacher_force_train import MAX_LMX_SEQ_LEN, set_up_omr_teacher_force_train
-from acai_omr.config import DEBUG_PRETRAINED_MAE_PATH, OLIMPIC_SYNTHETIC_ROOT_DIR, LMX_BOS_TOKEN
+from acai_omr.config import DEBUG_PRETRAINED_MAE_PATH, OLIMPIC_SYNTHETIC_ROOT_DIR
 from acai_omr.utils.utils import show_vitomr_prediction
+import pytest
 
 VOCAB_LEN = 227
 
@@ -331,14 +332,13 @@ def test_fine_tune_with_llrd():
         assert not torch.equal(param, param_before)
 
 def test_sample_and_mix_seqs():
-    vitomr = ScheduledSamplingVITOMR(pretrained_debug_encoder, debug_mae_state_dict, debug_decoder)
-    bos_token_idx = vitomr.decoder.tokens_to_idxs[LMX_BOS_TOKEN]
+    vitomr = ScheduledSamplingViTOMR(pretrained_debug_encoder, debug_mae_state_dict, debug_decoder)
 
     teacher_forcing_prob = 0.8
     sample_tau = 0.1
     hard = False
     tf_input_seqs = torch.full([1, 5], dtype=torch.long, fill_value=10)
-    tf_input_seqs[:, 0] = bos_token_idx
+    tf_input_seqs[:, 0] = vitomr.decoder.bos_idx
     tf_pred_logits = torch.full([1, 5, VOCAB_LEN], fill_value=5.0)
     tf_pred_logits[:, :, 2] = 100.0 # set token at index 2 in vocab to have highest probability
 
@@ -346,7 +346,7 @@ def test_sample_and_mix_seqs():
     mixed_seqs = vitomr.sample_and_mix_seqs(teacher_forcing_prob, tf_input_seqs, tf_pred_logits, sample_tau, hard, "cpu")
     print(f"Result from sampling and mixing:\n{mixed_seqs}")
     assert mixed_seqs.shape == torch.Size([1, 5, vitomr.encoder.hidden_dim])
-    assert torch.equal(mixed_seqs[:, 0, :], vitomr.decoder.vocab_embedding(torch.tensor([bos_token_idx])))
+    assert torch.equal(mixed_seqs[:, 0, :], vitomr.decoder.vocab_embedding(torch.tensor([vitomr.decoder.bos_idx])))
 
     teacher_forcing_prob = 0
     hard = True
@@ -354,12 +354,12 @@ def test_sample_and_mix_seqs():
     print(f"Result from hard-sampling all positions:\n{mixed_seqs}")
     # <bos> token embedding should still be there and different from all others, but everything else should be the same un-mixed embedding since essentially
     # just indexing the vocab embedding matrix
-    assert torch.equal(mixed_seqs[:, 0, :], vitomr.decoder.vocab_embedding(torch.tensor([bos_token_idx])))
+    assert torch.equal(mixed_seqs[:, 0, :], vitomr.decoder.vocab_embedding(torch.tensor([vitomr.decoder.bos_idx])))
     assert torch.equal(mixed_seqs[:, 1:, :], vitomr.decoder.vocab_embedding(torch.tensor([2])).expand(4, -1).unsqueeze(0))
 
 def test_scheduled_sampling_vitomr():
     encoder = FineTuneOMREncoder(16, PE_MAX_HEIGHT, PE_MAX_WIDTH, 2, **debug_kwargs)
-    vitomr = ScheduledSamplingVITOMR(encoder, debug_mae_state_dict, debug_decoder)
+    vitomr = ScheduledSamplingViTOMR(encoder, debug_mae_state_dict, debug_decoder)
 
     loss_fn = OMRLoss(vitomr.decoder.padding_idx)
     param_groups, _ = vitomr.create_fine_tune_param_groups(100.0, 50.0, 0.99)
@@ -372,6 +372,72 @@ def test_scheduled_sampling_vitomr():
     loss.backward()
     optimizer.step()
 
+def test_expand_img_tensors():
+    vitomr = GRPOViTOMR(pretrained_debug_encoder, debug_mae_state_dict, debug_decoder)
+    seq_len = 3
+    encoder_hidden_dim = vitomr.encoder.hidden_dim
+
+    first_latent = torch.zeros(seq_len, encoder_hidden_dim) 
+    second_latent = torch.ones(seq_len, encoder_hidden_dim)
+    img_latent = torch.stack([first_latent, second_latent])
+
+    first_mask = torch.tensor([False] * 3)
+    second_mask = torch.tensor([False, False, True])
+    mask = torch.stack([first_mask, second_mask])
+    print(f"Image latent and mask before expansion:\n{img_latent}\n{mask}")
+
+    num_rollouts = 2
+    img_latent, mask = vitomr.expand_img_tensors_for_rollout(img_latent, mask, num_rollouts)
+
+    print(f"After expansion:\n{img_latent}\n{mask}")
+    img_latent_expected = torch.cat([first_latent.repeat(num_rollouts, 1, 1), second_latent.repeat(num_rollouts, 1, 1)])
+    mask_expected = torch.cat([first_mask.repeat(num_rollouts, 1), second_mask.repeat(num_rollouts, 1)])
+
+    assert torch.equal(img_latent, img_latent_expected)
+    assert torch.equal(mask, mask_expected)
+
+def test_rollout_policy():
+    vitomr = GRPOViTOMR(pretrained_debug_encoder, debug_mae_state_dict, debug_decoder)
+    batch_size = 1
+    seq_len = 4
+    encoder_hidden_dim = vitomr.encoder.hidden_dim
+
+    img_latent = torch.rand([batch_size, seq_len, encoder_hidden_dim])
+    latent_mask = torch.tensor([[False] * seq_len])
+
+    num_rollouts = 2
+    vitomr.rollout_policy(img_latent, latent_mask, num_rollouts)
+
+test_args = [
+    # test both sequences ended at the same time
+    (torch.tensor([
+        [debug_vitomr.decoder.bos_idx, 10, 10, debug_vitomr.decoder.eos_idx],
+        [debug_vitomr.decoder.bos_idx, 20, 20, debug_vitomr.decoder.eos_idx],
+    ]), torch.tensor([4, 4])),
+    # test one sequence ended earlier with a junk eos after
+    (torch.tensor([
+        [debug_vitomr.decoder.bos_idx, debug_vitomr.decoder.eos_idx, 10, debug_vitomr.decoder.eos_idx],
+        [debug_vitomr.decoder.bos_idx, 20, 20, debug_vitomr.decoder.eos_idx],
+    ]), torch.tensor([2, 4])),
+    # test neither sequence has an eos
+    (torch.tensor([
+        [debug_vitomr.decoder.bos_idx, 10, 10, 10],
+        [debug_vitomr.decoder.bos_idx, 20, 20, 20],
+    ]), torch.tensor([4, 4])),
+    # test one sequence ended early, one never did
+    (torch.tensor([
+        [debug_vitomr.decoder.bos_idx, 20, 20, 20],
+        [debug_vitomr.decoder.bos_idx, debug_vitomr.decoder.eos_idx, 10, 10],
+    ]), torch.tensor([4, 2])),
+]
+@pytest.mark.parametrize("rollouts, expected_score", test_args)
+def test_score_rollouts(rollouts, expected_score):
+    vitomr = GRPOViTOMR(pretrained_debug_encoder, debug_mae_state_dict, debug_decoder)
+
+    log_probs = torch.ones([2, 4], dtype=torch.float)
+
+    scores = vitomr.score_rollouts(rollouts, log_probs)
+    assert torch.equal(scores, expected_score)
+
 if __name__ == "__main__":
-    # test_partial_fine_tune()
-    test_sample_and_mix_seqs()
+    test_rollout_policy()

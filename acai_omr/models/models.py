@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-from acai_omr.config import LMX_PAD_TOKEN
+from acai_omr.config import LMX_PAD_TOKEN, LMX_BOS_TOKEN, LMX_EOS_TOKEN
 import re
 
 NUM_CHANNELS = 1 # assume these images all are grayscale
@@ -379,6 +379,8 @@ class OMRDecoder(nn.Module):
         self.tokens_to_idxs = {token: i for i, token in enumerate(tokens)}
         self.idxs_to_tokens = {i: token for i, token in enumerate(tokens)}
         self.padding_idx = self.tokens_to_idxs[LMX_PAD_TOKEN]
+        self.bos_idx = self.tokens_to_idxs[LMX_BOS_TOKEN]
+        self.eos_idx = self.tokens_to_idxs[LMX_EOS_TOKEN]
         self.vocab_size = len(tokens)
 
         self.vocab_embedding = nn.Embedding(
@@ -428,7 +430,9 @@ class OMRDecoder(nn.Module):
         pred = self.unembed(hidden_state)
         return pred #(B, L_lmxmax, vocab_size)
 
-    def generate(self, input_seqs, img_latent):
+    # given a padded batch tensor of input_seqs and corresponding img_latent (optionally with a latent padding mask),
+    # generate next predictions for each sequence at each token position
+    def generate(self, input_seqs, img_latent, latent_attention_mask=None):
         seq_len = input_seqs.shape[1] 
         if seq_len > self.max_lmx_seq_len:
                 raise ValueError(f"{seq_len} long lmx sequence length is too long for max sequence length of {self.max_lmx_seq_len}")
@@ -438,7 +442,7 @@ class OMRDecoder(nn.Module):
         pos_embed_slice = self.pos_embedding[:seq_len, :]
         lmx_embeddings = lmx_embeddings + pos_embed_slice.unsqueeze(0)
 
-        hidden_state = self.decoder_blocks(lmx_embeddings, memory=img_latent)
+        hidden_state = self.decoder_blocks(lmx_embeddings, memory=img_latent, memory_key_padding_mask=latent_attention_mask)
         pred = self.unembed(hidden_state)
         return pred
 
@@ -547,7 +551,7 @@ class ViTOMR(nn.Module):
 
     """
     Input
-        img_latent: a (1, CP^2, E_dec) latent representation of the image to run inference on (must have already been fed through the transition head)
+        img_latent: a (1, T, E_dec) latent representation of the image to run inference on (must have already been fed through the transition head)
         seqs: a (beam_width, seq_len) tensor of the sequences to append to. Unlike the regular forward method used for training,
         for this method at the start each sequence should just be one <bos> token
     Output
@@ -605,7 +609,7 @@ class OMRLoss(nn.Module):
         # flatten tensors since target tensor needs to be shape (N, )
         return self.loss_fn(pred.reshape(-1, pred.shape[-1]), target_seqs.reshape(-1))
 
-class ScheduledSamplingVITOMR(ViTOMR):
+class ScheduledSamplingViTOMR(ViTOMR):
     # mix teacher forced sequence with first pass predictions: at each time step i, if sample = True we use the first 
     # pass' predicted distribution for the ith token to create an expected embedding and use that as the second pass' ith input embedding
     def sample_and_mix_seqs(self, teacher_forcing_prob, tf_input_seqs, tf_pred_logits, sample_tau, use_hard_sampling, device):
@@ -646,3 +650,77 @@ class ScheduledSamplingVITOMR(ViTOMR):
     # for validation/evaluation, we stick with regular teacher forcing
     def forward_eval(self, x: list[tuple[torch.Tensor, torch.Tensor]]):
         return super().forward(x)
+
+class GRPOViTOMR(ViTOMR):
+    # expand latent/mask to create multiple rollouts for each example
+    def expand_img_tensors_for_rollout(self, img_latent, latent_attention_mask, num_rollouts_per_img):
+        img_latent = img_latent.unsqueeze(1)
+        img_latent = img_latent.expand(-1, num_rollouts_per_img, -1, -1) # (B, num_rollouts, T, E_enc)
+        img_latent = img_latent.flatten(start_dim=0, end_dim=1) # (B x num_rollouts, T, E_enc)
+
+        latent_attention_mask = latent_attention_mask.unsqueeze(1)
+        latent_attention_mask = latent_attention_mask.expand(-1, num_rollouts_per_img, -1)
+        latent_attention_mask = latent_attention_mask.flatten(start_dim=0, end_dim=1)
+        return img_latent, latent_attention_mask
+
+    # calculate cumulative rollout log probs, checking for early <eos>'s in each rollout
+    def score_rollouts(self, rollouts, rollout_token_log_probs):
+        # marks where <eos> tokens are
+        eos_mask = (rollouts == self.decoder.eos_idx)
+        # 0 when there's been no <eos> up to/including this point, 1 when there's been 1 up to/including this point, etc.
+        seen_eos_mask = eos_mask.int().cumsum(dim=-1)
+        # first <eos> is when we have an <eos> token and have only seen 1 so far (ie at that position)
+        first_eos_mask = eos_mask & (seen_eos_mask == 1)
+        # only count each rollout as tokens up to and including the first <eos> (if it exists)
+        log_prob_filter = (seen_eos_mask == 0) | first_eos_mask
+
+        rollout_token_log_probs = torch.where(log_prob_filter, rollout_token_log_probs, 0.0)
+        rollout_scores = rollout_token_log_probs.sum(-1)
+        return rollout_scores
+
+    """
+    Input
+        img_latent: (B, T, E_enc) batched, padded tensor of image latents 
+        latent_attention_mask: (B, T) mask showing what embeddings in img_latent are padding
+    For each (T, E_enc) image latent in img_latent, create num_rollouts_per_img autoregressive rollouts according to the
+    policy defined by the model's outputted distributions, up to max_len tokens in total for each. At each autoregressive step,
+    set logits that aren't in the top_k top logits to -inf, then apply softmax with temperature, then extend the sequence according
+    to the resulting distribution 
+    Note: predictions after first train seem pretty peaky so default is to use temperature > 1 to slightly smooth things and encourage more exploration
+    """
+    def rollout_policy(self, img_latent, latent_attention_mask, num_rollouts_per_img=4, max_actions=768, top_k=50, temperature=1.2):
+        img_latent, latent_attention_mask = self.expand_img_tensors_for_rollout(img_latent, latent_attention_mask, num_rollouts_per_img)
+
+        total_rollouts = img_latent.shape[0]
+        rollouts = torch.full([total_rollouts, 1], fill_value=self.decoder.bos_idx, dtype=torch.long, device=img_latent.device)
+
+        # keep per-token log probs since we keep generating junk on sequences that end early before all are finished, so we don't want to
+        # keep one cumulative total for that sequence that accumulates junk
+        rollout_token_log_probs = torch.full_like(rollouts, fill_value=0.0, dtype=torch.float)
+        for _ in range(max_actions):
+            logits = self.decoder.generate(rollouts, img_latent, latent_attention_mask=latent_attention_mask)
+            logits = logits[:, -1, :] # (R x E_dec), next token distributions for each rollout
+
+            # top-k filtering
+            top_k_logits, top_k_indices = torch.topk(logits, top_k, dim=-1)
+            top_k_mask = torch.full_like(logits, float("-inf"))
+            logits = top_k_mask.scatter(-1, top_k_indices, top_k_logits)
+
+            # extend sequences
+            softmax_logits = logits / temperature # apply temperature for softmax
+            next_token_distr = F.softmax(softmax_logits, dim=-1)
+            next_token_idxs = torch.multinomial(next_token_distr, num_samples=1) # (R, 1)
+            rollouts = torch.cat([rollouts, next_token_idxs], dim=-1)
+
+            token_log_probs = F.log_softmax(softmax_logits, dim=-1)
+            next_token_log_probs = token_log_probs.gather(-1, index=next_token_idxs)
+            rollout_token_log_probs = torch.cat([rollout_token_log_probs, next_token_log_probs], dim=-1)
+
+            # end early if all seqs are done early
+            finished_seqs = torch.any((rollouts == self.decoder.eos_idx), dim=-1)
+            if torch.all(finished_seqs):
+                break
+        
+        rollout_scores = self.score_rollouts(rollouts, rollout_token_log_probs)
+
+        return rollouts, rollout_scores

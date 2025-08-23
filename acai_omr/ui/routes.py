@@ -1,8 +1,8 @@
 import torch
 from flask import Blueprint, render_template, request, Response
 from acai_omr.inference.vitomr_inference import beam_search
-from acai_omr.config import INFERENCE_VITOMR_PATH, LMX_BOS_TOKEN, LMX_EOS_TOKEN, InferenceEvent
-from acai_omr.train.omr_train import set_up_omr_train
+from acai_omr.config import INFERENCE_VITOMR_PATH, InferenceEvent
+from acai_omr.train.omr_grpo_train import set_up_omr_train
 import logging
 from PIL import Image
 import json
@@ -25,9 +25,6 @@ if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
         vitomr_state_dict = torch.load(INFERENCE_VITOMR_PATH)
 
     vitomr.load_state_dict(vitomr_state_dict)
-
-    bos_token_idx = vitomr.decoder.tokens_to_idxs[LMX_BOS_TOKEN]
-    eos_token_idx = vitomr.decoder.tokens_to_idxs[LMX_EOS_TOKEN]
 
 @main.route("/")
 def index():
@@ -85,4 +82,4 @@ def stream_inference():
     logger.info("Starting inference and streaming from endpoint")
     logger.info(f"Running beam search with beam width {beam_width} and max inference length {max_inference_len}")
 
-    return Response(stream_beam_search_wrapper(vitomr, image, bos_token_idx, eos_token_idx, device, beam_width, max_inference_len), mimetype="text/event-stream")
+    return Response(stream_beam_search_wrapper(vitomr, image, device, beam_width, max_inference_len), mimetype="text/event-stream")

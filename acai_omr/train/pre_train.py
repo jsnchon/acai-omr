@@ -142,10 +142,10 @@ def pre_train(mae, train_dataset, validation_dataset):
             checkpoint_path = CHECKPOINTS_DIR_PATH / f"epoch_{i+1}_checkpoint.pth"
             save_pretraining_state(checkpoint_path, mae, optimizer, scheduler)
             print("Checkpointing stats plots")
-            save_training_stats(STATS_DIR_PATH, epoch_training_losses, epoch_validation_losses, epoch_lrs)
+            save_pre_train_stats(STATS_DIR_PATH, epoch_training_losses, epoch_validation_losses, epoch_lrs)
 
     print("Plotting final stats")
-    save_training_stats(STATS_DIR_PATH, epoch_training_losses, epoch_validation_losses, epoch_lrs)
+    save_pre_train_stats(STATS_DIR_PATH, epoch_training_losses, epoch_validation_losses, epoch_lrs)
     print("Saving final pretraining state")
     pretrain_state_path = MODEL_DIR_PATH / f"ending_pretrain_state.pth"
     save_pretraining_state(pretrain_state_path, mae, optimizer, scheduler)

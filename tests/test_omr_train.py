@@ -27,7 +27,7 @@ def test_prepare_lmx_seq(seq, expected):
     transform = PrepareLMXSequence(tokens_to_idxs)
     assert torch.equal(transform(seq), expected)
 
-def test_omr_train():
+def test_omr_tf_train():
     train_dataset = DebugDataset()
     validation_dataset = DebugDataset()
     debug_encoder = FineTuneOMREncoder(DEBUG_PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH, 1, hidden_dim=10, **DEBUG_KWARGS)
@@ -38,4 +38,4 @@ def test_omr_train():
     omr_teacher_force_train(debug_vitomr, train_dataset, validation_dataset, "cpu") 
 
 if __name__ == "__main__":
-    test_omr_train()
+    test_omr_tf_train()

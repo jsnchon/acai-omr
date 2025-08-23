@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from pathlib import Path
-from acai_omr.models.models import FineTuneOMREncoder, OMRDecoder, ScheduledSamplingVITOMR, OMRLoss
+from acai_omr.models.models import FineTuneOMREncoder, OMRDecoder, ScheduledSamplingViTOMR, OMRLoss
 from acai_omr.train.datasets import GrandStaffLMXDataset, GrandStaffOMRTrainWrapper, OlimpicDataset
 from acai_omr.config import GRAND_STAFF_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, LMX_BOS_TOKEN, LMX_EOS_TOKEN
 from acai_omr.utils.utils import DynamicResize, cosine_anneal_with_warmup, ragged_collate_fn, save_teacher_force_training_stats
@@ -34,8 +34,8 @@ MIN_LR = 1e-6
 ADAMW_BETAS = (0.9, 0.95)
 ADAMW_WEIGHT_DECAY = 0.01
 WARMUP_EPOCHS = 3 # step scheduler per-batch since doing so little epochs
-BATCH_SIZE = 32
-GRAD_ACCUMULATION_STEPS = 2
+BATCH_SIZE = 16
+GRAD_ACCUMULATION_STEPS = 4
 NUM_WORKERS = 26
 
 # regularization settings
@@ -78,7 +78,7 @@ def save_omr_training_state(path, vitomr, optimizer, scheduler):
         "scheduler_state_dict": scheduler.state_dict(),
     }, path)
 
-def train_loop(vitomr, dataloader, loss_fn, optimizer, scheduler, device, hyperparams: HyperparamConfig):
+def train_loop(vitomr: ScheduledSamplingViTOMR, dataloader, loss_fn, optimizer, scheduler, device, hyperparams: HyperparamConfig):
     print("Starting training")
     vitomr.train()
     epoch_loss = 0

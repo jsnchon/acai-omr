@@ -1,7 +1,7 @@
 import torch
 from acai_omr.models.models import ViTOMR
-from acai_omr.train.omr_train import set_up_omr_train
-from acai_omr.config import LMX_BOS_TOKEN, LMX_EOS_TOKEN, InferenceEvent, INFERENCE_VITOMR_PATH
+from acai_omr.train.omr_grpo_train import set_up_omr_teacher_force_train
+from acai_omr.config import LMX_EOS_TOKEN, InferenceEvent, INFERENCE_VITOMR_PATH
 from torch.amp import autocast
 from PIL import Image
 import logging
@@ -36,8 +36,6 @@ it'll only be concerned with the final generated result
 def beam_search(
     vitomr: ViTOMR, 
     img: torch.Tensor, 
-    bos_token_idx: int, 
-    eos_token_idx: int, 
     device, 
     beam_width: int, 
     max_inference_len: int): # <bos> token is counted as contributing one step to this limit
@@ -55,7 +53,7 @@ def beam_search(
     completed_beams = [] # tuples of (sequence, score) where score is length-normalized log prob
 
     # start with just one sequence of <bos> and expand into beam_width beams in the first iteration
-    active_seqs = torch.full((1, 1), bos_token_idx, dtype=torch.long, device=device)
+    active_seqs = torch.full((1, 1), vitomr.decoder.bos_idx, dtype=torch.long, device=device)
     log_probs = torch.zeros(1, device=device)
 
     logger.debug("Starting inference loop")
@@ -78,7 +76,7 @@ def beam_search(
         active_seqs = torch.cat([active_seqs.index_select(dim=0, index=beam_indices), token_indices.unsqueeze(1)], dim=1)
         log_probs = top_log_probs
 
-        if torch.any(finished_seqs_filter := (active_seqs[:, -1] == eos_token_idx)):
+        if torch.any(finished_seqs_filter := (active_seqs[:, -1] == vitomr.decoder.eos_idx)):
             finished_seqs = active_seqs[finished_seqs_filter]
             finished_seqs_log_probs = log_probs[finished_seqs_filter]
             logger.debug(f"Newly finished beams: {finished_seqs} with log probs: {finished_seqs_log_probs}")
@@ -152,14 +150,12 @@ def convert_back_to_img(xml_file_path: str, img_file_path: str):
 def inference(
     vitomr: ViTOMR, 
     img: torch.Tensor, 
-    bos_token_idx: int, 
-    eos_token_idx: int, 
     device, 
     beam_width=3, 
     max_inference_len=1536):
 
     inference_event = None
-    for event in beam_search(vitomr, img, bos_token_idx, eos_token_idx, device, beam_width, max_inference_len):
+    for event in beam_search(vitomr, img, device, beam_width, max_inference_len):
         inference_event = event 
 
     # last yielded value by beam_search is the best sequence and its normalized score
@@ -170,7 +166,7 @@ if __name__ == "__main__":
 
     logger.info(f"Loading state dict from {INFERENCE_VITOMR_PATH}")
 
-    vitomr, base_img_transform, _, device = set_up_omr_train()
+    vitomr, base_img_transform, _, device = set_up_omr_teacher_force_train()
     if device == "cpu":
         vitomr_state_dict = torch.load(INFERENCE_VITOMR_PATH, map_location=torch.device("cpu"))
     else:
@@ -178,9 +174,6 @@ if __name__ == "__main__":
 
     vitomr.load_state_dict(vitomr_state_dict)
     
-    bos_token_idx = vitomr.decoder.tokens_to_idxs[LMX_BOS_TOKEN]
-    eos_token_idx = vitomr.decoder.tokens_to_idxs[LMX_EOS_TOKEN]
-
     # note to future self: make sure to convert any images to grayscale/transform using patch transform
     image = Image.open(INFERENCE_IMAGE_PATH).convert("L")
     image = base_img_transform(image)
@@ -190,7 +183,7 @@ if __name__ == "__main__":
     max_inference_len = 40
 
     logger.info("Starting inference")
-    lmx_seq, score = inference(vitomr, image, bos_token_idx, eos_token_idx, device, beam_width=beam_width, max_inference_len=max_inference_len)
+    lmx_seq, score = inference(vitomr, image, device, beam_width=beam_width, max_inference_len=max_inference_len)
     lmx_seq = [vitomr.decoder.idxs_to_tokens[idx.item()] for idx in lmx_seq.squeeze(0)]
     lmx_seq = stringify_lmx_seq(lmx_seq)
     logger.info(f"Decoded inference result: {lmx_seq}\nSequence score: {score}")
