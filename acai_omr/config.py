@@ -33,3 +33,6 @@ inference_events = {e.name: e.value for e in InferenceEvent}
 INFERENCE_EVENT_JSON_PATH.write_text(json.dumps(inference_events, indent=2))
 
 OLIMPIC_ROOT_DIR = "olimpic-icdar24/"
+
+# weights for a teacher-forced ViTOMR using the debug mae
+DEBUG_TEACHER_FORCED_PATH = "debug_teacher_forced_omr_train/debug_vitomr.pth"

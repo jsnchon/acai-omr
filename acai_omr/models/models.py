@@ -330,19 +330,23 @@ class OMREncoder(Encoder):
 class FineTuneOMREncoder(OMREncoder):
     def __init__(self, patch_size, pe_max_height, pe_max_width, fine_tune_depth, num_layers=12, hidden_dim=768, num_heads=12, mlp_dim=3072, transformer_dropout=0.05):
         super().__init__(patch_size, pe_max_height, pe_max_width, num_layers, hidden_dim, num_heads, mlp_dim)
+        assert fine_tune_depth > 0, "If using FineTuneOMREncoder, fine-tune depth should be at least 1"
         del self.encoder_blocks
 
         self.fine_tune_depth = fine_tune_depth
         self.num_layers = num_layers
-        num_frozen_layers = self.num_layers - self.fine_tune_depth
+        self.num_frozen_layers = self.num_layers - self.fine_tune_depth
+
+        # store so these can be retrieved to convert this into a regular OMREncoder later
+        self.superclass_kwargs = {"num_heads": num_heads, "mlp_dim": mlp_dim, "transformer_dropout": transformer_dropout}
 
         base_encoder_layer_kwargs = {"d_model": self.hidden_dim, "nhead": num_heads, "dim_feedforward": mlp_dim, "activation": "gelu", "batch_first": True}
-        if num_frozen_layers == 0: # full fine-tune
+        if self.num_frozen_layers == 0: # full fine-tune
             self.frozen_blocks = None
         else:
             self.frozen_blocks = nn.TransformerEncoder(
                 encoder_layer=nn.TransformerEncoderLayer(dropout=0.0, **base_encoder_layer_kwargs),
-                num_layers=num_frozen_layers
+                num_layers=self.num_frozen_layers
             )
 
         self.fine_tune_blocks = nn.TransformerEncoder(
@@ -446,7 +450,7 @@ class OMRDecoder(nn.Module):
         pred = self.unembed(hidden_state)
         return pred
 
-class ViTOMR(nn.Module):
+class TeacherForcedViTOMR(nn.Module):
     def __init__(self, omr_encoder, pretrained_mae_state_dict, omr_decoder, transition_head_dim=4096, transition_head_dropout=0.05):
         super().__init__()
         self.encoder = omr_encoder
@@ -491,8 +495,8 @@ class ViTOMR(nn.Module):
         omr_encoder_state_dict = {}
         freeze_threshold_depth = self.encoder.num_layers - self.encoder.fine_tune_depth
         last_norm_layer_parameters = ["encoder_blocks.norm.weight", "encoder_blocks.norm.bias"]
+        layer_num_pattern = re.compile(r"(?:\w|\.)+?(\d+)(?:\w|\.)+")
         for param in pretrained_mae_state_dict.keys():
-            layer_num_pattern = re.compile(r"(?:\w|\.)+?(\d+)(?:\w|\.)+")
             if match := layer_num_pattern.match(param): # this is a layer in MAEEncoder's encoder_blocks variable
                 layer_num = int(match.group(1))
                 if layer_num < freeze_threshold_depth:
@@ -609,7 +613,7 @@ class OMRLoss(nn.Module):
         # flatten tensors since target tensor needs to be shape (N, )
         return self.loss_fn(pred.reshape(-1, pred.shape[-1]), target_seqs.reshape(-1))
 
-class ScheduledSamplingViTOMR(ViTOMR):
+class ScheduledSamplingViTOMR(TeacherForcedViTOMR):
     # mix teacher forced sequence with first pass predictions: at each time step i, if sample = True we use the first 
     # pass' predicted distribution for the ith token to create an expected embedding and use that as the second pass' ith input embedding
     def sample_and_mix_seqs(self, teacher_forcing_prob, tf_input_seqs, tf_pred_logits, sample_tau, use_hard_sampling, device):
@@ -651,7 +655,49 @@ class ScheduledSamplingViTOMR(ViTOMR):
     def forward_eval(self, x: list[tuple[torch.Tensor, torch.Tensor]]):
         return super().forward(x)
 
-class GRPOViTOMR(ViTOMR):
+class GRPOViTOMR(nn.Module):
+    def __init__(self, encoder, transition_head, decoder, teacher_forced_state_dict):
+        super().__init__()
+        if isinstance(encoder, FineTuneOMREncoder):
+            teacher_forced_state_dict = self.convert_teacher_forced_state_dict(teacher_forced_state_dict, encoder.num_frozen_layers)
+            encoder = OMREncoder(encoder.patch_size, encoder.pe_max_height, encoder.pe_max_width, encoder.num_layers, encoder.hidden_dim, **encoder.superclass_kwargs)
+            
+        self.encoder = encoder
+        self.transition_head = transition_head
+        self.decoder = decoder
+        self.load_state_dict(teacher_forced_state_dict)
+        # freeze encoder/transition head which by now should be well-trained for the seq2seq task. Also disable their dropout
+        self.freeze_component(self.encoder)
+        self.freeze_component(self.transition_head)
+
+    def freeze_component(self, component):
+        for param in component.parameters():
+            param.requires_grad = False
+        for child in component.modules():
+            if isinstance(child, nn.Dropout):
+                child.p = 0.0
+
+    def convert_teacher_forced_state_dict(self, teacher_forced_state_dict, num_frozen_layers):
+        converted_state_dict = {} # new dict since can't mutate old dict while iterating over it
+
+        layer_num_pattern = re.compile(r"(?:\w|\.)+?(\d+)(?:\w|\.)+")
+        for param in teacher_forced_state_dict.keys():
+            if "frozen_blocks" in param:
+                new_param_name = param.replace("frozen_blocks", "encoder_blocks")
+            # fine-tune blocks have shifted layer numbers for partial fine-tune
+            elif "fine_tune_blocks" in param:
+                new_param_name = param.replace("fine_tune_blocks", "encoder_blocks")
+                # no match means this is a parameter for the last norm of the whole encoder, in which case
+                # the name replacement was enough
+                if match := layer_num_pattern.match(param):
+                    layer_num = int(match.group(1))
+                    new_param_name = new_param_name.replace(f"layers.{layer_num}", f"layers.{layer_num + num_frozen_layers}")
+            else:
+                new_param_name = param
+
+            converted_state_dict[new_param_name] = teacher_forced_state_dict[param]
+        return converted_state_dict
+
     # expand latent/mask to create multiple rollouts for each example
     def expand_img_tensors_for_rollout(self, img_latent, latent_attention_mask, num_rollouts_per_img):
         img_latent = img_latent.unsqueeze(1)
@@ -675,12 +721,6 @@ class GRPOViTOMR(ViTOMR):
         rollout_mask = (seen_eos_mask == 0) | first_eos_mask
         return rollout_mask
 
-    # calculate cumulative rollout log probs
-    def score_rollouts(self, rollout_token_log_probs, rollout_mask):
-        rollout_token_log_probs = torch.where(rollout_mask, rollout_token_log_probs, 0.0)
-        rollout_probs = rollout_token_log_probs.sum(-1)
-        return rollout_probs
-
     """
     Input
         img_latent: (R, T, E_enc) batched, padded tensor of B image latents each duplicated across num_rollouts_per_img rollouts into 
@@ -703,9 +743,9 @@ class GRPOViTOMR(ViTOMR):
         rollouts = torch.full([total_rollouts, max_actions + 1], fill_value=self.decoder.pad_idx, dtype=torch.long, device=device)
         rollouts[:, 0] = torch.full([total_rollouts], fill_value=self.decoder.bos_idx)
 
-        # keep per-token log metrics since we keep generating junk on sequences that end early before all are finished, so we don't want to
-        # keep one cumulative total for that sequence that accumulates junk
-        rollout_token_log_probs = torch.zeros_like(rollouts, dtype=torch.float, device=device)
+        # per-token log probs help us later mask out junk parts of sequences/calculating GRPO objective per step. Use log-probs
+        # for numerical stability, eg with super small regular probs
+        rollout_log_probs = torch.zeros_like(rollouts, dtype=torch.float, device=device)
         for t in range(1, max_actions + 1):
             logits = self.decoder.generate(rollouts, img_latent, latent_attention_mask=latent_attention_mask)
             logits = logits[:, -1, :] # (R x E_dec), next token distributions for each rollout
@@ -723,7 +763,7 @@ class GRPOViTOMR(ViTOMR):
 
             token_log_probs = F.log_softmax(softmax_logits, dim=-1)
             next_token_log_probs = token_log_probs.gather(-1, index=next_token_idxs)
-            rollout_token_log_probs[:, t] = next_token_log_probs.squeeze(1)
+            rollout_log_probs[:, t] = next_token_log_probs.squeeze(1)
 
             # end early if all seqs are done early
             finished_seqs = torch.any((rollouts == self.decoder.eos_idx), dim=-1)
@@ -731,9 +771,8 @@ class GRPOViTOMR(ViTOMR):
                 break
         
         rollout_mask = self.create_rollout_mask(rollouts)
-        rollout_probs = self.score_rollouts(rollouts, rollout_token_log_probs, rollout_mask)
 
-        return rollouts, rollout_probs, rollout_mask
+        return rollouts, rollout_log_probs, rollout_mask
 
     # right shift rollouts and prepare an attention mask for it (since it's likely a padded tensor of ragged rollouts)
     def prepare_rollouts_for_policy_theta(self, rollouts, rollout_mask):
@@ -747,21 +786,3 @@ class GRPOViTOMR(ViTOMR):
         # for readability/consistency, convert ignored portions of the rollout tensor to <pad> tokens
         rollouts[rollout_attention_mask] = self.decoder.pad_idx
         return rollouts, rollout_attention_mask
-
-# policy_theta is the policy to be used in scoring rollouts from the old_policy and updated
-def train_loop(old_policy: GRPOViTOMR, policy_theta: GRPOViTOMR):
-    num_rollouts_per_img = 4
-    grpo_epochs = 5
-
-    # rollout using old policy
-    with torch.no_grad():
-        img_latent, latent_attention_mask = old_policy.expand_img_tensors_for_rollout(img_latent, latent_attention_mask, num_rollouts_per_img)
-        rollouts, old_policy_rollout_probs, rollout_mask = old_policy.rollout_policy(img_latent, latent_attention_mask)
-
-    # reward rollouts and calculate group-normalized advantages
-
-    # calculate cumulative log-probs for rollouts to calculate ratios against old policy
-    rollouts, rollout_attention_mask = old_policy.prepare_rollouts_for_policy_theta(rollouts, rollout_mask)
-    for i in range(grpo_epochs):
-        # generate next token logits at each time step through treating rollouts like a teacher forcing step
-        logits = policy_theta.decoder(rollouts, img_latent, rollout_attention_mask, latent_attention_mask)

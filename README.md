@@ -46,3 +46,5 @@ Starting values:
 λ_l start = 0.02 (len penalty low initially) → anneal up to 0.35 over curriculum
 
 β (entropy) start = 0.20 → anneal down to 0.02
+
+Define L_reward using this stuff, then add L_CE (teacher-forced CE loss using policy being updated logits) to it with a weight lambda_CE (low, and also anneal it over time, eventually leaving it out entirely. Just want to keep the model grounded esp in beginning and esp since using no KL divergence since pre-trained state sucks)
