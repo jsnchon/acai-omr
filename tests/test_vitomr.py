@@ -7,6 +7,7 @@ from acai_omr.train.omr_teacher_force_train import MAX_LMX_SEQ_LEN, set_up_omr_t
 from acai_omr.config import DEBUG_PRETRAINED_MAE_PATH, OLIMPIC_SYNTHETIC_ROOT_DIR
 from acai_omr.utils.utils import show_vitomr_prediction
 import pytest
+import copy
 
 VOCAB_LEN = 227
 
@@ -396,17 +397,34 @@ def test_expand_img_tensors():
     assert torch.equal(img_latent, img_latent_expected)
     assert torch.equal(mask, mask_expected)
 
-def test_rollout_policy():
+test_args = [
+    # test both sequences ended at the same time
+    (torch.tensor([
+        [debug_vitomr.decoder.bos_idx, 10, 10, debug_vitomr.decoder.eos_idx],
+        [debug_vitomr.decoder.bos_idx, 20, 20, debug_vitomr.decoder.eos_idx],
+    ]), torch.full([2, 4], fill_value=True)),
+    # test one sequence ended earlier with a junk eos after
+    (torch.tensor([
+        [debug_vitomr.decoder.bos_idx, debug_vitomr.decoder.eos_idx, 10, debug_vitomr.decoder.eos_idx],
+        [debug_vitomr.decoder.bos_idx, 20, 20, debug_vitomr.decoder.eos_idx],
+    ]), torch.tensor([[True, True, False, False], [True] * 4])),
+    # test neither sequence has an eos
+    (torch.tensor([
+        [debug_vitomr.decoder.bos_idx, 10, 10, 10],
+        [debug_vitomr.decoder.bos_idx, 20, 20, 20],
+    ]), torch.full([2, 4], fill_value=True)),
+    # test one sequence ended early, one never did
+    (torch.tensor([
+        [debug_vitomr.decoder.bos_idx, 20, 20, 20],
+        [debug_vitomr.decoder.bos_idx, debug_vitomr.decoder.eos_idx, 10, 10],
+    ]), torch.tensor([[True] * 4, [True, True, False, False]])),
+]
+@pytest.mark.parametrize("rollouts, expected_mask", test_args)
+def test_rollout_masking(rollouts, expected_mask):
     vitomr = GRPOViTOMR(pretrained_debug_encoder, debug_mae_state_dict, debug_decoder)
-    batch_size = 1
-    seq_len = 4
-    encoder_hidden_dim = vitomr.encoder.hidden_dim
 
-    img_latent = torch.rand([batch_size, seq_len, encoder_hidden_dim])
-    latent_mask = torch.tensor([[False] * seq_len])
-
-    num_rollouts = 2
-    vitomr.rollout_policy(img_latent, latent_mask, num_rollouts)
+    mask = vitomr.create_rollout_mask(rollouts)
+    assert torch.equal(mask, expected_mask)
 
 test_args = [
     # test both sequences ended at the same time
@@ -436,8 +454,82 @@ def test_score_rollouts(rollouts, expected_score):
 
     log_probs = torch.ones([2, 4], dtype=torch.float)
 
-    scores = vitomr.score_rollouts(rollouts, log_probs)
+    scores, _ = vitomr.score_rollouts(rollouts, log_probs)
     assert torch.equal(scores, expected_score)
 
+def test_rollout_policy():
+    vitomr = GRPOViTOMR(pretrained_debug_encoder, debug_mae_state_dict, debug_decoder)
+    batch_size = 2
+    seq_len = 4
+    encoder_hidden_dim = vitomr.encoder.hidden_dim
+
+    img_latent = torch.rand([batch_size, seq_len, encoder_hidden_dim])
+    latent_mask = torch.full([img_latent.shape[0], img_latent.shape[1]], fill_value=False)
+
+    num_rollouts = 3 
+    rollouts, rollout_scores, rollout_entropies = vitomr.rollout_policy(img_latent, latent_mask, num_rollouts, max_actions=10)
+    print(f"Rollouts:\n{rollouts}\nScores:\n{rollout_scores}\nEntropies:\n{rollout_entropies}")
+
+def test_prepare_rollouts():
+    vitomr = GRPOViTOMR(pretrained_debug_encoder, debug_mae_state_dict, debug_decoder)
+    
+    # basic case: non-ragged, terminated sequences
+    rollouts = torch.tensor([[vitomr.decoder.bos_idx, 10, 10, vitomr.decoder.eos_idx], [vitomr.decoder.bos_idx, 10, 10, vitomr.decoder.eos_idx]])
+    rollout_mask = vitomr.create_rollout_mask(rollouts)
+
+    expected_rollouts = copy.deepcopy(rollouts[:, :-1])
+    expected_mask = torch.tensor([[False] * 3, [False] * 3])
+
+    print(f"Before:\nRollouts:\n{rollouts}\nMask:\n{rollout_mask}")
+    rollouts, rollout_mask = vitomr.prepare_rollouts_for_policy_theta(rollouts, rollout_mask)
+    print(f"After:\nRollouts:\n{rollouts}\nMask:\n{rollout_mask}")
+    assert torch.equal(rollouts, expected_rollouts)
+    assert torch.equal(rollout_mask, expected_mask)
+
+    # ragged <eos>'s
+    rollouts = torch.tensor([[vitomr.decoder.bos_idx, 10, 10, vitomr.decoder.eos_idx], [vitomr.decoder.bos_idx, vitomr.decoder.eos_idx, 30, 30]])
+    rollout_mask = vitomr.create_rollout_mask(rollouts)
+
+    expected_rollouts = copy.deepcopy(rollouts[:, :-1])
+    expected_rollouts[1, 1:] = vitomr.decoder.pad_idx # one pad token created
+    expected_mask = torch.tensor([[False] * 3, [False, True, True]])
+
+    print(f"Before:\nRollouts:\n{rollouts}\nMask:\n{rollout_mask}")
+    rollouts, rollout_mask = vitomr.prepare_rollouts_for_policy_theta(rollouts, rollout_mask)
+    print(f"After:\nRollouts:\n{rollouts}\nMask:\n{rollout_mask}")
+    assert torch.equal(rollouts, expected_rollouts)
+    assert torch.equal(rollout_mask, expected_mask)
+
+    # one sequence with no <eos>
+    rollouts = torch.tensor([[vitomr.decoder.bos_idx, 10, vitomr.decoder.eos_idx, 30], [vitomr.decoder.bos_idx, 10, 10, 10]])
+    rollout_mask = vitomr.create_rollout_mask(rollouts)
+
+    expected_rollouts = copy.deepcopy(rollouts[:, :-1])
+    print(f"EXPECTED: {expected_rollouts}")
+    expected_rollouts[0, 2] = vitomr.decoder.pad_idx
+    expected_mask = torch.tensor([[False, False, True], [False] * 3])
+
+    print(f"Before:\nRollouts:\n{rollouts}\nMask:\n{rollout_mask}")
+    rollouts, rollout_mask = vitomr.prepare_rollouts_for_policy_theta(rollouts, rollout_mask)
+    print(f"After:\nRollouts:\n{rollouts}\nMask:\n{rollout_mask}")
+    print(f"EXPECTED: {expected_rollouts}")
+    assert torch.equal(rollouts, expected_rollouts)
+    assert torch.equal(rollout_mask, expected_mask)
+
+    # no <eos>'s
+    rollouts = torch.tensor([[vitomr.decoder.bos_idx, 10, 10, 10], [vitomr.decoder.bos_idx, 10, 10, 10]])
+    rollout_mask = vitomr.create_rollout_mask(rollouts)
+
+    expected_rollouts = copy.deepcopy(rollouts[:, :-1])
+    expected_mask = torch.tensor([[False] * 3, [False] * 3])
+
+    print(f"Before:\nRollouts:\n{rollouts}\nMask:\n{rollout_mask}")
+    rollouts, rollout_mask = vitomr.prepare_rollouts_for_policy_theta(rollouts, rollout_mask)
+    print(f"After:\nRollouts:\n{rollouts}\nMask:\n{rollout_mask}")
+    assert torch.equal(rollouts, expected_rollouts)
+    assert torch.equal(rollout_mask, expected_mask)
+
+# TODOS: Consider if worth it restructuring encoder since it'll be frozen
+
 if __name__ == "__main__":
-    test_rollout_policy()
+    test_prepare_rollouts()

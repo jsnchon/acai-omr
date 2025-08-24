@@ -6,7 +6,7 @@ from models import MAELoss, OMRLoss
 from acai_omr.train.datasets import GrandStaffLMXDataset, OlimpicDataset, OlimpicPreTrainWrapper, GrandStaffPreTrainWrapper, GrandStaffOMRTrainWrapper
 from torch.utils.data import ConcatDataset, DataLoader
 from acai_omr.train.pre_train import set_up_mae, base_transform
-from acai_omr.train.omr_train import set_up_omr_train
+from acai_omr.train.omr_teacher_force_train import set_up_omr_teacher_force_train
 from torch.amp import autocast
 from enum import Enum
 import argparse
@@ -113,7 +113,7 @@ def test_vitomr(vitomr, vitomr_state_dict, args, device):
     num_workers = args.num_workers
     print(f"Using a batch size of {batch_size} and {num_workers} workers")
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=ragged_collate_fn, pin_memory=True)
-    loss_fn = OMRLoss(vitomr.decoder.padding_idx, label_smoothing=0.0)
+    loss_fn = OMRLoss(vitomr.decoder.pad_idx, label_smoothing=0.0)
 
     vitomr = vitomr.to(device)
 
@@ -124,7 +124,7 @@ def test_vitomr(vitomr, vitomr_state_dict, args, device):
         sample_predictions(vitomr, Models.VIT_OMR, prediction_dir, test_dataloader.dataset, device)
 
 mae = set_up_mae()
-vitomr, base_img_transform, base_lmx_transform, _ = set_up_omr_train()
+vitomr, base_img_transform, base_lmx_transform, _ = set_up_omr_teacher_force_train()
 
 parser = argparse.ArgumentParser()
 parser.add_argument("model_type", choices=[Models.MAE.value, Models.VIT_OMR.value])

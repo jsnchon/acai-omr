@@ -2,8 +2,8 @@ import torch
 from flask import Blueprint, render_template, request, Response
 from acai_omr.inference.vitomr_inference import beam_search
 from acai_omr.config import INFERENCE_VITOMR_PATH, InferenceEvent
-from acai_omr.train.omr_grpo_train import set_up_omr_train
-import logging
+from acai_omr.train.omr_teacher_force_train import set_up_omr_teacher_force_train
+import logging  
 from PIL import Image
 import json
 import os
@@ -16,7 +16,7 @@ DEBUG_IMAGE_PATH = "inference_test.png"
 # without this, in debug mode flask runs import statements twice in two processes which means the model is duplicated and
 # takes up too much memory
 if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
-    vitomr, base_img_transform, _, device = set_up_omr_train()
+    vitomr, base_img_transform, _, device = set_up_omr_teacher_force_train()
     
     logger.info(f"Loading state dict from {INFERENCE_VITOMR_PATH}")
     if device == "cpu":
@@ -76,7 +76,7 @@ def stream_inference():
 #    weights_path = "debug_omr_train/debug_vitomr.pth"
     # end debug
     image = Image.open(DEBUG_IMAGE_PATH).convert("L")
-    image = base_img_transform(image)
+    image = base_img_transform(image).to(device)
 
     # make sure to transform any images using patch transform
     logger.info("Starting inference and streaming from endpoint")

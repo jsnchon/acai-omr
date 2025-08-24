@@ -221,7 +221,7 @@ def show_vitomr_prediction(vitomr, ex, sample_save_dir: str):
     sample_save_dir = Path(sample_save_dir)
     sample_save_dir.mkdir(exist_ok=True)
 
-    loss_fn = OMRLoss(padding_idx=vitomr.decoder.padding_idx, label_smoothing=0.0)
+    loss_fn = OMRLoss(pad_idx=vitomr.decoder.pad_idx, label_smoothing=0.0)
     vitomr.eval()
     with torch.no_grad():
         pred, target_seq = vitomr([ex])

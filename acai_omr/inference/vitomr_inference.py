@@ -1,6 +1,6 @@
 import torch
 from acai_omr.models.models import ViTOMR
-from acai_omr.train.omr_grpo_train import set_up_omr_teacher_force_train
+from acai_omr.train.omr_teacher_force_train import set_up_omr_teacher_force_train
 from acai_omr.config import LMX_EOS_TOKEN, InferenceEvent, INFERENCE_VITOMR_PATH
 from torch.amp import autocast
 from PIL import Image
@@ -176,7 +176,7 @@ if __name__ == "__main__":
     
     # note to future self: make sure to convert any images to grayscale/transform using patch transform
     image = Image.open(INFERENCE_IMAGE_PATH).convert("L")
-    image = base_img_transform(image)
+    image = base_img_transform(image).to(device)
 
     # these are low so I can debug on my weak laptop
     beam_width = 2

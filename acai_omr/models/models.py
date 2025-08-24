@@ -378,13 +378,13 @@ class OMRDecoder(nn.Module):
         
         self.tokens_to_idxs = {token: i for i, token in enumerate(tokens)}
         self.idxs_to_tokens = {i: token for i, token in enumerate(tokens)}
-        self.padding_idx = self.tokens_to_idxs[LMX_PAD_TOKEN]
+        self.pad_idx = self.tokens_to_idxs[LMX_PAD_TOKEN]
         self.bos_idx = self.tokens_to_idxs[LMX_BOS_TOKEN]
         self.eos_idx = self.tokens_to_idxs[LMX_EOS_TOKEN]
         self.vocab_size = len(tokens)
 
         self.vocab_embedding = nn.Embedding(
-            self.vocab_size, self.hidden_dim, padding_idx=self.padding_idx
+            self.vocab_size, self.hidden_dim, padding_idx=self.pad_idx
         )
 
         self.pos_embedding = nn.Parameter(
@@ -407,7 +407,7 @@ class OMRDecoder(nn.Module):
                 int tensor of a right-shifted original sequence
             if token_idxs_input = False: (B, L_lmxmax, E), batch tensor of input sequences of embeddings in vocab space. 
                 Important for scheduled sampling where we need to mix embeddings and input those instead of hard indices
-        img_latent: (B, L_imgmax, E)
+        img_latent: (B, L_imgmax, E) tensor of B image latents corresponding to each of the B input_seqs
         lmx_attention_mask: (B, L_lmxmax), records which lmx tokens are pad tokens
         latent_attention_mask: (B, L_imgmax), records which encoded patches in image batch are padding
         """
@@ -451,7 +451,7 @@ class ViTOMR(nn.Module):
         super().__init__()
         self.encoder = omr_encoder
 
-        encoder_state_dict = self.create_omr_encoder_state_dict(pretrained_mae_state_dict)
+        encoder_state_dict = self.create_omr_encoder_state_dict_from_mae(pretrained_mae_state_dict)
         self.encoder.load_state_dict(encoder_state_dict)
 
         # depending on the type of encoder being used, either freeze the whole thing or just the frozen blocks or none at all (for full fine-tune)
@@ -476,7 +476,7 @@ class ViTOMR(nn.Module):
             nn.Linear(transition_head_dim, self.decoder.hidden_dim)
         )
 
-    def create_omr_encoder_state_dict(self, pretrained_mae_state_dict):
+    def create_omr_encoder_state_dict_from_mae(self, pretrained_mae_state_dict):
         # preprocess state dict: remove redundant prefixes added by MAE class since 
         pretrained_mae_state_dict = {
             param[len("encoder."):]: value for param, value in pretrained_mae_state_dict.items() if param.startswith("encoder.")
@@ -516,13 +516,13 @@ class ViTOMR(nn.Module):
     # in lmx token indices
     def batchify_and_split_lmx_seqs(self, lmx_seqs: tuple[torch.Tensor], device):
         # split lmx sequences into right-shifted inputs and left-shifted targets
-        padding_idx = self.decoder.padding_idx
+        pad_idx = self.decoder.pad_idx
         lmx_seqs = torch.nested.as_nested_tensor(lmx_seqs)
-        lmx_seqs = lmx_seqs.to_padded_tensor(padding=padding_idx)
+        lmx_seqs = lmx_seqs.to_padded_tensor(padding=pad_idx)
         input_seqs = lmx_seqs[:, :-1]
         target_seqs = lmx_seqs[:, 1:]
 
-        lmx_attention_mask = (input_seqs == padding_idx) # (B, L_lmxmax), True means that lmx token is a pad token
+        lmx_attention_mask = (input_seqs == pad_idx) # (B, L_lmxmax), True means that lmx token is a pad token
         lmx_attention_mask = lmx_attention_mask.to(device)
         return input_seqs, target_seqs, lmx_attention_mask
 
@@ -596,10 +596,10 @@ class ViTOMR(nn.Module):
 
 # wrapper to handle the logic with cross entropy loss
 class OMRLoss(nn.Module):
-    def __init__(self, padding_idx, label_smoothing=0.0):
+    def __init__(self, pad_idx, label_smoothing=0.0):
         super().__init__()
         self.label_smoothing = label_smoothing
-        self.loss_fn = nn.CrossEntropyLoss(ignore_index=padding_idx, label_smoothing=self.label_smoothing)
+        self.loss_fn = nn.CrossEntropyLoss(ignore_index=pad_idx, label_smoothing=self.label_smoothing)
 
     def forward(self, pred, target_seqs):
         """
@@ -663,41 +663,50 @@ class GRPOViTOMR(ViTOMR):
         latent_attention_mask = latent_attention_mask.flatten(start_dim=0, end_dim=1)
         return img_latent, latent_attention_mask
 
-    # calculate cumulative rollout log probs, checking for early <eos>'s in each rollout
-    def score_rollouts(self, rollouts, rollout_token_log_probs):
+    # returns mask where True = token is part of a rollout, False = token is junk after a rollout ended
+    def create_rollout_mask(self, rollouts):
         # marks where <eos> tokens are
         eos_mask = (rollouts == self.decoder.eos_idx)
         # 0 when there's been no <eos> up to/including this point, 1 when there's been 1 up to/including this point, etc.
         seen_eos_mask = eos_mask.int().cumsum(dim=-1)
         # first <eos> is when we have an <eos> token and have only seen 1 so far (ie at that position)
         first_eos_mask = eos_mask & (seen_eos_mask == 1)
-        # only count each rollout as tokens up to and including the first <eos> (if it exists)
-        log_prob_filter = (seen_eos_mask == 0) | first_eos_mask
+        # only count each rollout as tokens up to and including the first <eos> (if it exists and if include_eos = True)
+        rollout_mask = (seen_eos_mask == 0) | first_eos_mask
+        return rollout_mask
 
-        rollout_token_log_probs = torch.where(log_prob_filter, rollout_token_log_probs, 0.0)
-        rollout_scores = rollout_token_log_probs.sum(-1)
-        return rollout_scores
+    # calculate cumulative rollout log probs
+    def score_rollouts(self, rollout_token_log_probs, rollout_mask):
+        rollout_token_log_probs = torch.where(rollout_mask, rollout_token_log_probs, 0.0)
+        rollout_probs = rollout_token_log_probs.sum(-1)
+        return rollout_probs
 
     """
     Input
-        img_latent: (B, T, E_enc) batched, padded tensor of image latents 
-        latent_attention_mask: (B, T) mask showing what embeddings in img_latent are padding
+        img_latent: (R, T, E_enc) batched, padded tensor of B image latents each duplicated across num_rollouts_per_img rollouts into 
+        B x num_rollouts_per_img = R total rows
+        latent_attention_mask: (R, T) mask showing what embeddings in img_latent are padding
     For each (T, E_enc) image latent in img_latent, create num_rollouts_per_img autoregressive rollouts according to the
-    policy defined by the model's outputted distributions, up to max_len tokens in total for each. At each autoregressive step,
-    set logits that aren't in the top_k top logits to -inf, then apply softmax with temperature, then extend the sequence according
-    to the resulting distribution 
-    Note: predictions after first train seem pretty peaky so default is to use temperature > 1 to slightly smooth things and encourage more exploration
+    policy defined by the model's outputted distributions, up to max_actions steps in total (on top of <bos> stems) for each. 
+    At each autoregressive step, set logits that aren't in the top_k top logits to -inf, then apply softmax with temperature, 
+    then extend the sequence according to the resulting distribution 
+    Note: predictions after first train seem pretty peaky so default is to use temperature > 1 to slightly smooth things and 
+    encourage more exploration.
+    Also note that this should be called with torch_no_grad by the old policy and img_latent and latent_attention_mask should
+    be the result of self.expand_img_tensors_for_rollout
     """
-    def rollout_policy(self, img_latent, latent_attention_mask, num_rollouts_per_img=4, max_actions=768, top_k=50, temperature=1.2):
-        img_latent, latent_attention_mask = self.expand_img_tensors_for_rollout(img_latent, latent_attention_mask, num_rollouts_per_img)
+    def rollout_policy(self, img_latent, latent_attention_mask, max_actions=768, top_k=50, temperature=1.2):
+        device = img_latent.device
 
         total_rollouts = img_latent.shape[0]
-        rollouts = torch.full([total_rollouts, 1], fill_value=self.decoder.bos_idx, dtype=torch.long, device=img_latent.device)
+        # for efficiency, preallocate tensors to later fill in by indexing in place
+        rollouts = torch.full([total_rollouts, max_actions + 1], fill_value=self.decoder.pad_idx, dtype=torch.long, device=device)
+        rollouts[:, 0] = torch.full([total_rollouts], fill_value=self.decoder.bos_idx)
 
-        # keep per-token log probs since we keep generating junk on sequences that end early before all are finished, so we don't want to
+        # keep per-token log metrics since we keep generating junk on sequences that end early before all are finished, so we don't want to
         # keep one cumulative total for that sequence that accumulates junk
-        rollout_token_log_probs = torch.full_like(rollouts, fill_value=0.0, dtype=torch.float)
-        for _ in range(max_actions):
+        rollout_token_log_probs = torch.zeros_like(rollouts, dtype=torch.float, device=device)
+        for t in range(1, max_actions + 1):
             logits = self.decoder.generate(rollouts, img_latent, latent_attention_mask=latent_attention_mask)
             logits = logits[:, -1, :] # (R x E_dec), next token distributions for each rollout
 
@@ -710,17 +719,49 @@ class GRPOViTOMR(ViTOMR):
             softmax_logits = logits / temperature # apply temperature for softmax
             next_token_distr = F.softmax(softmax_logits, dim=-1)
             next_token_idxs = torch.multinomial(next_token_distr, num_samples=1) # (R, 1)
-            rollouts = torch.cat([rollouts, next_token_idxs], dim=-1)
+            rollouts[:, t] = next_token_idxs.squeeze(1)
 
             token_log_probs = F.log_softmax(softmax_logits, dim=-1)
             next_token_log_probs = token_log_probs.gather(-1, index=next_token_idxs)
-            rollout_token_log_probs = torch.cat([rollout_token_log_probs, next_token_log_probs], dim=-1)
+            rollout_token_log_probs[:, t] = next_token_log_probs.squeeze(1)
 
             # end early if all seqs are done early
             finished_seqs = torch.any((rollouts == self.decoder.eos_idx), dim=-1)
             if torch.all(finished_seqs):
                 break
         
-        rollout_scores = self.score_rollouts(rollouts, rollout_token_log_probs)
+        rollout_mask = self.create_rollout_mask(rollouts)
+        rollout_probs = self.score_rollouts(rollouts, rollout_token_log_probs, rollout_mask)
 
-        return rollouts, rollout_scores
+        return rollouts, rollout_probs, rollout_mask
+
+    # right shift rollouts and prepare an attention mask for it (since it's likely a padded tensor of ragged rollouts)
+    def prepare_rollouts_for_policy_theta(self, rollouts, rollout_mask):
+        # can't directly use rollout_mask as policy theta's rollout_attention_mask because it may include raggedly-placed
+        # <eos>'s as part of rollouts which we don't want included in our right shifted inputs
+        rollout_lens = rollout_mask.sum(-1, keepdim=True)
+        right_shifted_rollout_lens = rollout_lens - 1 
+        rollout_attention_mask = torch.arange(torch.max(right_shifted_rollout_lens)).repeat([rollouts.shape[0], 1])
+        rollout_attention_mask = rollout_attention_mask >= right_shifted_rollout_lens
+        rollouts = rollouts[:, :-1]
+        # for readability/consistency, convert ignored portions of the rollout tensor to <pad> tokens
+        rollouts[rollout_attention_mask] = self.decoder.pad_idx
+        return rollouts, rollout_attention_mask
+
+# policy_theta is the policy to be used in scoring rollouts from the old_policy and updated
+def train_loop(old_policy: GRPOViTOMR, policy_theta: GRPOViTOMR):
+    num_rollouts_per_img = 4
+    grpo_epochs = 5
+
+    # rollout using old policy
+    with torch.no_grad():
+        img_latent, latent_attention_mask = old_policy.expand_img_tensors_for_rollout(img_latent, latent_attention_mask, num_rollouts_per_img)
+        rollouts, old_policy_rollout_probs, rollout_mask = old_policy.rollout_policy(img_latent, latent_attention_mask)
+
+    # reward rollouts and calculate group-normalized advantages
+
+    # calculate cumulative log-probs for rollouts to calculate ratios against old policy
+    rollouts, rollout_attention_mask = old_policy.prepare_rollouts_for_policy_theta(rollouts, rollout_mask)
+    for i in range(grpo_epochs):
+        # generate next token logits at each time step through treating rollouts like a teacher forcing step
+        logits = policy_theta.decoder(rollouts, img_latent, rollout_attention_mask, latent_attention_mask)
