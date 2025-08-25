@@ -785,11 +785,9 @@ class GRPOViTOMR(nn.Module):
     def prepare_rollouts_for_policy_theta(self, rollouts, rollout_mask):
         # can't directly use rollout_mask as policy theta's rollout_attention_mask because it may include raggedly-placed
         # <eos>'s as part of rollouts which we don't want included in our right shifted inputs
-        rollout_lens = rollout_mask.sum(-1, keepdim=True)
+        rollout_lens = rollout_mask.sum(dim=-1, keepdim=True)
         right_shifted_rollout_lens = rollout_lens - 1 
         rollout_attention_mask = torch.arange(torch.max(right_shifted_rollout_lens)).repeat([rollouts.shape[0], 1])
         rollout_attention_mask = rollout_attention_mask >= right_shifted_rollout_lens
-        rollouts = rollouts[:, :-1]
-        # convert ignored portions of the rollout tensor to <pad> tokens. Later functions will assume this was done
-        rollouts[rollout_attention_mask] = self.decoder.pad_idx
-        return rollouts, rollout_attention_mask
+        right_shifted_rollouts = rollouts[:, :-1]
+        return right_shifted_rollouts, rollout_attention_mask

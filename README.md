@@ -51,3 +51,5 @@ Define L_reward using this stuff, then add L_CE (teacher-forced CE loss using po
 
 alpha_t = 0.01, reward is 0.5 at around 70
 alpha_w = 0.2, reward is 0.5 at around 3
+gamma = 3, catastrophic mal-formedness is 3x worse than perfect well-formedness
+delta = 10, tau = 100: allow some leeway in length, length diffs past 100 are all equally (really) bad
