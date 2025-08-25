@@ -1,7 +1,8 @@
 import torch
-from acai_omr.models.models import ViTOMR
+from acai_omr.models.models import TeacherForcedViTOMR
 from acai_omr.train.omr_teacher_force_train import set_up_omr_teacher_force_train
-from acai_omr.config import LMX_EOS_TOKEN, InferenceEvent, INFERENCE_VITOMR_PATH
+from acai_omr.config import InferenceEvent, INFERENCE_VITOMR_PATH
+from acai_omr.utils.utils import stringify_lmx_seq
 from torch.amp import autocast
 from PIL import Image
 import logging
@@ -103,14 +104,6 @@ def beam_search(
     logger.info(f"INFERENCE RESULT\n{'-' * 20}\n{best_seq}\nScore: {score}")
     yield {"type": InferenceEvent.INFERENCE_FINISH.value, "payload": {"lmx_seq": best_seq, "score": score}}
 
-# convert list of tokens into a single lmx token string. Remove <bos> and <eos> tokens since Olimpic wasn't designed to handle those
-def stringify_lmx_seq(lmx_seq: list[str]):
-    if lmx_seq[-1] == LMX_EOS_TOKEN:
-        lmx_seq.pop(-1)
-    lmx_seq = lmx_seq[1: ]
-    lmx_seq = " ".join(lmx_seq)
-    return lmx_seq
-
 # lmx_seq is the sequence of decoded lmx tokens (excluding <bos> and <eos>), lmx_seq_path and xml_file_path are where the lmx and xml files should be saved to
 def delinearize(lmx_seq: str, lmx_seq_path: str, xml_file_path: str):
     logger.info(f"Delinearizing lmx sequence:\n{lmx_seq}")
@@ -184,7 +177,6 @@ if __name__ == "__main__":
 
     logger.info("Starting inference")
     lmx_seq, score = inference(vitomr, image, device, beam_width=beam_width, max_inference_len=max_inference_len)
-    lmx_seq = [vitomr.decoder.idxs_to_tokens[idx.item()] for idx in lmx_seq.squeeze(0)]
     lmx_seq = stringify_lmx_seq(lmx_seq)
     logger.info(f"Decoded inference result: {lmx_seq}\nSequence score: {score}")
 

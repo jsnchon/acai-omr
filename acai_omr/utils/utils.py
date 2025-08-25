@@ -9,8 +9,19 @@ import logging
 import math
 from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
 from acai_omr.models.models import MAELoss, OMRLoss
+from acai_omr.config import LMX_EOS_TOKEN
 import pandas as pd
 from pathlib import Path
+
+# convert a (1, T) tensor of lmx token indices into a single lmx string. This assumes the sequence starts with <bos> (doesn't
+# have to end with <eos>, eg if it was truncated)
+def stringify_lmx_seq(lmx_seq: torch.Tensor, idxs_to_tokens: dict[int, str]):
+    lmx_seq = [idxs_to_tokens[idx.item()] for idx in lmx_seq]
+    if lmx_seq[-1] == LMX_EOS_TOKEN:
+        lmx_seq.pop(-1)
+    lmx_seq = lmx_seq[1: ]
+    lmx_seq = " ".join(lmx_seq)
+    return lmx_seq
 
 # num_train_batches is the number of batches in each epoch. If passed, the scheduler will configure to be called
 # each minibatch instead of each epoch

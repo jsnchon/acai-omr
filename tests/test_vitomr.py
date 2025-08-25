@@ -383,6 +383,8 @@ def test_grpo_conversion():
     assert torch.equal(debug_teacher_forced_state_dict["encoder.fine_tune_blocks.layers.0.self_attn.in_proj_weight"], debug_grpo_vitomr.encoder.encoder_blocks.layers[1].self_attn.in_proj_weight)
     for param in debug_grpo_vitomr.encoder.parameters():
         assert not param.requires_grad
+    for param in debug_grpo_vitomr.transition_head.parameters():
+        assert not param.requires_grad
 
 def test_expand_img_tensors():
     vitomr = GRPOViTOMR(pretrained_debug_encoder, debug_mae_state_dict, debug_decoder)

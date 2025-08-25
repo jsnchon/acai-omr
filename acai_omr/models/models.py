@@ -29,7 +29,7 @@ class Encoder(nn.Module):
             norm=nn.LayerNorm(self.hidden_dim, eps=1e-6) # eps copied from ViT source code
         )
 
-    def batchify(self, x: list[torch.Tensor]):
+    def batchify(self, x: tuple[torch.Tensor]):
         seq_lens = []
         pos_embed_slices = []
         patchified_tensors = []
@@ -69,7 +69,7 @@ class Encoder(nn.Module):
         return arange >= seq_lens # (B, L_m)
 
     # x is a list of (C x H x W) image tensors
-    def forward(self, x: list[torch.Tensor]):
+    def forward(self, x: tuple[torch.Tensor]):
         x, src_key_padding_mask = self.batchify(x)
         x = self.encoder_blocks(x, src_key_padding_mask=src_key_padding_mask)
         return x, src_key_padding_mask # return mask for later use in loss calculation and cross-attention masking
@@ -451,6 +451,7 @@ class OMRDecoder(nn.Module):
         return pred
 
 class TeacherForcedViTOMR(nn.Module):
+    # create a model using parts from a pretrained MAE
     def __init__(self, omr_encoder, pretrained_mae_state_dict, omr_decoder, transition_head_dim=4096, transition_head_dropout=0.05):
         super().__init__()
         self.encoder = omr_encoder
@@ -656,6 +657,8 @@ class ScheduledSamplingViTOMR(TeacherForcedViTOMR):
         return super().forward(x)
 
 class GRPOViTOMR(nn.Module):
+    # encoder, transition_head, and decoder should be module instances matching those of a TeacherForcedViTOMR 
+    # instance. init essentially will convert that instance into a version prepared for GRPO training
     def __init__(self, encoder, transition_head, decoder, teacher_forced_state_dict):
         super().__init__()
         if isinstance(encoder, FineTuneOMREncoder):
@@ -699,7 +702,7 @@ class GRPOViTOMR(nn.Module):
         return converted_state_dict
 
     # expand latent/mask to create multiple rollouts for each example
-    def expand_img_tensors_for_rollout(self, img_latent, latent_attention_mask, num_rollouts_per_img):
+    def expand_img_latent_for_rollout(self, img_latent, latent_attention_mask, num_rollouts_per_img):
         img_latent = img_latent.unsqueeze(1)
         img_latent = img_latent.expand(-1, num_rollouts_per_img, -1, -1) # (B, num_rollouts, T, E_enc)
         img_latent = img_latent.flatten(start_dim=0, end_dim=1) # (B x num_rollouts, T, E_enc)
@@ -722,10 +725,14 @@ class GRPOViTOMR(nn.Module):
         return rollout_mask
 
     """
-    Input
+    Inputs
         img_latent: (R, T, E_enc) batched, padded tensor of B image latents each duplicated across num_rollouts_per_img rollouts into 
         B x num_rollouts_per_img = R total rows
         latent_attention_mask: (R, T) mask showing what embeddings in img_latent are padding
+    Outputs
+        rollouts: (R, T) padded tensor of rollouts. May contain junk if some sequences terminated early
+        rollout_log_probs: (R, T) tensor of the log prob for choosing the chosen token at each step of rollouts
+        rollout_mask: (R, T) tensor where True = token is part of a rollout, False = token isn't
     For each (T, E_enc) image latent in img_latent, create num_rollouts_per_img autoregressive rollouts according to the
     policy defined by the model's outputted distributions, up to max_actions steps in total (on top of <bos> stems) for each. 
     At each autoregressive step, set logits that aren't in the top_k top logits to -inf, then apply softmax with temperature, 
@@ -783,6 +790,6 @@ class GRPOViTOMR(nn.Module):
         rollout_attention_mask = torch.arange(torch.max(right_shifted_rollout_lens)).repeat([rollouts.shape[0], 1])
         rollout_attention_mask = rollout_attention_mask >= right_shifted_rollout_lens
         rollouts = rollouts[:, :-1]
-        # for readability/consistency, convert ignored portions of the rollout tensor to <pad> tokens
+        # convert ignored portions of the rollout tensor to <pad> tokens. Later functions will assume this was done
         rollouts[rollout_attention_mask] = self.decoder.pad_idx
         return rollouts, rollout_attention_mask
