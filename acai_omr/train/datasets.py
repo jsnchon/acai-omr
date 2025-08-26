@@ -165,10 +165,18 @@ class GrandStaffOMRTrainWrapper(Dataset):
         return len(self.base_dataset)
 
     def __getitem__(self, idx):
-        original_img, distorted_img, lmx = self.base_dataset[idx]
+        if self.base_dataset.include_musicxml:
+            original_img, distorted_img, lmx, musicxml = self.base_dataset[idx]
+        else:
+            original_img, distorted_img, lmx = self.base_dataset[idx]
+
         rand = torch.rand(1).item()
         if rand < self.augment_p: # augment distorted image and return it as the input image
             input_img = self.transform(distorted_img)
-            return input_img, lmx
         else: # return original image as input image
-            return original_img, lmx
+            input_img = original_img
+
+        if self.base_dataset.include_musicxml:
+            return input_img, lmx, musicxml
+        else:
+            return input_img, lmx
