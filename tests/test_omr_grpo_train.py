@@ -1,14 +1,14 @@
 import torch
-from acai_omr.train.omr_grpo_train import calc_edit_costs, calc_tedn_scores, calc_wellformedness, calc_token_f1, calc_n_gram_penalty, calc_repeat_penalty, calc_len_penalty, calc_main_grpo_objective
+from acai_omr.train.omr_grpo_train import calc_edit_costs, calc_tedn_scores, calc_wellformedness, calc_token_f1, calc_n_gram_penalty, calc_repeat_penalty, calc_len_penalty, calc_main_grpo_objective, calc_policy_theta_entropy, calc_entropy_bonus
 from acai_omr.train.omr_teacher_force_train import set_up_omr_teacher_force_train
 from acai_omr.train.datasets import OlimpicDataset
 from acai_omr.config import OLIMPIC_SYNTHETIC_ROOT_DIR
-from test_vitomr import VOCAB_LEN
 import pytest
 import time
 
 tf_vitomr, base_img_transform, base_lmx_transform, device = set_up_omr_teacher_force_train()
 pad_idx = tf_vitomr.decoder.pad_idx
+vocab_len = tf_vitomr.decoder.vocab_embedding.num_embeddings
 
 def test_calc_tedn_scores():
     dataset = OlimpicDataset(OLIMPIC_SYNTHETIC_ROOT_DIR, "samples.train.txt", base_img_transform, base_lmx_transform, include_musicxml=True)
@@ -154,7 +154,8 @@ def test_len_penalty():
 def test_calc_grpo():
     num_groups = 2
     total_rollouts = num_groups * 2
-    theta_logits = torch.full([total_rollouts, 3, VOCAB_LEN], fill_value=float("-inf"))
+
+    theta_logits = torch.full([total_rollouts, 3, vocab_len], fill_value=float("-inf"))
     theta_logits[:, :, 0] = 25
     theta_logits[:, :, tf_vitomr.decoder.eos_idx] = 25
     theta_logits[:, :, 5] = 25
@@ -183,7 +184,26 @@ def test_calc_grpo():
     expected_ratios = advantages.unsqueeze(1) * expected_ratios # multiply by advantage, average over rollout lens
     expected_ratios = expected_ratios.sum(dim=-1) / expected_lens # average over rollouts
     expected_grpo = expected_ratios.sum() / num_groups # average over groups
-    assert grpo_objective == expected_grpo
+    assert torch.equal(grpo_objective, expected_grpo)
  
+def test_calc_entropy():
+    theta_logits = torch.full([4, 4, vocab_len], fill_value=0.0)
+    theta_logits[1, :, :] = 100 # max entropies here, along with untouched logits
+    theta_logits[3, :, 0] = 100 # min entropies here
+    rollout_attention_mask = torch.full([4, 4], fill_value=False)
+    # make some rollouts ragged
+    rollout_attention_mask[0, 1] = True 
+    rollout_attention_mask[3, 2:] = True
+    avg_entropies = calc_policy_theta_entropy(theta_logits, rollout_attention_mask)
+        
+    max_entropy = torch.log(torch.tensor([vocab_len]))
+    min_entropy = 0
+
+    assert torch.allclose(avg_entropies, torch.tensor([max_entropy, max_entropy, max_entropy, min_entropy]))
+
+    entropy_bonus = calc_entropy_bonus(theta_logits, rollout_attention_mask, vocab_len)
+    expected_bonus = (1 / max_entropy) * avg_entropies.mean()
+    assert torch.allclose(expected_bonus, entropy_bonus)
+
 if __name__ == "__main__":
-    test_calc_grpo()
+    test_calc_entropy()

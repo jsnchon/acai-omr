@@ -10,3 +10,4 @@ tests/__pycache__/
 past_omr_trains/
 overfit_tests/
 misc_saved_images/
+runs/

@@ -9,7 +9,6 @@ from acai_omr.utils.utils import show_vitomr_prediction
 import pytest
 import copy
 
-VOCAB_LEN = 227
 
 debug_kwargs = {"num_layers": 2, "num_heads": 1, "hidden_dim": 10, "mlp_dim": 1}
 # the encoder structure used in the pre_train loop test
@@ -22,6 +21,8 @@ debug_teacher_forced_state_dict = torch.load(DEBUG_TEACHER_FORCED_PATH)
 debug_grpo_vitomr = GRPOViTOMR(pretrained_debug_encoder, debug_teacher_forced_vitomr.transition_head, debug_decoder, debug_teacher_forced_state_dict)
 
 _, _, base_img_transform, base_lmx_transform = set_up_omr_teacher_force_train()
+
+vocab_len = debug_teacher_forced_vitomr.decoder.vocab_embedding.num_embeddings
  
 def test_encoder_batchify():
     patch_size = 2
@@ -65,11 +66,11 @@ def test_decoder():
     decoder = OMRDecoder(MAX_LMX_SEQ_LEN, "lmx_vocab.txt", hidden_dim=hidden_dim, num_heads=1, num_layers=1, mlp_dim=1)
 
     # test vocabulary creation
-    assert decoder.vocab_embedding.weight.shape == torch.Size([VOCAB_LEN, hidden_dim])
+    assert decoder.vocab_embedding.weight.shape == torch.Size([vocab_len, hidden_dim])
 
     # test forward 
     decoder.pos_embedding = nn.Parameter((torch.ones(MAX_LMX_SEQ_LEN, dtype=torch.float) + 500).unsqueeze(-1).repeat(1, hidden_dim))
-    decoder.vocab_embedding.weight = nn.Parameter(torch.arange(VOCAB_LEN, dtype=torch.float).unsqueeze(-1).repeat(1, hidden_dim))
+    decoder.vocab_embedding.weight = nn.Parameter(torch.arange(vocab_len, dtype=torch.float).unsqueeze(-1).repeat(1, hidden_dim))
     print(f"Positional embedding grid\n{decoder.pos_embedding}\nEmbedding weights{decoder.vocab_embedding.weight}")
 
     input_seqs = [torch.tensor([0, 2, 3]), torch.tensor([0, 2, 2, 3, 4])]
@@ -86,7 +87,7 @@ def test_decoder():
 
     pred = decoder(input_seqs, img_latent, lmx_attention_mask, latent_attention_mask)
     print(f"Decoder output prediction: {pred}")
-    assert pred.shape == torch.Size([2, 5, VOCAB_LEN])
+    assert pred.shape == torch.Size([2, 5, vocab_len])
 
 def test_decoder_gradient_flow():
     hidden_dim = 10
@@ -178,14 +179,14 @@ def test_vitomr():
     loss_fn = OMRLoss(vitomr.decoder.padding_idx)
 
     encoder_before = {name: param.clone().detach() for name, param in vitomr.encoder.named_parameters()}
-    x = [(torch.rand(NUM_CHANNELS, 64, 128), torch.randint(high=VOCAB_LEN, size=(8,))),
-         (torch.rand(NUM_CHANNELS, 32, 32), torch.randint(high=VOCAB_LEN, size=(6,)))]
+    x = [(torch.rand(NUM_CHANNELS, 64, 128), torch.randint(high=vocab_len, size=(8,))),
+         (torch.rand(NUM_CHANNELS, 32, 32), torch.randint(high=vocab_len, size=(6,)))]
     pred, target_seqs = debug_teacher_forced_vitomr(x)
     loss = loss_fn(pred, target_seqs)
     loss.backward()
     optimizer.step()
     print(f"Prediction\n{pred}\nTarget sequences\n{target_seqs}")
-    assert pred.shape == torch.Size([2, 7, VOCAB_LEN])
+    assert pred.shape == torch.Size([2, 7, vocab_len])
     encoder_after = {name: param.clone().detach() for name, param in vitomr.encoder.named_parameters()}
     
     # ensure encoder is frozen
@@ -205,14 +206,14 @@ def test_partial_fine_tune():
     loss_fn = OMRLoss(vitomr.decoder.padding_idx)
 
     encoder_before = {name: param.clone() for name, param in vitomr.encoder.named_parameters()}
-    x = [(torch.rand(NUM_CHANNELS, 64, 128), torch.randint(high=VOCAB_LEN, size=(8,))),
-         (torch.rand(NUM_CHANNELS, 32, 32), torch.randint(high=VOCAB_LEN, size=(6,)))]
+    x = [(torch.rand(NUM_CHANNELS, 64, 128), torch.randint(high=vocab_len, size=(8,))),
+         (torch.rand(NUM_CHANNELS, 32, 32), torch.randint(high=vocab_len, size=(6,)))]
     pred, target_seqs = vitomr(x)
     loss = loss_fn(pred, target_seqs)
     loss.backward()
     optimizer.step()
     print(f"Prediction\n{pred}\nTarget sequences\n{target_seqs}")
-    assert pred.shape == torch.Size([2, 7, VOCAB_LEN])
+    assert pred.shape == torch.Size([2, 7, vocab_len])
     encoder_after = {name: param for name, param in vitomr.encoder.named_parameters()}
 
     # ensure encoder finetuning is working properly
@@ -296,8 +297,8 @@ def test_fine_tune_with_llrd():
     optimizer = torch.optim.SGD(param_groups)
 
     vitomr_before = {name: param.clone() for name, param in vitomr.named_parameters()}
-    x = [(torch.rand(NUM_CHANNELS, 64, 128), torch.randint(high=VOCAB_LEN, size=(8,))),
-         (torch.rand(NUM_CHANNELS, 32, 32), torch.randint(high=VOCAB_LEN, size=(6,)))]
+    x = [(torch.rand(NUM_CHANNELS, 64, 128), torch.randint(high=vocab_len, size=(8,))),
+         (torch.rand(NUM_CHANNELS, 32, 32), torch.randint(high=vocab_len, size=(6,)))]
     pred, target_seqs = vitomr(x)
     loss = loss_fn(pred, target_seqs)
     loss.backward()
@@ -322,8 +323,8 @@ def test_fine_tune_with_llrd():
     optimizer = torch.optim.SGD(param_groups)
 
     vitomr_before = {name: param.clone() for name, param in vitomr.named_parameters()}
-    x = [(torch.rand(NUM_CHANNELS, 64, 128), torch.randint(high=VOCAB_LEN, size=(8,))),
-         (torch.rand(NUM_CHANNELS, 32, 32), torch.randint(high=VOCAB_LEN, size=(6,)))]
+    x = [(torch.rand(NUM_CHANNELS, 64, 128), torch.randint(high=vocab_len, size=(8,))),
+         (torch.rand(NUM_CHANNELS, 32, 32), torch.randint(high=vocab_len, size=(6,)))]
     pred, target_seqs = vitomr(x)
     loss = loss_fn(pred, target_seqs)
     loss.backward()
@@ -343,7 +344,7 @@ def test_sample_and_mix_seqs():
     hard = False
     tf_input_seqs = torch.full([1, 5], dtype=torch.long, fill_value=10)
     tf_input_seqs[:, 0] = vitomr.decoder.bos_idx
-    tf_pred_logits = torch.full([1, 5, VOCAB_LEN], fill_value=5.0)
+    tf_pred_logits = torch.full([1, 5, vocab_len], fill_value=5.0)
     tf_pred_logits[:, :, 2] = 100.0 # set token at index 2 in vocab to have highest probability
 
     print(f"Input token indices:\n{tf_input_seqs}\nFirst pass predicted vocab distributions:\n{tf_pred_logits}")
@@ -369,8 +370,8 @@ def test_scheduled_sampling_vitomr():
     param_groups, _ = vitomr.create_fine_tune_param_groups(100.0, 50.0, 0.99)
     optimizer = torch.optim.SGD(param_groups)
 
-    x = [(torch.rand(NUM_CHANNELS, 64, 128), torch.randint(high=VOCAB_LEN, size=(8,))),
-         (torch.rand(NUM_CHANNELS, 32, 32), torch.randint(high=VOCAB_LEN, size=(6,)))]
+    x = [(torch.rand(NUM_CHANNELS, 64, 128), torch.randint(high=vocab_len, size=(8,))),
+         (torch.rand(NUM_CHANNELS, 32, 32), torch.randint(high=vocab_len, size=(6,)))]
     pred, target_seqs = vitomr.forward_train(x, 0.7, 0.5, False)
     loss = loss_fn(pred, target_seqs)
     loss.backward()
@@ -480,7 +481,7 @@ def test_rollout_policy():
     latent_mask = torch.full([img_latent.shape[0], img_latent.shape[1]], fill_value=False)
 
     num_rollouts = 3 
-    rollouts, rollout_scores, rollout_entropies = vitomr.rollout_policy(img_latent, latent_mask, num_rollouts, max_actions=10)
+    rollouts, rollout_scores, rollout_entropies = vitomr.forward_rollout_policy(img_latent, latent_mask, num_rollouts, max_actions=10)
     print(f"Rollouts:\n{rollouts}\nScores:\n{rollout_scores}\nEntropies:\n{rollout_entropies}")
 
 def test_prepare_rollouts():

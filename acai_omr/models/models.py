@@ -1,6 +1,8 @@
 import torch
-from torch import nn
 import torch.nn.functional as F
+from torch import nn
+from torch.utils.checkpoint import checkpoint_sequential
+from functools import partial
 from acai_omr.config import LMX_PAD_TOKEN, LMX_BOS_TOKEN, LMX_EOS_TOKEN
 import re
 
@@ -404,7 +406,7 @@ class OMRDecoder(nn.Module):
 
         self.unembed = nn.Linear(self.hidden_dim, self.vocab_size)
 
-    def forward(self, input_seqs, img_latent, lmx_attention_mask, latent_attention_mask, token_idxs_input=True):
+    def forward(self, input_seqs, img_latent, lmx_attention_mask, latent_attention_mask, token_idxs_input=True, checkpoint_grads=False):
         """
         input_seqs: 
             if token_idxs_input = True: (B, L_lmxmax), batch tensor of input sequences where each sequence is an 
@@ -429,7 +431,17 @@ class OMRDecoder(nn.Module):
 
         causal_mask = torch.triu(torch.ones(batch_max_lmx_seq_len, batch_max_lmx_seq_len), diagonal=1).bool() # enforce autoregressive predictions
         causal_mask = causal_mask.to(lmx_embeddings.device)
-        hidden_state = self.decoder_blocks(lmx_embeddings, memory=img_latent, tgt_mask=causal_mask, tgt_key_padding_mask=lmx_attention_mask, memory_key_padding_mask=latent_attention_mask)
+        if checkpoint_grads:
+            # checkpointing only accepts positional args, so we pass kwargs to each layer's forward using a partial storing the kwargs. We use
+            # layer-wise checkpointing to ensure we only ever are storing the intermediate activations for one decoder layer at a time (biggest savings)
+            decoder_blocks = [
+                partial(decoder_block, memory=img_latent, tgt_mask=causal_mask, tgt_key_padding_mask=lmx_attention_mask, memory_key_padding_mask=latent_attention_mask)
+                for decoder_block in list(self.decoder_blocks.layers)
+            ]
+            hidden_state = checkpoint_sequential(decoder_blocks, segments=self.decoder_blocks.num_layers, input=lmx_embeddings, use_reentrant=False)
+            hidden_state = self.decoder_blocks.norm(hidden_state)
+        else:
+            hidden_state = self.decoder_blocks(lmx_embeddings, memory=img_latent, tgt_mask=causal_mask, tgt_key_padding_mask=lmx_attention_mask, memory_key_padding_mask=latent_attention_mask)
 
         pred = self.unembed(hidden_state)
         return pred #(B, L_lmxmax, vocab_size)
@@ -449,6 +461,18 @@ class OMRDecoder(nn.Module):
         hidden_state = self.decoder_blocks(lmx_embeddings, memory=img_latent, memory_key_padding_mask=latent_attention_mask)
         pred = self.unembed(hidden_state)
         return pred
+
+# lmx_seqs is a list of int tensors containing the unmodified lmx sequences associated with the input images, # in lmx token indices
+def batchify_and_split_lmx_seqs(lmx_seqs: tuple[torch.Tensor], pad_idx, device):
+    # split lmx sequences into right-shifted inputs and left-shifted targets
+    lmx_seqs = torch.nested.as_nested_tensor(lmx_seqs)
+    lmx_seqs = lmx_seqs.to_padded_tensor(padding=pad_idx)
+    input_seqs = lmx_seqs[:, :-1]
+    target_seqs = lmx_seqs[:, 1:]
+
+    lmx_attention_mask = (input_seqs == pad_idx) # (B, L_lmxmax), True means that lmx token is a pad token
+    lmx_attention_mask = lmx_attention_mask.to(device)
+    return input_seqs, target_seqs, lmx_attention_mask
 
 class TeacherForcedViTOMR(nn.Module):
     # create a model using parts from a pretrained MAE
@@ -517,19 +541,6 @@ class TeacherForcedViTOMR(nn.Module):
         
         return omr_encoder_state_dict
    
-    # lmx_seqs is a list of int tensors containing the unmodified lmx sequences associated with the input images,
-    # in lmx token indices
-    def batchify_and_split_lmx_seqs(self, lmx_seqs: tuple[torch.Tensor], device):
-        # split lmx sequences into right-shifted inputs and left-shifted targets
-        pad_idx = self.decoder.pad_idx
-        lmx_seqs = torch.nested.as_nested_tensor(lmx_seqs)
-        lmx_seqs = lmx_seqs.to_padded_tensor(padding=pad_idx)
-        input_seqs = lmx_seqs[:, :-1]
-        target_seqs = lmx_seqs[:, 1:]
-
-        lmx_attention_mask = (input_seqs == pad_idx) # (B, L_lmxmax), True means that lmx token is a pad token
-        lmx_attention_mask = lmx_attention_mask.to(device)
-        return input_seqs, target_seqs, lmx_attention_mask
 
     """
     Input
@@ -600,7 +611,7 @@ class TeacherForcedViTOMR(nn.Module):
         return param_groups, layer_lrs
 
 # wrapper to handle the logic with cross entropy loss
-class OMRLoss(nn.Module):
+class OMRCELoss(nn.Module):
     def __init__(self, pad_idx, label_smoothing=0.0):
         super().__init__()
         self.label_smoothing = label_smoothing
@@ -642,7 +653,7 @@ class ScheduledSamplingViTOMR(TeacherForcedViTOMR):
         img_latent = self.transition_head(img_latent)
         device = img_latent.device
 
-        tf_input_seqs, target_seqs, lmx_attention_mask = self.batchify_and_split_lmx_seqs(lmx_seqs, device)
+        tf_input_seqs, target_seqs, lmx_attention_mask = batchify_and_split_lmx_seqs(lmx_seqs, self.decoder.pad_idx, device)
 
         # first decoder pass: generate logits from completely gold inputs
         tf_pred_logits = self.decoder(tf_input_seqs, img_latent, lmx_attention_mask, latent_attention_mask) # (B, T, V)
@@ -702,13 +713,13 @@ class GRPOViTOMR(nn.Module):
         return converted_state_dict
 
     # expand latent/mask to create multiple rollouts for each example
-    def expand_img_latent_for_rollout(self, img_latent, latent_attention_mask, num_rollouts_per_img):
+    def expand_img_latent_for_rollout(self, img_latent, latent_attention_mask, group_size):
         img_latent = img_latent.unsqueeze(1)
-        img_latent = img_latent.expand(-1, num_rollouts_per_img, -1, -1) # (B, num_rollouts, T, E_enc)
-        img_latent = img_latent.flatten(start_dim=0, end_dim=1) # (B x num_rollouts, T, E_enc)
+        img_latent = img_latent.expand(-1, group_size, -1, -1) # (B, group_size, T, E_enc)
+        img_latent = img_latent.flatten(start_dim=0, end_dim=1) # (B x group_size, T, E_enc)
 
         latent_attention_mask = latent_attention_mask.unsqueeze(1)
-        latent_attention_mask = latent_attention_mask.expand(-1, num_rollouts_per_img, -1)
+        latent_attention_mask = latent_attention_mask.expand(-1, group_size, -1)
         latent_attention_mask = latent_attention_mask.flatten(start_dim=0, end_dim=1)
         return img_latent, latent_attention_mask
 
@@ -726,14 +737,14 @@ class GRPOViTOMR(nn.Module):
 
     """
     Inputs
-        img_latent: (R, T, E_enc) batched, padded tensor of B image latents each duplicated across num_rollouts_per_img rollouts into 
-        B x num_rollouts_per_img = R total rows
+        img_latent: (R, T, E_enc) batched, padded tensor of B image latents each duplicated across group_size rollouts into 
+        B x group_size = R total rows
         latent_attention_mask: (R, T) mask showing what embeddings in img_latent are padding
     Outputs
         rollouts: (R, T) padded tensor of rollouts. May contain junk if some sequences terminated early
         rollout_log_probs: (R, T) tensor of the log prob for choosing the chosen token at each step of rollouts
         rollout_mask: (R, T) tensor where True = token is part of a rollout, False = token isn't
-    For each (T, E_enc) image latent in img_latent, create num_rollouts_per_img autoregressive rollouts according to the
+    For each (T, E_enc) image latent in img_latent, create group_size autoregressive rollouts according to the
     policy defined by the model's outputted distributions, up to max_actions steps in total (on top of <bos> stems) for each. 
     At each autoregressive step, set logits that aren't in the top_k top logits to -inf, then apply softmax with temperature, 
     then extend the sequence according to the resulting distribution 
@@ -742,7 +753,7 @@ class GRPOViTOMR(nn.Module):
     Also note that this should be called with torch_no_grad by the old policy and img_latent and latent_attention_mask should
     be the result of self.expand_img_tensors_for_rollout
     """
-    def rollout_policy(self, img_latent, latent_attention_mask, max_actions=768, top_k=50, temperature=1.2):
+    def forward_rollout_policy(self, img_latent, latent_attention_mask, max_actions=768, top_k=50, temperature=1.2):
         device = img_latent.device
 
         total_rollouts = img_latent.shape[0]
@@ -791,3 +802,12 @@ class GRPOViTOMR(nn.Module):
         rollout_attention_mask = rollout_attention_mask >= right_shifted_rollout_lens
         right_shifted_rollouts = rollouts[:, :-1]
         return right_shifted_rollouts, rollout_attention_mask
+
+    # img_latent and latent_attention_mask should be the unexpanded results of an encoder pass so we can
+    # avoid unnecessarily recalculating them here. lmx_seqs should be the targets we're running the teacher forced
+    # pass on (again, this hasn't been expanded so we can save on computation)
+    def forward_teacher_forced(self, img_latent, latent_attention_mask, lmx_seqs: list[torch.Tensor], checkpoint_grads):
+        input_seqs, target_seqs, lmx_attention_mask = batchify_and_split_lmx_seqs(lmx_seqs, self.decoder.pad_idx, img_latent.device)
+
+        pred = self.decoder(input_seqs, img_latent, lmx_attention_mask, latent_attention_mask, checkpoint_grads=checkpoint_grads)
+        return pred, target_seqs 

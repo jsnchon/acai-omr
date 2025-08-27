@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from pathlib import Path
-from acai_omr.models.models import FineTuneOMREncoder, OMRDecoder, ScheduledSamplingViTOMR, OMRLoss
+from acai_omr.models.models import FineTuneOMREncoder, OMRDecoder, ScheduledSamplingViTOMR, OMRCELoss
 from acai_omr.train.datasets import GrandStaffLMXDataset, GrandStaffOMRTrainWrapper, OlimpicDataset
 from acai_omr.config import GRAND_STAFF_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, LMX_BOS_TOKEN, LMX_EOS_TOKEN
 from acai_omr.utils.utils import DynamicResize, cosine_anneal_with_warmup, ragged_collate_fn, save_teacher_force_training_stats
@@ -165,7 +165,7 @@ def omr_teacher_force_train(vitomr, train_dataset, validation_dataset, device):
     scheduler = cosine_anneal_with_warmup(optimizer, WARMUP_EPOCHS, EPOCHS, MIN_LR, num_train_batches=num_batches)
     
     print(f"Using label smoothing of {LABEL_SMOOTHING} for cross entropy loss")
-    loss_fn = OMRLoss(vitomr.decoder.pad_idx, label_smoothing=LABEL_SMOOTHING)
+    loss_fn = OMRCELoss(vitomr.decoder.pad_idx, label_smoothing=LABEL_SMOOTHING)
 
     print(f"""Teacher forcing settings\n{'-' * 30}\nInitial teacher forcing per-token probability: {INITIAL_TEACHER_FORCING_PROB}
 Minimum teacher forcing probability: {MIN_TEACHER_FORCING_PROB}\nInitial Gumbel-Softmax tau: {INITIAL_TAU}

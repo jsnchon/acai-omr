@@ -8,10 +8,75 @@ import torchvision.transforms.v2.functional as F
 import logging
 import math
 from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
-from acai_omr.models.models import MAELoss, OMRLoss
+from acai_omr.models.models import MAELoss, OMRCELoss
 from acai_omr.config import LMX_EOS_TOKEN
 import pandas as pd
 from pathlib import Path
+
+class GRPOLogger:
+    def __init__(self, writer, update_epochs, config_log_interval=50):
+        self.writer = writer
+        self.update_epochs = update_epochs # number of update epochs per minibatch. Needed for calculating total numbers of inner steps
+        self.config_log_interval = config_log_interval
+
+    # only log what's changing over time
+    def log_configs(self, grpo_config, batch_step):
+        if (batch_step + 1) % self.config_log_interval != 0:
+            return
+        rollout_config, reward_config, loss_config, _ = grpo_config.rollout_config.get_configs()
+        prefix = "train/config"
+
+        self.writer.add_scalars(f"{prefix}max_actions", rollout_config.max_actions, batch_step)
+        self.writer.add_scalars(f"{prefix}top_k", rollout_config.top_k, batch_step)
+        self.writer.add_scalars(f"{prefix}temperature", rollout_config.temperature, batch_step)
+        self.writer.add_scalars(f"{prefix}lambda_len", reward_config.lambda_len, batch_step)
+        self.writer.add_scalars(f"{prefix}entropy_beta", loss_config.entropy_beta, batch_step)
+        self.writer.add_scalars(f"{prefix}lambda_ce", loss_config.lambda_ce, batch_step)
+
+    def log_raw_reward_components(self, reward_components, raw_entropy_bonus, batch_step, train=True):
+        if train:
+            prefix = f"train/reward/raw"
+        else:
+            prefix = f"validation/reward/raw"
+        self.writer.add_scalar(f"{prefix}/tedn", reward_components.tedn_scores.mean().item(), batch_step)
+        self.writer.add_scalar(f"{prefix}/wellformedness", reward_components.wellformedness_scores.mean().item(), batch_step)
+        self.writer.add_scalar(f"{prefix}/f1_score", reward_components.f1_scores.mean().item(), batch_step)
+        self.writer.add_scalar(f"{prefix}/repeat_penalty", reward_components.repeat_penalty.mean().item(), batch_step)
+        self.writer.add_scalar(f"{prefix}/len_penalty", reward_components.len_penalty.mean().item(), batch_step)
+        self.writer.add_scalar(f"{prefix}/entropy_bonus", raw_entropy_bonus.item(), batch_step)
+    
+    def log_group_rewards(self, group_rewards, batch_step, train=True):
+        if train:
+            prefix = f"train/reward/group"
+        else:
+            prefix = f"validation/reward/group"
+        self.writer.add_scalar(f"{prefix}/mean", group_rewards.mean().item(), batch_step)
+        self.writer.add_scalar(f"{prefix}/std", group_rewards.std().item(), batch_step)
+        self.writer.add_scalar(f"{prefix}/min", group_rewards.min().item(), batch_step)
+        self.writer.add_scalar(f"{prefix}/max", group_rewards.max().item(), batch_step)
+
+    def log_group_advantages(self, advantages, batch_step, train=True):
+        if train:
+            prefix = f"train/reward/advantage"
+        else:
+            prefix = f"validation/reward/advantage"
+        self.writer.add_scalar(f"{prefix}/min", advantages.min().item(), batch_step)
+        self.writer.add_scalar(f"{prefix}/max", advantages.max().item(), batch_step)
+
+    def log_reward(self, reward, batch_step, update_epoch, train=True):
+        if train:
+            prefix = f"train/reward"
+        else:
+            prefix = f"validation/reward"
+        self.writer.add_scalar(f"{prefix}/overall_reward", reward.item(), batch_step * self.update_epochs + update_epoch)
+
+    def log_loss(self, overall_loss, ce_loss, batch_step, update_epoch, train=True):
+        if train:
+            prefix = f"train/loss"
+        else:
+            prefix = f"validation/loss"
+        self.writer.add_scalar(f"{prefix}/overall", overall_loss.item(), batch_step * self.update_epochs + update_epoch)
+        self.writer.add_scalar(f"{prefix}/ce", ce_loss.item(), batch_step + update_epoch)
 
 # convert a (1, T) tensor of lmx token indices into a single lmx string. This assumes the sequence starts with <bos> (doesn't
 # have to end with <eos>, eg if it was truncated)
@@ -232,7 +297,7 @@ def show_vitomr_prediction(vitomr, ex, sample_save_dir: str):
     sample_save_dir = Path(sample_save_dir)
     sample_save_dir.mkdir(exist_ok=True)
 
-    loss_fn = OMRLoss(pad_idx=vitomr.decoder.pad_idx, label_smoothing=0.0)
+    loss_fn = OMRCELoss(pad_idx=vitomr.decoder.pad_idx, label_smoothing=0.0)
     vitomr.eval()
     with torch.no_grad():
         pred, target_seq = vitomr([ex])
