@@ -178,7 +178,7 @@ def omr_teacher_force_train(vitomr, train_dataset, validation_dataset, device):
 
     train_stats_df = pd.DataFrame(columns=["Train loss", "Validation loss", "Base lr at start", 
                                            "Fine-tune lr at start", "Teacher forcing probability", "Gumbel-softmax tau", 
-                                           "Using hard sampling"]) # list of EpochStats instances
+                                           "Using hard sampling"])
 
     print(f"OMR training for {EPOCHS} epochs. Checkpointing every {CHECKPOINT_FREQ} epochs")
     for i in range(EPOCHS):
@@ -235,7 +235,7 @@ def set_up_omr_teacher_force_train():
         pretrained_mae_state_dict = torch.load(PRETRAINED_MAE_STATE_DICT_PATH)
 
     print(f"Loaded pretrained mae state dict from {PRETRAINED_MAE_STATE_DICT_PATH}")
-    print("Setting up ViTOMR model")
+    print("Setting up ViTOMR model\n")
     vitomr = ScheduledSamplingViTOMR(encoder, pretrained_mae_state_dict, decoder, transition_head_dropout=TRANSITION_HEAD_DROPOUT)
     vitomr = vitomr.to(device)
 

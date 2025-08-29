@@ -58,6 +58,15 @@ class RewardComponents:
             repeat_penalty = self.repeat_penalty.mean().item(),
             len_penalty = self.len_penalty.mean().item(),
         )
+
+    def to_dict(self):
+        return {
+            "tedn_scores": self.tedn_scores,
+            "wellformedness_scores" : self.wellformedness_scores,
+            "f1_scores" : self.f1_scores,
+            "repeat_penalty" : self.repeat_penalty,
+            "len_penalty" : self.len_penalty,
+        }
     
 @dataclass
 class RewardConfig:
@@ -97,86 +106,86 @@ class GRPOConfig:
 
 @dataclass
 class StepCounter:
-    outer_step: int # total number of outer loop steps (equal to amount of minibatches processed)
-    optim_step: int # total number of inner grpo update steps
+    # we log at many different granularities, but keep track of one global step to align everything. Each
+    # optimizer step is a global step
+    global_step: int
 
 class GRPOLogger:
-    def __init__(self, writer):
+    def __init__(self, writer, epoch_stats_df):
         self.writer = writer
+        self.epoch_stats_df = epoch_stats_df
 
     # only log what's changing over time
-    def log_configs(self, grpo_config, outer_step):
+    def log_configs(self, grpo_config, global_step):
         rollout_config, reward_config, loss_config, _ = grpo_config.get_configs()
         prefix = "train/config"
 
-        self.writer.add_scalar(f"{prefix}/max_actions", rollout_config.max_actions, outer_step)
-        self.writer.add_scalar(f"{prefix}/top_k", rollout_config.top_k, outer_step)
-        self.writer.add_scalar(f"{prefix}/temperature", rollout_config.temperature, outer_step)
-        self.writer.add_scalar(f"{prefix}/lambda_len", reward_config.lambda_len, outer_step)
-        self.writer.add_scalar(f"{prefix}/entropy_beta", loss_config.entropy_beta, outer_step)
-        self.writer.add_scalar(f"{prefix}/lambda_ce", loss_config.lambda_ce, outer_step)
+        self.writer.add_scalar(f"{prefix}/max_actions", rollout_config.max_actions, global_step)
+        self.writer.add_scalar(f"{prefix}/top_k", rollout_config.top_k, global_step)
+        self.writer.add_scalar(f"{prefix}/temperature", rollout_config.temperature, global_step)
+        self.writer.add_scalar(f"{prefix}/lambda_len", reward_config.lambda_len, global_step)
+        self.writer.add_scalar(f"{prefix}/entropy_beta", loss_config.entropy_beta, global_step)
+        self.writer.add_scalar(f"{prefix}/lambda_ce", loss_config.lambda_ce, global_step)
 
-    def log_raw_reward_components(self, reward_components, outer_step, train=True):
-        if train:
-            prefix = f"train/reward/raw/components"
-        else:
-            prefix = f"validation/reward/raw/components"
+    def log_raw_reward_components(self, reward_components, global_step):
+        prefix = f"train/reward/raw/components"
         
-        components_dict = {
-            "tedn": reward_components.tedn_scores.mean().item(),
-            "wellformedness": reward_components.wellformedness_scores.mean().item(),
-            "f1_score": reward_components.f1_scores.mean().item(),
-            "repeat_penalty": reward_components.repeat_penalty.mean().item(),
-            "len_penalty": reward_components.len_penalty.mean().item() 
-        }
-        self.writer.add_scalars(prefix, components_dict, outer_step)
-   
-    def log_raw_reward_stats(self, raw_group_rewards, outer_step, train=True):
-        if train:
-            prefix = f"train/reward/raw/overall"
-        else:
-            prefix = f"validation/reward/raw/overall"
+        reward_components = reward_components.avg_over_rollouts()
+        components_dict = reward_components.to_dict()
+        self.writer.add_scalars(prefix, components_dict, global_step)
+  
+    def log_raw_reward_stats(self, raw_group_rewards, global_step):
+        prefix = f"train/reward/raw/overall"
         # taking stats over whole tensor gives raw reward stats over all rollouts
-        self.writer.add_scalar(f"{prefix}/mean", raw_group_rewards.mean().item(), outer_step)
-        self.writer.add_scalar(f"{prefix}/std", raw_group_rewards.std().item(), outer_step)
-        self.writer.add_scalar(f"{prefix}/min", raw_group_rewards.min().item(), outer_step)
-        self.writer.add_scalar(f"{prefix}/max", raw_group_rewards.max().item(), outer_step)
+        self.writer.add_scalar(f"{prefix}/mean", raw_group_rewards.mean().item(), global_step)
+        self.writer.add_scalar(f"{prefix}/std", raw_group_rewards.std().item(), global_step)
+        self.writer.add_scalar(f"{prefix}/min", raw_group_rewards.min().item(), global_step)
+        self.writer.add_scalar(f"{prefix}/max", raw_group_rewards.max().item(), global_step)
 
-    def log_group_advantages(self, advantages, outer_step, train=True):
-        if train:
-            prefix = f"train/reward/advantage"
-        else:
-            prefix = f"validation/reward/advantage"
-        self.writer.add_scalar(f"{prefix}/min", advantages.min().item(), outer_step)
-        self.writer.add_scalar(f"{prefix}/max", advantages.max().item(), outer_step)
+    def log_group_advantages(self, advantages, global_step):
+        prefix = f"train/reward/advantage"
 
-    def log_grpo_objective(self, grpo_objective, optim_step, train=True):
-        if train:
-            prefix = f"train/objective/components"
-        else:
-            prefix = f"validation/objective/components"
-        self.writer.add_scalar(f"{prefix}/grpo", grpo_objective.item(), optim_step)
+        self.writer.add_scalar(f"{prefix}/min", advantages.min().item(), global_step)
+        self.writer.add_scalar(f"{prefix}/max", advantages.max().item(), global_step)
 
-    def log_entropy_bonus(self, raw_entropy_bonus, optim_step, train=True):
-        if train:
-            prefix = f"train/objective/components"
-        else:
-            prefix = f"validation/objective/components"
-        self.writer.add_scalar(f"{prefix}/entropy_bonus", raw_entropy_bonus.item(), optim_step)
+    def log_raw_objective_components(self, grpo_objective, entropy_bonus, ce_loss, global_step):
+        prefix = f"train/objective/raw/components"
 
-    def log_ce_loss(self, ce_loss, optim_step, train=True):
-        if train:
-            prefix = f"train/objective/components"
-        else:
-            prefix = f"validation/objective/components"
-        self.writer.add_scalar(f"{prefix}/ce_loss", ce_loss.item(), optim_step)
+        self.writer.add_scalar(f"{prefix}/grpo", grpo_objective.item(), global_step)
+        self.writer.add_scalar(f"{prefix}/entropy_bonus", entropy_bonus.item(), global_step)
+        self.writer.add_scalar(f"{prefix}/ce_loss", ce_loss.item(), global_step)
 
-    def log_overall_loss(self, overall_loss, optim_step, train=True):
-        if train:
-            prefix = f"train/loss"
-        else:
-            prefix = f"validation/loss"
-        self.writer.add_scalar(f"{prefix}/overall", overall_loss.item(), optim_step)
+    def log_overall_loss(self, overall_loss, global_step):
+        self.writer.add_scalar("train/loss", overall_loss.item(), global_step)
+
+    def log_mini_validation_stats(self, mini_val_reward, mini_val_reward_components, mini_val_ce_loss, global_step):
+        prefix = f"mini_val"
+
+        print(mini_val_reward, mini_val_ce_loss, global_step)
+        self.writer.add_scalar(f"{prefix}/reward", mini_val_reward, global_step)
+        components_dict = mini_val_reward_components.to_dict()
+        self.writer.add_scalars(f"{prefix}/reward/components", components_dict, global_step)
+        self.writer.add_scalar(f"{prefix}/ce_loss", mini_val_ce_loss, global_step)
+
+    def log_epoch_level_stats(self, epoch_stats: dict, global_step):
+        prefix = f"epoch"
+
+        self.writer.add_scalar(f"{prefix}/train/loss/overall", epoch_stats["avg_train_overall_loss"], global_step)
+        self.writer.add_scalar(f"{prefix}/train/reward", epoch_stats["avg_train_reward"], global_step)
+        self.writer.add_scalars(f"{prefix}/train/reward/components", epoch_stats["avg_train_reward_components"].to_dict(), global_step)
+        self.writer.add_scalar(f"{prefix}/train/loss/ce", epoch_stats["avg_train_ce_loss"], global_step)
+
+        self.writer.add_scalar(f"{prefix}/val/reward", epoch_stats["full_val_reward"], global_step)
+        self.writer.add_scalars(f"{prefix}/val/reward/components", epoch_stats["full_val_reward_components"].to_dict(), global_step)
+        self.writer.add_scalar(f"{prefix}/val/loss/ce", epoch_stats["full_val_ce_loss"], global_step)
+
+    def update_epoch_stats_df(self, epoch_stats: dict, epoch: int):
+        self.epoch_stats_df.loc[epoch] = epoch_stats
+        print(self.epoch_stats_df)
+
+    def flush(self, csv_path):
+        self.writer.flush()
+        self.epoch_stats_df.to_csv(csv_path)
 
     # epoch-level metrics from train, mini validation, and full validation. Tbh there should be no need for modes since only this
     # function takes data from all modes, the rest are so granular only train uses them
