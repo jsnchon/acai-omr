@@ -129,6 +129,9 @@ class PreparedDataset(Dataset):
 # can either specify the synthetic or scanned dataset
 class OlimpicDataset(LMXDataset):
     def __getitem__(self, idx):
+
+        if isinstance(idx, (list, torch.Tensor)):
+            return [self.__getitem__(int(i)) for i in idx]
         img_path = self.root_dir / (self.id_df.iat[idx, 0] + ".png")
         img = Image.open(img_path).convert("L")
 

@@ -559,7 +559,7 @@ class TeacherForcedViTOMR(nn.Module):
         img_latent = self.transition_head(img_latent)
 
         # prepare lmx sequences and mask
-        input_seqs, target_seqs, lmx_attention_mask = self.batchify_and_split_lmx_seqs(lmx_seqs, img_latent.device)
+        input_seqs, target_seqs, lmx_attention_mask = batchify_and_split_lmx_seqs(lmx_seqs, self.decoder.pad_idx, img_latent.device)
 
         # decode lmx with cross-attention to image latent
         pred = self.decoder(input_seqs, img_latent, lmx_attention_mask, latent_attention_mask)
@@ -740,6 +740,8 @@ class GRPOViTOMR(nn.Module):
         img_latent: (R, T, E_enc) batched, padded tensor of B image latents each duplicated across group_size rollouts into 
         B x group_size = R total rows
         latent_attention_mask: (R, T) mask showing what embeddings in img_latent are padding
+        Note that this can also be used for batched evaluation/inference: simply pass in an unexpanded img_latent and mask to get one
+        rollout per example
     Outputs
         rollouts: (R, T) padded tensor of rollouts. May contain junk if some sequences terminated early
         rollout_log_probs: (R, T) tensor of the log prob for choosing the chosen token at each step of rollouts
@@ -789,6 +791,8 @@ class GRPOViTOMR(nn.Module):
                 break
         
         rollout_mask = self.create_rollout_mask(rollouts)
+        # explicitly set tokens that aren't part of rollouts to <pad>. Later functions assume this is the case
+        rollouts = rollouts.masked_fill(~rollout_mask, self.decoder.pad_idx)
 
         return rollouts, rollout_log_probs, rollout_mask
 
@@ -811,3 +815,10 @@ class GRPOViTOMR(nn.Module):
 
         pred = self.decoder(input_seqs, img_latent, lmx_attention_mask, latent_attention_mask, checkpoint_grads=checkpoint_grads)
         return pred, target_seqs 
+
+    # wrapper that takes a batch of image tensors, encodes them, and runs 1 rollout on each example. Should be used for 
+    # evaluation/inference, ie wrapped in no_grad()
+    def batch_policy_inference(self, imgs: list[torch.Tensor], max_actions, top_k, temperature):
+        img_latent, latent_attention_mask = self.encoder(imgs)
+        rollouts, rollout_log_probs, rollout_mask = self.forward_rollout_policy(img_latent, latent_attention_mask, max_actions, top_k, temperature)
+        return rollouts, rollout_log_probs, rollout_mask

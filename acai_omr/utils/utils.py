@@ -12,71 +12,176 @@ from acai_omr.models.models import MAELoss, OMRCELoss
 from acai_omr.config import LMX_EOS_TOKEN
 import pandas as pd
 from pathlib import Path
+from dataclasses import dataclass
+
+# GRPO stuff
+@dataclass
+class RolloutConfig:
+    group_size: int
+    max_actions: int
+    top_k: int
+    temperature: float
+
+@dataclass
+class RewardComponents:
+    tedn_scores: torch.Tensor | float
+    wellformedness_scores: torch.Tensor | float
+    f1_scores: torch.Tensor | float
+    repeat_penalty: torch.Tensor | float
+    len_penalty: torch.Tensor | float
+
+    def __add__(self, other):
+        return RewardComponents(
+            self.tedn_scores + other.tedn_scores,
+            self.wellformedness_scores + other.wellformedness_scores,
+            self.f1_scores + other.f1_scores,
+            self.repeat_penalty + other.repeat_penalty,
+            self.len_penalty + other.len_penalty,
+        )
+
+    def __truediv__(self, divisor):
+        return RewardComponents(
+            self.tedn_scores / divisor,
+            self.wellformedness_scores / divisor,
+            self.f1_scores / divisor,
+            self.repeat_penalty / divisor,
+            self.len_penalty / divisor,
+        )
+
+    # if instance variables hold (R, ) tensors, each of those tensors is averaged to get components
+    # averaged across all rollouts into singular floats
+    def avg_over_rollouts(self):
+        return RewardComponents(
+            tedn_scores = self.tedn_scores.mean().item(),
+            wellformedness_scores = self.wellformedness_scores.mean().item(),
+            f1_scores = self.f1_scores.mean().item(),
+            repeat_penalty = self.repeat_penalty.mean().item(),
+            len_penalty = self.len_penalty.mean().item(),
+        )
+    
+@dataclass
+class RewardConfig:
+    lambda_tedn: float
+    lambda_well_formed: float
+    lambda_f1: float
+    lambda_repeat: float
+    lambda_len: float
+    alpha_tedn: float
+    alpha_well_formed: float
+    gamma: float
+    delta: int
+    tau: int
+
+@dataclass
+class LossConfig:
+    entropy_beta: float
+    lambda_ce: float
+
+@dataclass
+class UpdateConfig:
+    epsilon: float
+    update_epochs: int
+    max_grad_norm: float
+
+@dataclass
+class GRPOConfig:
+    rollout_config: RolloutConfig
+    reward_config: RewardConfig
+    loss_config: LossConfig
+    update_config: UpdateConfig
+    mini_validation_freq: int
+    checkpoint_freq: int
+
+    def get_configs(self):
+        return self.rollout_config, self.reward_config, self.loss_config, self.update_config
+
+@dataclass
+class StepCounter:
+    outer_step: int # total number of outer loop steps (equal to amount of minibatches processed)
+    optim_step: int # total number of inner grpo update steps
 
 class GRPOLogger:
-    def __init__(self, writer, update_epochs, config_log_interval=50):
+    def __init__(self, writer):
         self.writer = writer
-        self.update_epochs = update_epochs # number of update epochs per minibatch. Needed for calculating total numbers of inner steps
-        self.config_log_interval = config_log_interval
 
     # only log what's changing over time
-    def log_configs(self, grpo_config, batch_step):
-        if (batch_step + 1) % self.config_log_interval != 0:
-            return
-        rollout_config, reward_config, loss_config, _ = grpo_config.rollout_config.get_configs()
+    def log_configs(self, grpo_config, outer_step):
+        rollout_config, reward_config, loss_config, _ = grpo_config.get_configs()
         prefix = "train/config"
 
-        self.writer.add_scalars(f"{prefix}max_actions", rollout_config.max_actions, batch_step)
-        self.writer.add_scalars(f"{prefix}top_k", rollout_config.top_k, batch_step)
-        self.writer.add_scalars(f"{prefix}temperature", rollout_config.temperature, batch_step)
-        self.writer.add_scalars(f"{prefix}lambda_len", reward_config.lambda_len, batch_step)
-        self.writer.add_scalars(f"{prefix}entropy_beta", loss_config.entropy_beta, batch_step)
-        self.writer.add_scalars(f"{prefix}lambda_ce", loss_config.lambda_ce, batch_step)
+        self.writer.add_scalar(f"{prefix}/max_actions", rollout_config.max_actions, outer_step)
+        self.writer.add_scalar(f"{prefix}/top_k", rollout_config.top_k, outer_step)
+        self.writer.add_scalar(f"{prefix}/temperature", rollout_config.temperature, outer_step)
+        self.writer.add_scalar(f"{prefix}/lambda_len", reward_config.lambda_len, outer_step)
+        self.writer.add_scalar(f"{prefix}/entropy_beta", loss_config.entropy_beta, outer_step)
+        self.writer.add_scalar(f"{prefix}/lambda_ce", loss_config.lambda_ce, outer_step)
 
-    def log_raw_reward_components(self, reward_components, raw_entropy_bonus, batch_step, train=True):
+    def log_raw_reward_components(self, reward_components, outer_step, train=True):
         if train:
-            prefix = f"train/reward/raw"
+            prefix = f"train/reward/raw/components"
         else:
-            prefix = f"validation/reward/raw"
-        self.writer.add_scalar(f"{prefix}/tedn", reward_components.tedn_scores.mean().item(), batch_step)
-        self.writer.add_scalar(f"{prefix}/wellformedness", reward_components.wellformedness_scores.mean().item(), batch_step)
-        self.writer.add_scalar(f"{prefix}/f1_score", reward_components.f1_scores.mean().item(), batch_step)
-        self.writer.add_scalar(f"{prefix}/repeat_penalty", reward_components.repeat_penalty.mean().item(), batch_step)
-        self.writer.add_scalar(f"{prefix}/len_penalty", reward_components.len_penalty.mean().item(), batch_step)
-        self.writer.add_scalar(f"{prefix}/entropy_bonus", raw_entropy_bonus.item(), batch_step)
-    
-    def log_group_rewards(self, group_rewards, batch_step, train=True):
+            prefix = f"validation/reward/raw/components"
+        
+        components_dict = {
+            "tedn": reward_components.tedn_scores.mean().item(),
+            "wellformedness": reward_components.wellformedness_scores.mean().item(),
+            "f1_score": reward_components.f1_scores.mean().item(),
+            "repeat_penalty": reward_components.repeat_penalty.mean().item(),
+            "len_penalty": reward_components.len_penalty.mean().item() 
+        }
+        self.writer.add_scalars(prefix, components_dict, outer_step)
+   
+    def log_raw_reward_stats(self, raw_group_rewards, outer_step, train=True):
         if train:
-            prefix = f"train/reward/group"
+            prefix = f"train/reward/raw/overall"
         else:
-            prefix = f"validation/reward/group"
-        self.writer.add_scalar(f"{prefix}/mean", group_rewards.mean().item(), batch_step)
-        self.writer.add_scalar(f"{prefix}/std", group_rewards.std().item(), batch_step)
-        self.writer.add_scalar(f"{prefix}/min", group_rewards.min().item(), batch_step)
-        self.writer.add_scalar(f"{prefix}/max", group_rewards.max().item(), batch_step)
+            prefix = f"validation/reward/raw/overall"
+        # taking stats over whole tensor gives raw reward stats over all rollouts
+        self.writer.add_scalar(f"{prefix}/mean", raw_group_rewards.mean().item(), outer_step)
+        self.writer.add_scalar(f"{prefix}/std", raw_group_rewards.std().item(), outer_step)
+        self.writer.add_scalar(f"{prefix}/min", raw_group_rewards.min().item(), outer_step)
+        self.writer.add_scalar(f"{prefix}/max", raw_group_rewards.max().item(), outer_step)
 
-    def log_group_advantages(self, advantages, batch_step, train=True):
+    def log_group_advantages(self, advantages, outer_step, train=True):
         if train:
             prefix = f"train/reward/advantage"
         else:
             prefix = f"validation/reward/advantage"
-        self.writer.add_scalar(f"{prefix}/min", advantages.min().item(), batch_step)
-        self.writer.add_scalar(f"{prefix}/max", advantages.max().item(), batch_step)
+        self.writer.add_scalar(f"{prefix}/min", advantages.min().item(), outer_step)
+        self.writer.add_scalar(f"{prefix}/max", advantages.max().item(), outer_step)
 
-    def log_reward(self, reward, batch_step, update_epoch, train=True):
+    def log_grpo_objective(self, grpo_objective, optim_step, train=True):
         if train:
-            prefix = f"train/reward"
+            prefix = f"train/objective/components"
         else:
-            prefix = f"validation/reward"
-        self.writer.add_scalar(f"{prefix}/overall_reward", reward.item(), batch_step * self.update_epochs + update_epoch)
+            prefix = f"validation/objective/components"
+        self.writer.add_scalar(f"{prefix}/grpo", grpo_objective.item(), optim_step)
 
-    def log_loss(self, overall_loss, ce_loss, batch_step, update_epoch, train=True):
+    def log_entropy_bonus(self, raw_entropy_bonus, optim_step, train=True):
+        if train:
+            prefix = f"train/objective/components"
+        else:
+            prefix = f"validation/objective/components"
+        self.writer.add_scalar(f"{prefix}/entropy_bonus", raw_entropy_bonus.item(), optim_step)
+
+    def log_ce_loss(self, ce_loss, optim_step, train=True):
+        if train:
+            prefix = f"train/objective/components"
+        else:
+            prefix = f"validation/objective/components"
+        self.writer.add_scalar(f"{prefix}/ce_loss", ce_loss.item(), optim_step)
+
+    def log_overall_loss(self, overall_loss, optim_step, train=True):
         if train:
             prefix = f"train/loss"
         else:
             prefix = f"validation/loss"
-        self.writer.add_scalar(f"{prefix}/overall", overall_loss.item(), batch_step * self.update_epochs + update_epoch)
-        self.writer.add_scalar(f"{prefix}/ce", ce_loss.item(), batch_step + update_epoch)
+        self.writer.add_scalar(f"{prefix}/overall", overall_loss.item(), optim_step)
+
+    # epoch-level metrics from train, mini validation, and full validation. Tbh there should be no need for modes since only this
+    # function takes data from all modes, the rest are so granular only train uses them
+    # def log_epoch_loop_summary(self, )
+    # summary/blah blah
 
 # convert a (1, T) tensor of lmx token indices into a single lmx string. This assumes the sequence starts with <bos> (doesn't
 # have to end with <eos>, eg if it was truncated)

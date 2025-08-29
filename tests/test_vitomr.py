@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from acai_omr.models.models import OMREncoder, FineTuneOMREncoder, OMRDecoder, TeacherForcedViTOMR, NUM_CHANNELS, OMRLoss, ScheduledSamplingViTOMR, GRPOViTOMR
+from acai_omr.models.models import OMREncoder, FineTuneOMREncoder, OMRDecoder, TeacherForcedViTOMR, NUM_CHANNELS, OMRCELoss, ScheduledSamplingViTOMR, GRPOViTOMR, batchify_and_split_lmx_seqs
 from acai_omr.train.pre_train import PE_MAX_HEIGHT, PE_MAX_WIDTH
 from acai_omr.train.datasets import OlimpicDataset
 from acai_omr.train.omr_teacher_force_train import MAX_LMX_SEQ_LEN, set_up_omr_teacher_force_train
@@ -8,7 +8,6 @@ from acai_omr.config import DEBUG_PRETRAINED_MAE_PATH, OLIMPIC_SYNTHETIC_ROOT_DI
 from acai_omr.utils.utils import show_vitomr_prediction
 import pytest
 import copy
-
 
 debug_kwargs = {"num_layers": 2, "num_heads": 1, "hidden_dim": 10, "mlp_dim": 1}
 # the encoder structure used in the pre_train loop test
@@ -20,9 +19,10 @@ debug_teacher_forced_vitomr = TeacherForcedViTOMR(pretrained_debug_encoder, debu
 debug_teacher_forced_state_dict = torch.load(DEBUG_TEACHER_FORCED_PATH)
 debug_grpo_vitomr = GRPOViTOMR(pretrained_debug_encoder, debug_teacher_forced_vitomr.transition_head, debug_decoder, debug_teacher_forced_state_dict)
 
-_, _, base_img_transform, base_lmx_transform = set_up_omr_teacher_force_train()
+_, base_img_transform, base_lmx_transform, _ = set_up_omr_teacher_force_train()
 
 vocab_len = debug_teacher_forced_vitomr.decoder.vocab_embedding.num_embeddings
+pad_idx = debug_decoder.pad_idx
  
 def test_encoder_batchify():
     patch_size = 2
@@ -75,7 +75,7 @@ def test_decoder():
 
     input_seqs = [torch.tensor([0, 2, 3]), torch.tensor([0, 2, 2, 3, 4])]
     input_seqs = torch.nested.as_nested_tensor(input_seqs)
-    input_seqs = input_seqs.to_padded_tensor(padding=decoder.padding_idx)
+    input_seqs = input_seqs.to_padded_tensor(padding=decoder.pad_idx)
     lmx_attention_mask = torch.arange(5).unsqueeze(0).repeat(2, 1) >= torch.tensor([3, 5]).reshape(2, 1)
 
     img_latent = torch.ones(2, 10, hidden_dim)
@@ -92,11 +92,11 @@ def test_decoder():
 def test_decoder_gradient_flow():
     hidden_dim = 10
     decoder = OMRDecoder(MAX_LMX_SEQ_LEN, "lmx_vocab.txt", hidden_dim=hidden_dim, num_heads=1, num_layers=1, mlp_dim=1)
-    loss_fn = OMRLoss(decoder.padding_idx)
+    loss_fn = OMRCELoss(decoder.pad_idx)
 
     lmx_seqs = [torch.tensor([0, 2, 3, 226]), torch.tensor([0, 2, 2, 3, 4, 226])]
     lmx_seqs = torch.nested.as_nested_tensor(lmx_seqs)
-    lmx_seqs = lmx_seqs.to_padded_tensor(padding=decoder.padding_idx)
+    lmx_seqs = lmx_seqs.to_padded_tensor(padding=decoder.pad_idx)
     input_seqs = lmx_seqs[:, :-1]
     target_seqs = lmx_seqs[:, 1:]
     lmx_attention_mask = torch.ones_like(input_seqs).bool()
@@ -126,7 +126,7 @@ def test_decoder_gradient_flow():
     # one example with just padding indices at end, ensure no update
     lmx_seqs = [torch.tensor([0, 226, 1, 1])]
     lmx_seqs = torch.nested.as_nested_tensor(lmx_seqs)
-    lmx_seqs = lmx_seqs.to_padded_tensor(padding=decoder.padding_idx)
+    lmx_seqs = lmx_seqs.to_padded_tensor(padding=decoder.pad_idx)
     input_seqs = lmx_seqs[:, :-1]
     target_seqs = lmx_seqs[:, 1:]
     lmx_attention_mask = torch.ones_like(input_seqs).bool()
@@ -149,20 +149,18 @@ def test_decoder_gradient_flow():
     assert torch.equal(before[1:, :], after[1:, :])
 
 def test_batchify_and_split_lmx_seqs():
-    vitomr = debug_teacher_forced_vitomr
-
     lmx_seqs = [torch.tensor([0, 2, 3, 226]), torch.tensor([0, 2, 2, 3, 4, 226])]
-    input_seqs, target_seqs, mask = vitomr.batchify_and_split_lmx_seqs(lmx_seqs, "cpu")
+    input_seqs, target_seqs, mask = batchify_and_split_lmx_seqs(lmx_seqs, pad_idx, "cpu")
     print(f"Input sequences\n{input_seqs}\nTarget sequences\n{target_seqs}\nAttention mask\n{mask}")
 
-    print(torch.cat([lmx_seqs[0][:-1], torch.tensor(vitomr.decoder.padding_idx).repeat(2)]))
+    print(torch.cat([lmx_seqs[0][:-1], torch.tensor(pad_idx).repeat(2)]))
     input_seqs_expected = torch.cat([
-        torch.cat([lmx_seqs[0], torch.tensor([vitomr.decoder.padding_idx])]).unsqueeze(0),
+        torch.cat([lmx_seqs[0], torch.tensor([pad_idx])]).unsqueeze(0),
         lmx_seqs[1][:-1].unsqueeze(0)
     ], dim=0)
 
     target_seqs_expected = torch.cat([
-        torch.cat([lmx_seqs[0][1:], torch.tensor([vitomr.decoder.padding_idx]).repeat(2)]).unsqueeze(0),
+        torch.cat([lmx_seqs[0][1:], torch.tensor([pad_idx]).repeat(2)]).unsqueeze(0),
         lmx_seqs[1][1:].unsqueeze(0)
     ], dim=0)
 
@@ -170,13 +168,15 @@ def test_batchify_and_split_lmx_seqs():
     assert torch.equal(target_seqs, target_seqs_expected)
     # it's fine for the non-max length input sequences to have their <eos> tokens leftover since the causal mask
     # will prevent earlier tokens attending to it and the position will be padded out in the loss calculation
-    assert torch.equal(mask[0, :], torch.tensor([False, False, False, False, False, True]))
-    assert torch.equal(mask[1, :], torch.tensor([False, False, False, False, False, False]))
+    assert torch.equal(mask[0, :], torch.tensor([False, False, False, False, True]))
+    assert torch.equal(mask[1, :], torch.tensor([False, False, False, False, False]))
 
 def test_vitomr():
-    vitomr = debug_teacher_forced_vitomr
+    encoder = OMREncoder(16, PE_MAX_HEIGHT, PE_MAX_WIDTH, **debug_kwargs)
+    vitomr = TeacherForcedViTOMR(encoder, debug_mae_state_dict, debug_decoder)
+
     optimizer = torch.optim.SGD(vitomr.parameters(), lr=0.1)
-    loss_fn = OMRLoss(vitomr.decoder.padding_idx)
+    loss_fn = OMRCELoss(vitomr.decoder.pad_idx)
 
     encoder_before = {name: param.clone().detach() for name, param in vitomr.encoder.named_parameters()}
     x = [(torch.rand(NUM_CHANNELS, 64, 128), torch.randint(high=vocab_len, size=(8,))),
@@ -191,6 +191,7 @@ def test_vitomr():
     
     # ensure encoder is frozen
     for name, param in encoder_before.items():
+        assert not param.requires_grad
         assert torch.equal(param, encoder_after[name])
 
 def test_show_vitomr_prediction():
@@ -203,7 +204,7 @@ def test_partial_fine_tune():
     encoder = FineTuneOMREncoder(16, PE_MAX_HEIGHT, PE_MAX_WIDTH, 1, **debug_kwargs)
     vitomr = TeacherForcedViTOMR(encoder, debug_mae_state_dict, debug_decoder)
     optimizer = torch.optim.SGD(vitomr.parameters(), lr=10)
-    loss_fn = OMRLoss(vitomr.decoder.padding_idx)
+    loss_fn = OMRCELoss(vitomr.decoder.pad_idx)
 
     encoder_before = {name: param.clone() for name, param in vitomr.encoder.named_parameters()}
     x = [(torch.rand(NUM_CHANNELS, 64, 128), torch.randint(high=vocab_len, size=(8,))),
@@ -292,7 +293,7 @@ def test_fine_tune_with_llrd():
     encoder = FineTuneOMREncoder(16, PE_MAX_HEIGHT, PE_MAX_WIDTH, 1, **debug_kwargs)
     print(encoder)
     vitomr = TeacherForcedViTOMR(encoder, debug_mae_state_dict, debug_decoder)
-    loss_fn = OMRLoss(vitomr.decoder.padding_idx)
+    loss_fn = OMRCELoss(vitomr.decoder.pad_idx)
     param_groups, _ = vitomr.create_fine_tune_param_groups(100.0, 50.0, 0.99)
     optimizer = torch.optim.SGD(param_groups)
 
@@ -318,7 +319,7 @@ def test_fine_tune_with_llrd():
     encoder = FineTuneOMREncoder(16, PE_MAX_HEIGHT, PE_MAX_WIDTH, 2, **debug_kwargs)
     print(encoder)
     vitomr = TeacherForcedViTOMR(encoder, debug_mae_state_dict, debug_decoder)
-    loss_fn = OMRLoss(vitomr.decoder.padding_idx)
+    loss_fn = OMRCELoss(vitomr.decoder.pad_idx)
     param_groups, _ = vitomr.create_fine_tune_param_groups(100.0, 50.0, 0.99)
     optimizer = torch.optim.SGD(param_groups)
 
@@ -366,7 +367,7 @@ def test_scheduled_sampling_vitomr():
     encoder = FineTuneOMREncoder(16, PE_MAX_HEIGHT, PE_MAX_WIDTH, 2, **debug_kwargs)
     vitomr = ScheduledSamplingViTOMR(encoder, debug_mae_state_dict, debug_decoder)
 
-    loss_fn = OMRLoss(vitomr.decoder.padding_idx)
+    loss_fn = OMRCELoss(vitomr.decoder.pad_idx)
     param_groups, _ = vitomr.create_fine_tune_param_groups(100.0, 50.0, 0.99)
     optimizer = torch.optim.SGD(param_groups)
 
@@ -388,7 +389,7 @@ def test_grpo_conversion():
         assert not param.requires_grad
 
 def test_expand_img_tensors():
-    vitomr = GRPOViTOMR(pretrained_debug_encoder, debug_mae_state_dict, debug_decoder)
+    vitomr = debug_grpo_vitomr
     seq_len = 3
     encoder_hidden_dim = vitomr.encoder.hidden_dim
 
@@ -402,7 +403,7 @@ def test_expand_img_tensors():
     print(f"Image latent and mask before expansion:\n{img_latent}\n{mask}")
 
     num_rollouts = 2
-    img_latent, mask = vitomr.expand_img_tensors_for_rollout(img_latent, mask, num_rollouts)
+    img_latent, mask = vitomr.expand_img_latent_for_rollout(img_latent, mask, num_rollouts)
 
     print(f"After expansion:\n{img_latent}\n{mask}")
     img_latent_expected = torch.cat([first_latent.repeat(num_rollouts, 1, 1), second_latent.repeat(num_rollouts, 1, 1)])
@@ -435,44 +436,13 @@ test_args = [
 ]
 @pytest.mark.parametrize("rollouts, expected_mask", test_args)
 def test_rollout_masking(rollouts, expected_mask):
-    vitomr = GRPOViTOMR(pretrained_debug_encoder, debug_mae_state_dict, debug_decoder)
+    vitomr = debug_grpo_vitomr
 
     mask = vitomr.create_rollout_mask(rollouts)
     assert torch.equal(mask, expected_mask)
 
-test_args = [
-    # test both sequences ended at the same time
-    (torch.tensor([
-        [debug_grpo_vitomr.decoder.bos_idx, 10, 10, debug_grpo_vitomr.decoder.eos_idx],
-        [debug_grpo_vitomr.decoder.bos_idx, 20, 20, debug_grpo_vitomr.decoder.eos_idx],
-    ]), torch.tensor([4, 4])),
-    # test one sequence ended earlier with a junk eos after
-    (torch.tensor([
-        [debug_grpo_vitomr.decoder.bos_idx, debug_grpo_vitomr.decoder.eos_idx, 10, debug_grpo_vitomr.decoder.eos_idx],
-        [debug_grpo_vitomr.decoder.bos_idx, 20, 20, debug_grpo_vitomr.decoder.eos_idx],
-    ]), torch.tensor([2, 4])),
-    # test neither sequence has an eos
-    (torch.tensor([
-        [debug_grpo_vitomr.decoder.bos_idx, 10, 10, 10],
-        [debug_grpo_vitomr.decoder.bos_idx, 20, 20, 20],
-    ]), torch.tensor([4, 4])),
-    # test one sequence ended early, one never did
-    (torch.tensor([
-        [debug_grpo_vitomr.decoder.bos_idx, 20, 20, 20],
-        [debug_grpo_vitomr.decoder.bos_idx, debug_grpo_vitomr.decoder.eos_idx, 10, 10],
-    ]), torch.tensor([4, 2])),
-]
-@pytest.mark.parametrize("rollouts, expected_score", test_args)
-def test_score_rollouts(rollouts, expected_score):
-    vitomr = GRPOViTOMR(pretrained_debug_encoder, debug_mae_state_dict, debug_decoder)
-
-    log_probs = torch.ones([2, 4], dtype=torch.float)
-
-    scores, _ = vitomr.score_rollouts(rollouts, log_probs)
-    assert torch.equal(scores, expected_score)
-
 def test_rollout_policy():
-    vitomr = GRPOViTOMR(pretrained_debug_encoder, debug_mae_state_dict, debug_decoder)
+    vitomr = debug_grpo_vitomr
     batch_size = 2
     seq_len = 4
     encoder_hidden_dim = vitomr.encoder.hidden_dim
@@ -481,11 +451,11 @@ def test_rollout_policy():
     latent_mask = torch.full([img_latent.shape[0], img_latent.shape[1]], fill_value=False)
 
     num_rollouts = 3 
-    rollouts, rollout_scores, rollout_entropies = vitomr.forward_rollout_policy(img_latent, latent_mask, num_rollouts, max_actions=10)
+    rollouts, rollout_scores, rollout_entropies = vitomr.forward_rollout_policy(img_latent, latent_mask, max_actions=10)
     print(f"Rollouts:\n{rollouts}\nScores:\n{rollout_scores}\nEntropies:\n{rollout_entropies}")
 
 def test_prepare_rollouts():
-    vitomr = GRPOViTOMR(pretrained_debug_encoder, debug_mae_state_dict, debug_decoder)
+    vitomr = debug_grpo_vitomr
     
     # basic case: non-ragged, terminated sequences
     rollouts = torch.tensor([[vitomr.decoder.bos_idx, 10, 10, vitomr.decoder.eos_idx], [vitomr.decoder.bos_idx, 10, 10, vitomr.decoder.eos_idx]])
@@ -501,11 +471,10 @@ def test_prepare_rollouts():
     assert torch.equal(rollout_mask, expected_mask)
 
     # ragged <eos>'s
-    rollouts = torch.tensor([[vitomr.decoder.bos_idx, 10, 10, vitomr.decoder.eos_idx], [vitomr.decoder.bos_idx, vitomr.decoder.eos_idx, 30, 30]])
+    rollouts = torch.tensor([[vitomr.decoder.bos_idx, 10, 10, vitomr.decoder.eos_idx], [vitomr.decoder.bos_idx, vitomr.decoder.eos_idx, pad_idx, pad_idx]])
     rollout_mask = vitomr.create_rollout_mask(rollouts)
 
     expected_rollouts = copy.deepcopy(rollouts[:, :-1])
-    expected_rollouts[1, 1:] = vitomr.decoder.pad_idx # one pad token created
     expected_mask = torch.tensor([[False] * 3, [False, True, True]])
 
     print(f"Before:\nRollouts:\n{rollouts}\nMask:\n{rollout_mask}")
@@ -515,12 +484,10 @@ def test_prepare_rollouts():
     assert torch.equal(rollout_mask, expected_mask)
 
     # one sequence with no <eos>
-    rollouts = torch.tensor([[vitomr.decoder.bos_idx, 10, vitomr.decoder.eos_idx, 30], [vitomr.decoder.bos_idx, 10, 10, 10]])
+    rollouts = torch.tensor([[vitomr.decoder.bos_idx, 10, vitomr.decoder.eos_idx, pad_idx], [vitomr.decoder.bos_idx, 10, 10, 10]])
     rollout_mask = vitomr.create_rollout_mask(rollouts)
 
     expected_rollouts = copy.deepcopy(rollouts[:, :-1])
-    print(f"EXPECTED: {expected_rollouts}")
-    expected_rollouts[0, 2] = vitomr.decoder.pad_idx
     expected_mask = torch.tensor([[False, False, True], [False] * 3])
 
     print(f"Before:\nRollouts:\n{rollouts}\nMask:\n{rollout_mask}")
@@ -543,5 +510,15 @@ def test_prepare_rollouts():
     assert torch.equal(rollouts, expected_rollouts)
     assert torch.equal(rollout_mask, expected_mask)
 
+def test_batch_policy_inference():
+    vitomr = debug_grpo_vitomr
+
+    imgs = [torch.rand([1, 32, 32]), torch.rand([1, 32, 16]), torch.rand([1, 32, 32])]
+    rollouts, log_probs, mask = vitomr.batch_policy_inference(imgs, 10, 10, 1)
+
+    assert rollouts.shape[0] == 3 
+    assert log_probs.shape == rollouts.shape
+    assert mask.shape == rollouts.shape
+
 if __name__ == "__main__":
-    test_grpo_conversion()
+    test_batch_policy_inference()

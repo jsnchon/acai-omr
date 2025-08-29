@@ -167,9 +167,9 @@ def omr_teacher_force_train(vitomr, train_dataset, validation_dataset, device):
     print(f"Using label smoothing of {LABEL_SMOOTHING} for cross entropy loss")
     loss_fn = OMRCELoss(vitomr.decoder.pad_idx, label_smoothing=LABEL_SMOOTHING)
 
-    print(f"""Teacher forcing settings\n{'-' * 30}\nInitial teacher forcing per-token probability: {INITIAL_TEACHER_FORCING_PROB}
-Minimum teacher forcing probability: {MIN_TEACHER_FORCING_PROB}\nInitial Gumbel-Softmax tau: {INITIAL_TAU}
-Minimum Gumbel-Softmax tau: {MIN_TAU}\nNumber of epochs with soft prediction sampling: {NUM_SOFT_EPOCHS}""")
+    print(f"Teacher forcing settings\n{'-' * 30}\nInitial teacher forcing per-token probability: {INITIAL_TEACHER_FORCING_PROB}\n" \
+          f"Minimum teacher forcing probability: {MIN_TEACHER_FORCING_PROB}\nInitial Gumbel-Softmax tau: {INITIAL_TAU}\n" \
+          f"Minimum Gumbel-Softmax tau: {MIN_TAU}\nNumber of epochs with soft prediction sampling: {NUM_SOFT_EPOCHS}")
 
     MODEL_DIR_PATH.mkdir()
     CHECKPOINTS_DIR_PATH.mkdir()
