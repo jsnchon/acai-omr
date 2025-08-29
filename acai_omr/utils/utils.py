@@ -161,7 +161,6 @@ class GRPOLogger:
     def log_mini_validation_stats(self, mini_val_reward, mini_val_reward_components, mini_val_ce_loss, global_step):
         prefix = f"mini_val"
 
-        print(mini_val_reward, mini_val_ce_loss, global_step)
         self.writer.add_scalar(f"{prefix}/reward", mini_val_reward, global_step)
         components_dict = mini_val_reward_components.to_dict()
         self.writer.add_scalars(f"{prefix}/reward/components", components_dict, global_step)
@@ -181,16 +180,14 @@ class GRPOLogger:
 
     def update_epoch_stats_df(self, epoch_stats: dict, epoch: int):
         self.epoch_stats_df.loc[epoch] = epoch_stats
-        print(self.epoch_stats_df)
+
+    def log_lr(self, optimizer, global_step):
+        prefix = "train"
+        self.writer.add_scalar(f"{prefix}/lr", optimizer.param_groups[0]["lr"], global_step)
 
     def flush(self, csv_path):
         self.writer.flush()
         self.epoch_stats_df.to_csv(csv_path)
-
-    # epoch-level metrics from train, mini validation, and full validation. Tbh there should be no need for modes since only this
-    # function takes data from all modes, the rest are so granular only train uses them
-    # def log_epoch_loop_summary(self, )
-    # summary/blah blah
 
 # convert a (1, T) tensor of lmx token indices into a single lmx string. This assumes the sequence starts with <bos> (doesn't
 # have to end with <eos>, eg if it was truncated)
@@ -201,6 +198,12 @@ def stringify_lmx_seq(lmx_seq: torch.Tensor, idxs_to_tokens: dict[int, str]):
     lmx_seq = lmx_seq[1: ]
     lmx_seq = " ".join(lmx_seq)
     return lmx_seq
+
+def stepwise_cosine_anneal_with_warmup(optimizer, warmup_steps, total_epochs, final_lr, num_steps_per_epoch):
+    warmup = LinearLR(optimizer, start_factor=5e-3, end_factor=1.0, total_iters=warmup_steps)
+    anneal_total_iters = total_epochs * num_steps_per_epoch - warmup_steps
+    anneal = CosineAnnealingLR(optimizer, T_max=anneal_total_iters, eta_min=final_lr)
+    return SequentialLR(optimizer, schedulers=[warmup, anneal], milestones=[warmup_steps])
 
 # num_train_batches is the number of batches in each epoch. If passed, the scheduler will configure to be called
 # each minibatch instead of each epoch

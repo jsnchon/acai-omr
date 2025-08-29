@@ -747,7 +747,7 @@ class GRPOViTOMR(nn.Module):
         rollout_log_probs: (R, T) tensor of the log prob for choosing the chosen token at each step of rollouts
         rollout_mask: (R, T) tensor where True = token is part of a rollout, False = token isn't
     For each (T, E_enc) image latent in img_latent, create group_size autoregressive rollouts according to the
-    policy defined by the model's outputted distributions, up to max_actions steps in total (on top of <bos> stems) for each. 
+    policy defined by the model's outputted distributions, up to max_actions steps in total (where <bos> stems count as 1 action) for each. 
     At each autoregressive step, set logits that aren't in the top_k top logits to -inf, then apply softmax with temperature, 
     then extend the sequence according to the resulting distribution 
     Note: predictions after first train seem pretty peaky so default is to use temperature > 1 to slightly smooth things and 

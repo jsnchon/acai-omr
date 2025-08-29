@@ -213,7 +213,7 @@ def omr_teacher_force_train(vitomr, train_dataset, validation_dataset, device):
     print("Plotting final stats")
     save_teacher_force_training_stats(STATS_DIR_PATH, train_stats_df)
     print("Saving final omr training state")
-    omr_train_state_path = MODEL_DIR_PATH / f"ending_omr_train_state.pth"
+    omr_train_state_path = MODEL_DIR_PATH / "ending_omr_train_state.pth"
     save_omr_training_state(omr_train_state_path, vitomr, optimizer, scheduler)
     model_path = MODEL_DIR_PATH / "vitomr.pth"
     print(f"Saving final model state dict separately to {model_path}")

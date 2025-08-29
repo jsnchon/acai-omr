@@ -7,7 +7,7 @@ from torch.multiprocessing import Pool # regular multiprocessing complains about
 from acai_omr.train.omr_teacher_force_train import set_up_omr_teacher_force_train
 from acai_omr.train.datasets import GrandStaffLMXDataset, GrandStaffOMRTrainWrapper, OlimpicDataset
 from acai_omr.models.models import GRPOViTOMR, OMRCELoss
-from acai_omr.utils.utils import stringify_lmx_seq, ragged_collate_fn
+from acai_omr.utils.utils import stringify_lmx_seq, ragged_collate_fn, stepwise_cosine_anneal_with_warmup
 from acai_omr.utils.utils import RolloutConfig, RewardConfig, RewardComponents, LossConfig, UpdateConfig, GRPOConfig, StepCounter, GRPOLogger
 from acai_omr.config import GRAND_STAFF_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
 from torchvision.transforms import v2, InterpolationMode
@@ -27,7 +27,7 @@ TRAIN_BATCH_SIZE = 16
 VALIDATION_BATCH_SIZE = 32 # 128
 NUM_WORKERS = 2 # 26
 
-LR = 5e-5
+LR = 2e-5
 ADAMW_BETAS = (0.9, 0.999)
 ADAMW_WEIGHT_DECAY = 0.01
 
@@ -60,7 +60,7 @@ INITIAL_REWARD_CONFIG = RewardConfig(
     tau=100
 )
 INITIAL_LOSS_CONFIG = LossConfig(
-    entropy_beta=0.3,
+    entropy_beta=0.25,
     lambda_ce=0.15
 )
 INITIAL_UPDATE_CONFIG = UpdateConfig(
@@ -68,6 +68,55 @@ INITIAL_UPDATE_CONFIG = UpdateConfig(
     update_epochs=2,
     max_grad_norm=1.0
 )
+
+# all these schedulers step per-batch
+WARMUP_STEPS = 6 # 750 # 3% of total steps
+MIN_LR = 4e-6
+
+EXPLORATION_EPOCHS = 1
+MAX_MAX_ACTIONS = 1536
+MIN_TOP_K = 10
+MIN_TEMPERATURE = 0.7
+MAX_LAMBDA_LEN =2 
+MIN_ENTROPY_BETA = 0
+MIN_LAMBDA_CE = 0
+
+class CurriculumScheduler:
+    def __init__(self, grpo_config, exploration_epochs, total_epochs, num_outer_steps_per_epoch,
+                 max_max_actions, min_top_k, min_temperature, max_lambda_len, min_beta, min_lambda_ce):
+        self.grpo_config = grpo_config
+        self.step_count = 0
+        self.exploration_steps = exploration_epochs * num_outer_steps_per_epoch
+        self.anneal_steps = (total_epochs - exploration_epochs) * num_outer_steps_per_epoch
+        self.total_steps = self.exploration_steps + self.anneal_steps
+        # tuples of (init_value, min/max_value) depending on if being increased or annealed
+        self.max_actions = (grpo_config.rollout_config.max_actions, max_max_actions)
+        self.top_k = (grpo_config.rollout_config.top_k, min_top_k)
+        self.temperature = (grpo_config.rollout_config.temperature, min_temperature)
+        self.lambda_len = (grpo_config.reward_config.lambda_len, max_lambda_len)
+        self.entropy_beta = (grpo_config.loss_config.entropy_beta, min_beta)
+        self.lambda_ce = (grpo_config.loss_config.lambda_ce, min_lambda_ce)
+
+    def calc_increasing_value(self, progress, init_value, max_value):
+        return init_value + progress * (max_value - init_value)
+
+    def calc_annealing_value(self, progress, init_value, min_value):
+        return init_value - progress * (init_value - min_value)
+
+    def step(self):
+        if self.step_count < self.exploration_steps: # if still in the exploration stage, don't change hyperparameters
+            self.step_count += 1
+            return
+
+        progress = (self.step_count - self.exploration_steps) / self.anneal_steps
+        self.grpo_config.rollout_config.max_actions = int(self.calc_increasing_value(progress, *self.max_actions))
+        self.grpo_config.rollout_config.top_k = int(self.calc_annealing_value(progress, *self.top_k))
+        self.grpo_config.rollout_config.temperature = self.calc_annealing_value(progress, *self.temperature)
+        self.grpo_config.reward_config.lambda_len = self.calc_increasing_value(progress, *self.lambda_len)
+        self.grpo_config.loss_config.entropy_beta = self.calc_annealing_value(progress, *self.entropy_beta)
+        self.grpo_config.loss_config.lambda_ce = self.calc_annealing_value(progress, *self.lambda_ce)
+        
+        self.step_count += 1 
 
 # broadcast sequences across rollouts into an (R x T) padded tensor
 def expand_target_lmx_seqs(target_lmx_seqs: tuple[torch.Tensor], group_size, pad_idx, device):
@@ -161,7 +210,7 @@ def calc_repeat_penalty(rollouts, pad_idx, n_values=[1, 2, 3, 4]):
     repeat_penalty = total_penalty / len(n_values)
     return repeat_penalty # (R, )
 
-def calc_len_penalty(rollout_mask, target_lmx_seqs, pad_idx, delta=5, tau=100):
+def calc_len_penalty(rollout_mask, target_lmx_seqs, pad_idx, delta=10, tau=100):
     rollout_lens = rollout_mask.sum(dim=-1)
     target_lens = (target_lmx_seqs != pad_idx).sum(dim=-1)
     len_diffs = torch.abs(rollout_lens - target_lens)
@@ -348,7 +397,7 @@ def average_epoch_stats(
         "avg_train_ce_loss": avg_train_ce_loss,
     }
 
-def epoch_train_loop(train_dataloader, mini_val_dataloader, old_policy, policy_theta, optimizer, grpo_config, ce_loss_fn, logger, device, counter):
+def epoch_train_loop(train_dataloader, mini_val_dataloader, old_policy, policy_theta, optimizer, lr_scheduler, grpo_config, curriculum_scheduler, ce_loss_fn, logger, device, counter):
     batch_size = train_dataloader.batch_size
     len_dataset = len(train_dataloader.dataset)
     num_batches = len(train_dataloader)
@@ -363,6 +412,7 @@ def epoch_train_loop(train_dataloader, mini_val_dataloader, old_policy, policy_t
     epoch_train_reward_components = RewardComponents(0, 0, 0, 0, 0)
 
     for i, batch in enumerate(train_dataloader):
+        logger.log_lr(optimizer, counter.global_step)
         logger.log_configs(grpo_config, counter.global_step)
         # each batch, we need to refresh old_policy to match the resulting updated policy_theta from the previous GRPO updates.
         # Instead of repeatedly deepcopying, and since the encoder and transition head are frozen, we can just refresh the decoder parameters
@@ -374,7 +424,8 @@ def epoch_train_loop(train_dataloader, mini_val_dataloader, old_policy, policy_t
         epoch_train_reward += avg_batch_reward
         epoch_train_reward_components += avg_batch_reward_components
 
-        # schedule step configs here
+        lr_scheduler.step()
+        curriculum_scheduler.step()
         if i % 100 == 0:
             current_ex = i * batch_size + len(batch)
             print(f"[{current_ex:>5d}/{len_dataset:>5d}]")
@@ -389,7 +440,7 @@ def epoch_train_loop(train_dataloader, mini_val_dataloader, old_policy, policy_t
             policy_theta.train() 
 
         if (i + 1) % grpo_config.checkpoint_freq == 0:
-            checkpoint_train_state()
+            checkpoint_train_state(CHECKPOINTS_DIR_PATH, policy_theta, optimizer, logger)
 
         counter.global_step += 1
         # DEBUG
@@ -434,12 +485,18 @@ def validation_loop(dataloader, policy_theta, reward_config, rollout_config, ce_
     validation_ce_loss = validation_ce_loss / num_batches
     return validation_reward, validation_reward_components, validation_ce_loss
 
-def checkpoint_train_state():
-    # flush logger too
-    pass
+def checkpoint_train_state(path, policy_theta, optimizer, logger):
+    print(f"Saving training state to {path}")
+    torch.save({
+        "policy_theta": policy_theta.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+    }, path)
+    
+    logger.flush(csv_path=(MODEL_DIR_PATH / "stats.csv"))
 
 # TODOS:
 # schedulers: one exploration epoch where no changes, then specify min/maxes of changed values, linearly change them til end
+# do one tiny debug run on gpu machine full through to make sure everything looks good
 # remove debug stuff
 
 if __name__ == "__main__":
@@ -530,7 +587,10 @@ if __name__ == "__main__":
     for p in old_policy.parameters():
         p.requires_grad = False
 
-    print(f"Scheduler hyperparematers\n{'-' * 50}\n")
+    print(f"Scheduler hyperparematers\n{'-' * 50}\nLr warmup steps: {WARMUP_STEPS}\nMinimum lr: {MIN_LR}\nExploration " \
+          f"epochs: {EXPLORATION_EPOCHS}\nMax max_actions: {MAX_MAX_ACTIONS}\nMin top_k: {MIN_TOP_K}\nMin softmax " \
+          f"temperature: {MIN_TEMPERATURE}\nMax lambda_len: {MAX_LAMBDA_LEN}\nMin entropy beta: {MIN_ENTROPY_BETA}\n" \
+          f"Min lambda_ce: {MIN_LAMBDA_CE}\n")
 
     rollout_config = INITIAL_ROLLOUT_CONFIG
     reward_config = INITIAL_REWARD_CONFIG
@@ -544,16 +604,20 @@ if __name__ == "__main__":
     epoch_stats_df = pd.DataFrame(columns=["avg_train_overall_loss", "avg_train_reward", "avg_train_reward_components", "avg_train_ce_loss",
                                            "full_val_reward", "full_val_reward_components", "full_val_ce_loss"])
 
-    writer = SummaryWriter(log_dir=LOG_DIR, max_queue=300) # flushes around every 20 minibatches (~15 logs per minibatch)
+    writer = SummaryWriter(log_dir=LOG_DIR, max_queue=450) # flushes around every 30 minibatches (~15 logs per minibatch)
     logger = GRPOLogger(writer, epoch_stats_df)
     grpo_config = GRPOConfig(rollout_config, reward_config, loss_config, update_config, MINI_VALIDATION_FREQ, CHECKPOINT_FREQ)
+    num_steps_per_epoch = len(train_dataloader)
+    lr_scheduler = stepwise_cosine_anneal_with_warmup(optimizer, WARMUP_STEPS, EPOCHS, MIN_LR, num_steps_per_epoch)
+    curriculum_scheduler = CurriculumScheduler(grpo_config, EXPLORATION_EPOCHS, EPOCHS, num_steps_per_epoch,
+                                               MAX_MAX_ACTIONS, MIN_TOP_K, MIN_TEMPERATURE, MAX_LAMBDA_LEN, MIN_ENTROPY_BETA, MIN_LAMBDA_CE)
     counter = StepCounter(0)
 
     for i in range(EPOCHS):
         print(f"EPOCH {i + 1}\n{'-' * 50}")
         policy_theta.train()
         epoch_start_time = time.perf_counter()
-        epoch_stats = epoch_train_loop(train_dataloader, mini_validation_dataloader, old_policy, policy_theta, optimizer, grpo_config, ce_loss_fn, logger, device, counter)
+        epoch_stats = epoch_train_loop(train_dataloader, mini_validation_dataloader, old_policy, policy_theta, optimizer, lr_scheduler, grpo_config, curriculum_scheduler, ce_loss_fn, logger, device, counter)
         epoch_end_time = time.perf_counter()
         print(f"Time: {epoch_end_time - epoch_start_time:>0.2f} seconds\n")
 
@@ -562,7 +626,7 @@ if __name__ == "__main__":
         print("Validation")
         full_val_reward, full_val_reward_components, full_val_ce_loss = validation_loop(validation_dataloader, policy_theta, reward_config, rollout_config, ce_loss_fn, policy_theta.decoder.pad_idx, device)
         print(f"Results:\nAverage validation reward: {full_val_reward}\nAverage validation reward " \
-                f"components: {full_val_reward_components}\nAverage validation teacher forced ce loss: {full_val_ce_loss}\n")
+              f"components: {full_val_reward_components}\nAverage validation teacher forced ce loss: {full_val_ce_loss}\n")
 
         epoch_stats["full_val_reward"] = full_val_reward
         epoch_stats["full_val_reward_components"] = full_val_reward_components
@@ -570,4 +634,9 @@ if __name__ == "__main__":
         logger.log_epoch_level_stats(epoch_stats, counter.global_step)
         logger.update_epoch_stats_df(epoch_stats, i)
 
+    print("Saving final train state")
+    checkpoint_train_state(MODEL_DIR_PATH / f"ending_train_state.pth")
+    model_path = MODEL_DIR_PATH / "vitomr.pth"
+    print(f"Saving final model to {model_path}")
+    torch.save(policy_theta.state_dict(), model_path)
     logger.flush(csv_path=(MODEL_DIR_PATH / "stats.csv"))
