@@ -17,38 +17,38 @@ import pandas as pd
 import copy
 import time
 
-MODEL_DIR_PATH = Path("tf_omr_train")
+MODEL_DIR_PATH = Path("grpo_omr_train")
 CHECKPOINTS_DIR_PATH = MODEL_DIR_PATH / "checkpoints"
 LOG_DIR = "runs/grpo"
 
-AUGMENTATION_P = 0.3
+AUGMENTATION_P = 0.25
 
-TRAIN_BATCH_SIZE = 16
-VALIDATION_BATCH_SIZE = 32 # 128
-NUM_WORKERS = 2 # 26
+TRAIN_BATCH_SIZE = 16 
+VALIDATION_BATCH_SIZE = 128
+NUM_WORKERS = 26
 
 LR = 2e-5
 ADAMW_BETAS = (0.9, 0.999)
 ADAMW_WEIGHT_DECAY = 0.01
 
-EPOCHS = 3 # 8 # enough for ~25000 outer steps
+EPOCHS = 8 # enough for ~25000 outer steps
 
 MINI_VALIDATION_SIZE = 1000 # subset size
 
 # in outer steps within each epoch (ie minibatches)
-MINI_VALIDATION_FREQ = 4 # 250
+MINI_VALIDATION_FREQ = 250
 CHECKPOINT_FREQ = 1000
 
-TEACHER_FORCED_STATE_DICT_PATH = ""
+TEACHER_FORCED_STATE_DICT_PATH = "tf_omr_train/vitomr.pth"
 
 INITIAL_ROLLOUT_CONFIG = RolloutConfig(
-    group_size=2, # 8, 
-    max_actions=5, # 768, 
+    group_size=8, 
+    max_actions=768, 
     top_k=50, 
     temperature=1.2
 )
 INITIAL_REWARD_CONFIG = RewardConfig(
-    lambda_tedn=5,
+    lambda_tedn=6,
     lambda_well_formed=2,
     lambda_f1=3,
     lambda_repeat=2,
@@ -70,14 +70,14 @@ INITIAL_UPDATE_CONFIG = UpdateConfig(
 )
 
 # all these schedulers step per-batch
-WARMUP_STEPS = 6 # 750 # 3% of total steps
+WARMUP_STEPS = 750 # 3% of total steps
 MIN_LR = 4e-6
 
 EXPLORATION_EPOCHS = 1
 MAX_MAX_ACTIONS = 1536
 MIN_TOP_K = 10
 MIN_TEMPERATURE = 0.7
-MAX_LAMBDA_LEN =2 
+MAX_LAMBDA_LEN = 2 
 MIN_ENTROPY_BETA = 0
 MIN_LAMBDA_CE = 0
 
@@ -311,6 +311,9 @@ def grpo_update(old_policy: GRPOViTOMR, policy_theta: GRPOViTOMR, optimizer, bat
 
     pad_idx = old_policy.decoder.pad_idx
     unexpanded_imgs, unexpanded_target_lmx_seqs, target_musicxml_strs = zip(*batch)
+    unexpanded_imgs = [unexpanded_img.to(device) for unexpanded_img in unexpanded_imgs]
+    unexpanded_target_lmx_seqs = [unexpanded_target_lmx_seq.to(device) for unexpanded_target_lmx_seq in unexpanded_target_lmx_seqs]
+
     group_size = rollout_config.group_size
     num_groups = len(batch) # batch_size = num_groups
     vocab_size = policy_theta.decoder.vocab_embedding.num_embeddings
@@ -320,6 +323,7 @@ def grpo_update(old_policy: GRPOViTOMR, policy_theta: GRPOViTOMR, optimizer, bat
         with autocast(device_type=device, dtype=torch.bfloat16):
             # encode images into latent representations
             unexpanded_img_latent, unexpanded_latent_attention_mask = old_policy.encoder(unexpanded_imgs)
+            unexpanded_img_latent = old_policy.transition_head(unexpanded_img_latent)
             # run rollouts
             img_latent, latent_attention_mask = old_policy.expand_img_latent_for_rollout(unexpanded_img_latent, unexpanded_latent_attention_mask, group_size)
             rollouts, old_policy_log_probs, rollout_mask = old_policy.forward_rollout_policy(img_latent, latent_attention_mask, max_actions=rollout_config.max_actions, top_k=rollout_config.top_k, temperature=rollout_config.temperature)
@@ -440,11 +444,9 @@ def epoch_train_loop(train_dataloader, mini_val_dataloader, old_policy, policy_t
             policy_theta.train() 
 
         if (i + 1) % grpo_config.checkpoint_freq == 0:
-            checkpoint_train_state(CHECKPOINTS_DIR_PATH, policy_theta, optimizer, logger)
+            checkpoint_train_state((CHECKPOINTS_DIR_PATH / f"step_{counter.global_step}_checkpoint.pth"), policy_theta, optimizer, logger)
 
         counter.global_step += 1
-        # DEBUG
-        # print("OUTER STEP DONE")
 
     epoch_stats = average_epoch_stats(epoch_train_overall_loss, epoch_train_ce_loss, epoch_train_reward, epoch_train_reward_components, num_batches)
     return epoch_stats
@@ -463,9 +465,12 @@ def validation_loop(dataloader, policy_theta, reward_config, rollout_config, ce_
         with torch.autocast(device_type=device, dtype=torch.bfloat16):
             for i, batch in enumerate(dataloader):
                 imgs, target_lmx_seqs, target_musicxml_strs = zip(*batch)
+                imgs = [img.to(device) for img in imgs]
+                target_lmx_seqs = [target_lmx_seq.to(device) for target_lmx_seq in target_lmx_seqs]
                 num_groups = len(imgs)
 
                 img_latent, latent_attention_mask = policy_theta.encoder(imgs)
+                img_latent = policy_theta.transition_head(img_latent)
                 rollouts, _, rollout_mask = policy_theta.forward_rollout_policy(img_latent, latent_attention_mask, rollout_config.max_actions, rollout_config.top_k, rollout_config.temperature)
 
                 target_lmx_seqs = torch.nested.nested_tensor(target_lmx_seqs, layout=torch.jagged, device=device)
@@ -494,31 +499,10 @@ def checkpoint_train_state(path, policy_theta, optimizer, logger):
     
     logger.flush(csv_path=(MODEL_DIR_PATH / "stats.csv"))
 
-# TODOS:
-# schedulers: one exploration epoch where no changes, then specify min/maxes of changed values, linearly change them til end
-# do one tiny debug run on gpu machine full through to make sure everything looks good
-# remove debug stuff
-
 if __name__ == "__main__":
-    # DEBUG
-    from acai_omr.models.models import FineTuneOMREncoder, OMRDecoder, TeacherForcedViTOMR
-    from acai_omr.train.omr_teacher_force_train import PE_MAX_HEIGHT, PE_MAX_WIDTH, MAX_LMX_SEQ_LEN
-    from acai_omr.config import DEBUG_PRETRAINED_MAE_PATH   
-    TEACHER_FORCED_STATE_DICT_PATH = "debug_teacher_forced_omr_train/debug_vitomr.pth"
-    debug_kwargs = {"num_layers": 2, "num_heads": 1, "hidden_dim": 10, "mlp_dim": 1}
-    pretrained_debug_encoder = FineTuneOMREncoder(16, PE_MAX_HEIGHT, PE_MAX_WIDTH, 1, **debug_kwargs)
-    debug_decoder = OMRDecoder(MAX_LMX_SEQ_LEN, "lmx_vocab.txt", **debug_kwargs)
-    debug_mae_state_dict = torch.load(DEBUG_PRETRAINED_MAE_PATH)
-    debug_teacher_forced_vitomr = TeacherForcedViTOMR(pretrained_debug_encoder, debug_mae_state_dict, debug_decoder)
-
-    debug_teacher_forced_state_dict = torch.load(TEACHER_FORCED_STATE_DICT_PATH)
-
-    policy_theta = GRPOViTOMR(pretrained_debug_encoder, debug_teacher_forced_vitomr.transition_head, debug_decoder, debug_teacher_forced_state_dict)
-    # END DEBUG
-
-#    MODEL_DIR_PATH.mkdir()
-#    CHECKPOINTS_DIR_PATH.mkdir()
-#    print(f"Created directories {MODEL_DIR_PATH}, {CHECKPOINTS_DIR_PATH}")
+    MODEL_DIR_PATH.mkdir()
+    CHECKPOINTS_DIR_PATH.mkdir()
+    print(f"Created directories {MODEL_DIR_PATH}, {CHECKPOINTS_DIR_PATH}")
 
     teacher_forced_vitomr, base_img_transform, base_lmx_transform, device = set_up_omr_teacher_force_train()
     encoder = teacher_forced_vitomr.encoder
@@ -527,7 +511,8 @@ if __name__ == "__main__":
 
     teacher_forced_state_dict = torch.load(TEACHER_FORCED_STATE_DICT_PATH)
 
-    # policy_theta = GRPOViTOMR(encoder, transition_head, decoder, teacher_forced_state_dict)
+    policy_theta = GRPOViTOMR(encoder, transition_head, decoder, teacher_forced_state_dict)
+    policy_theta.to(device)
     print(f"Model architecture\n{'-' * 50}\n{policy_theta}\n")
 
     print(f"General hyperparameters\n{'-' * 50}\nImage augmentation probability: {AUGMENTATION_P}\n" \
@@ -571,12 +556,6 @@ if __name__ == "__main__":
 
     # make sure to use a list as indices so datasets are indexed with integers and not tensors 
     mini_validation_dataset = Subset(validation_dataset, torch.randint(low=0, high=len(validation_dataset), size=(MINI_VALIDATION_SIZE, )).tolist())
-
-    # DEBUG
-    train_dataset = Subset(validation_dataset, torch.randint(low=0, high=len(validation_dataset), size=(160, )).tolist())
-    mini_validation_dataset = Subset(validation_dataset, torch.randint(low=0, high=len(validation_dataset), size=(32, )).tolist())
-    validation_dataset = Subset(validation_dataset, torch.randint(low=0, high=len(validation_dataset), size=(64, )).tolist())
-    # END DEBUG
 
     train_dataloader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
     validation_dataloader = DataLoader(validation_dataset, batch_size=VALIDATION_BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
@@ -622,7 +601,6 @@ if __name__ == "__main__":
         print(f"Time: {epoch_end_time - epoch_start_time:>0.2f} seconds\n")
 
         policy_theta.eval()
-        # set policy_theta to eval, run full validation
         print("Validation")
         full_val_reward, full_val_reward_components, full_val_ce_loss = validation_loop(validation_dataloader, policy_theta, reward_config, rollout_config, ce_loss_fn, policy_theta.decoder.pad_idx, device)
         print(f"Results:\nAverage validation reward: {full_val_reward}\nAverage validation reward " \
@@ -635,7 +613,7 @@ if __name__ == "__main__":
         logger.update_epoch_stats_df(epoch_stats, i)
 
     print("Saving final train state")
-    checkpoint_train_state(MODEL_DIR_PATH / f"ending_train_state.pth")
+    checkpoint_train_state(MODEL_DIR_PATH / f"ending_train_state.pth", policy_theta, optimizer, logger)
     model_path = MODEL_DIR_PATH / "vitomr.pth"
     print(f"Saving final model to {model_path}")
     torch.save(policy_theta.state_dict(), model_path)

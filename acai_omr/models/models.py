@@ -447,8 +447,11 @@ class OMRDecoder(nn.Module):
         return pred #(B, L_lmxmax, vocab_size)
 
     # given a padded batch tensor of input_seqs and corresponding img_latent (optionally with a latent padding mask),
-    # generate next predictions for each sequence at each token position
-    def generate(self, input_seqs, img_latent, latent_attention_mask=None):
+    # generate next predictions for each sequence at each token position.
+    # if curr_prefix_len is not None, input_seqs' length dimension has been preallocated to a size of the max length each sequence
+    # can be, but the actual prefix generated so far is only of length curr_prefix_len. To avoid wasting compute on useless positions,
+    # we only calculate attention on the actual prefix
+    def generate(self, input_seqs, img_latent, curr_prefix_len=None, latent_attention_mask=None):
         seq_len = input_seqs.shape[1] 
         if seq_len > self.max_lmx_seq_len:
                 raise ValueError(f"{seq_len} long lmx sequence length is too long for max sequence length of {self.max_lmx_seq_len}")
@@ -766,7 +769,7 @@ class GRPOViTOMR(nn.Module):
         # per-token log probs help us later mask out junk parts of sequences/calculating GRPO objective per step. Use log-probs
         # for numerical stability, eg with super small regular probs
         rollout_log_probs = torch.zeros_like(rollouts, dtype=torch.float, device=device)
-        for t in range(1, max_actions + 1):
+        for t in range(1, max_actions):
             logits = self.decoder.generate(rollouts, img_latent, latent_attention_mask=latent_attention_mask)
             logits = logits[:, -1, :] # (R x E_dec), next token distributions for each rollout
 
@@ -802,7 +805,7 @@ class GRPOViTOMR(nn.Module):
         # <eos>'s as part of rollouts which we don't want included in our right shifted inputs
         rollout_lens = rollout_mask.sum(dim=-1, keepdim=True)
         right_shifted_rollout_lens = rollout_lens - 1 
-        rollout_attention_mask = torch.arange(torch.max(right_shifted_rollout_lens)).repeat([rollouts.shape[0], 1])
+        rollout_attention_mask = torch.arange(torch.max(right_shifted_rollout_lens), device=rollouts.device).repeat([rollouts.shape[0], 1])
         rollout_attention_mask = rollout_attention_mask >= right_shifted_rollout_lens
         right_shifted_rollouts = rollouts[:, :-1]
         return right_shifted_rollouts, rollout_attention_mask
