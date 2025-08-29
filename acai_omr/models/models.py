@@ -1,7 +1,9 @@
 import torch
-from torch import nn
 import torch.nn.functional as F
-from acai_omr.config import LMX_PAD_TOKEN
+from torch import nn
+from torch.utils.checkpoint import checkpoint_sequential
+from functools import partial
+from acai_omr.config import LMX_PAD_TOKEN, LMX_BOS_TOKEN, LMX_EOS_TOKEN
 import re
 
 NUM_CHANNELS = 1 # assume these images all are grayscale
@@ -29,7 +31,7 @@ class Encoder(nn.Module):
             norm=nn.LayerNorm(self.hidden_dim, eps=1e-6) # eps copied from ViT source code
         )
 
-    def batchify(self, x: list[torch.Tensor]):
+    def batchify(self, x: tuple[torch.Tensor]):
         seq_lens = []
         pos_embed_slices = []
         patchified_tensors = []
@@ -69,7 +71,7 @@ class Encoder(nn.Module):
         return arange >= seq_lens # (B, L_m)
 
     # x is a list of (C x H x W) image tensors
-    def forward(self, x: list[torch.Tensor]):
+    def forward(self, x: tuple[torch.Tensor]):
         x, src_key_padding_mask = self.batchify(x)
         x = self.encoder_blocks(x, src_key_padding_mask=src_key_padding_mask)
         return x, src_key_padding_mask # return mask for later use in loss calculation and cross-attention masking
@@ -297,7 +299,7 @@ class OMREncoder(Encoder):
 
         return interpolated_pos_embedding.squeeze(0).permute(1, 2, 0) # (h_p x w_p x E)
 
-    def batchify(self, x: list[torch.Tensor]):
+    def batchify(self, x: tuple[torch.Tensor]):
         seq_lens = []
         pos_embed_slices = []
         patchified_tensors = []
@@ -330,19 +332,23 @@ class OMREncoder(Encoder):
 class FineTuneOMREncoder(OMREncoder):
     def __init__(self, patch_size, pe_max_height, pe_max_width, fine_tune_depth, num_layers=12, hidden_dim=768, num_heads=12, mlp_dim=3072, transformer_dropout=0.05):
         super().__init__(patch_size, pe_max_height, pe_max_width, num_layers, hidden_dim, num_heads, mlp_dim)
+        assert fine_tune_depth > 0, "If using FineTuneOMREncoder, fine-tune depth should be at least 1"
         del self.encoder_blocks
 
         self.fine_tune_depth = fine_tune_depth
         self.num_layers = num_layers
-        num_frozen_layers = self.num_layers - self.fine_tune_depth
+        self.num_frozen_layers = self.num_layers - self.fine_tune_depth
+
+        # store so these can be retrieved to convert this into a regular OMREncoder later
+        self.superclass_kwargs = {"num_heads": num_heads, "mlp_dim": mlp_dim, "transformer_dropout": transformer_dropout}
 
         base_encoder_layer_kwargs = {"d_model": self.hidden_dim, "nhead": num_heads, "dim_feedforward": mlp_dim, "activation": "gelu", "batch_first": True}
-        if num_frozen_layers == 0: # full fine-tune
+        if self.num_frozen_layers == 0: # full fine-tune
             self.frozen_blocks = None
         else:
             self.frozen_blocks = nn.TransformerEncoder(
                 encoder_layer=nn.TransformerEncoderLayer(dropout=0.0, **base_encoder_layer_kwargs),
-                num_layers=num_frozen_layers
+                num_layers=self.num_frozen_layers
             )
 
         self.fine_tune_blocks = nn.TransformerEncoder(
@@ -351,7 +357,7 @@ class FineTuneOMREncoder(OMREncoder):
             norm=nn.LayerNorm(self.hidden_dim, eps=1e-6)
         )
 
-    def forward(self, x: list[torch.Tensor]):
+    def forward(self, x: tuple[torch.Tensor]):
         x, src_key_padding_mask = self.batchify(x)
         if self.frozen_blocks:
             x = self.frozen_blocks(x, src_key_padding_mask=src_key_padding_mask)
@@ -378,11 +384,13 @@ class OMRDecoder(nn.Module):
         
         self.tokens_to_idxs = {token: i for i, token in enumerate(tokens)}
         self.idxs_to_tokens = {i: token for i, token in enumerate(tokens)}
-        self.padding_idx = self.tokens_to_idxs[LMX_PAD_TOKEN]
+        self.pad_idx = self.tokens_to_idxs[LMX_PAD_TOKEN]
+        self.bos_idx = self.tokens_to_idxs[LMX_BOS_TOKEN]
+        self.eos_idx = self.tokens_to_idxs[LMX_EOS_TOKEN]
         self.vocab_size = len(tokens)
 
         self.vocab_embedding = nn.Embedding(
-            self.vocab_size, self.hidden_dim, padding_idx=self.padding_idx
+            self.vocab_size, self.hidden_dim, padding_idx=self.pad_idx
         )
 
         self.pos_embedding = nn.Parameter(
@@ -398,17 +406,24 @@ class OMRDecoder(nn.Module):
 
         self.unembed = nn.Linear(self.hidden_dim, self.vocab_size)
 
-    def forward(self, input_seqs, img_latent, lmx_attention_mask, latent_attention_mask):
+    def forward(self, input_seqs, img_latent, lmx_attention_mask, latent_attention_mask, token_idxs_input=True, checkpoint_grads=False):
         """
-        input_seqs: (B, L_lmxmax), batch tensor of input sequences where each sequence is an int tensor of a right-shifted original sequence
-        img_latent: (B, L_imgmax, E)
+        input_seqs: 
+            if token_idxs_input = True: (B, L_lmxmax), batch tensor of input sequences where each sequence is an 
+                int tensor of a right-shifted original sequence
+            if token_idxs_input = False: (B, L_lmxmax, E), batch tensor of input sequences of embeddings in vocab space. 
+                Important for scheduled sampling where we need to mix embeddings and input those instead of hard indices
+        img_latent: (B, L_imgmax, E) tensor of B image latents corresponding to each of the B input_seqs
         lmx_attention_mask: (B, L_lmxmax), records which lmx tokens are pad tokens
         latent_attention_mask: (B, L_imgmax), records which encoded patches in image batch are padding
         """
         batch_max_lmx_seq_len = input_seqs.shape[1] 
         if batch_max_lmx_seq_len > self.max_lmx_seq_len:
                 raise ValueError(f"{batch_max_lmx_seq_len} long lmx sequence length is too long for max sequence length of {self.max_lmx_seq_len}")
-        lmx_embeddings = self.vocab_embedding(input_seqs) # (B, L_lmxmax, E)
+        if token_idxs_input:
+            lmx_embeddings = self.vocab_embedding(input_seqs) # (B, L_lmxmax, E)
+        else:
+            lmx_embeddings = input_seqs 
 
         # positionally embed lmx tokens
         pos_embed_slice = self.pos_embedding[:batch_max_lmx_seq_len, :]
@@ -416,12 +431,27 @@ class OMRDecoder(nn.Module):
 
         causal_mask = torch.triu(torch.ones(batch_max_lmx_seq_len, batch_max_lmx_seq_len), diagonal=1).bool() # enforce autoregressive predictions
         causal_mask = causal_mask.to(lmx_embeddings.device)
-        hidden_state = self.decoder_blocks(lmx_embeddings, memory=img_latent, tgt_mask=causal_mask, tgt_key_padding_mask=lmx_attention_mask, memory_key_padding_mask=latent_attention_mask)
+        if checkpoint_grads:
+            # checkpointing only accepts positional args, so we pass kwargs to each layer's forward using a partial storing the kwargs. We use
+            # layer-wise checkpointing to ensure we only ever are storing the intermediate activations for one decoder layer at a time (biggest savings)
+            decoder_blocks = [
+                partial(decoder_block, memory=img_latent, tgt_mask=causal_mask, tgt_key_padding_mask=lmx_attention_mask, memory_key_padding_mask=latent_attention_mask)
+                for decoder_block in list(self.decoder_blocks.layers)
+            ]
+            hidden_state = checkpoint_sequential(decoder_blocks, segments=self.decoder_blocks.num_layers, input=lmx_embeddings, use_reentrant=False)
+            hidden_state = self.decoder_blocks.norm(hidden_state)
+        else:
+            hidden_state = self.decoder_blocks(lmx_embeddings, memory=img_latent, tgt_mask=causal_mask, tgt_key_padding_mask=lmx_attention_mask, memory_key_padding_mask=latent_attention_mask)
 
         pred = self.unembed(hidden_state)
         return pred #(B, L_lmxmax, vocab_size)
 
-    def generate(self, input_seqs, img_latent):
+    # given a padded batch tensor of input_seqs and corresponding img_latent (optionally with a latent padding mask),
+    # generate next predictions for each sequence at each token position.
+    # if curr_prefix_len is not None, input_seqs' length dimension has been preallocated to a size of the max length each sequence
+    # can be, but the actual prefix generated so far is only of length curr_prefix_len. To avoid wasting compute on useless positions,
+    # we only calculate attention on the actual prefix
+    def generate(self, input_seqs, img_latent, curr_prefix_len=None, latent_attention_mask=None):
         seq_len = input_seqs.shape[1] 
         if seq_len > self.max_lmx_seq_len:
                 raise ValueError(f"{seq_len} long lmx sequence length is too long for max sequence length of {self.max_lmx_seq_len}")
@@ -431,16 +461,29 @@ class OMRDecoder(nn.Module):
         pos_embed_slice = self.pos_embedding[:seq_len, :]
         lmx_embeddings = lmx_embeddings + pos_embed_slice.unsqueeze(0)
 
-        hidden_state = self.decoder_blocks(lmx_embeddings, memory=img_latent)
+        hidden_state = self.decoder_blocks(lmx_embeddings, memory=img_latent, memory_key_padding_mask=latent_attention_mask)
         pred = self.unembed(hidden_state)
         return pred
 
-class ViTOMR(nn.Module):
+# lmx_seqs is a list of int tensors containing the unmodified lmx sequences associated with the input images, # in lmx token indices
+def batchify_and_split_lmx_seqs(lmx_seqs: tuple[torch.Tensor], pad_idx, device):
+    # split lmx sequences into right-shifted inputs and left-shifted targets
+    lmx_seqs = torch.nested.as_nested_tensor(lmx_seqs)
+    lmx_seqs = lmx_seqs.to_padded_tensor(padding=pad_idx)
+    input_seqs = lmx_seqs[:, :-1]
+    target_seqs = lmx_seqs[:, 1:]
+
+    lmx_attention_mask = (input_seqs == pad_idx) # (B, L_lmxmax), True means that lmx token is a pad token
+    lmx_attention_mask = lmx_attention_mask.to(device)
+    return input_seqs, target_seqs, lmx_attention_mask
+
+class TeacherForcedViTOMR(nn.Module):
+    # create a model using parts from a pretrained MAE
     def __init__(self, omr_encoder, pretrained_mae_state_dict, omr_decoder, transition_head_dim=4096, transition_head_dropout=0.05):
         super().__init__()
         self.encoder = omr_encoder
 
-        encoder_state_dict = self.create_omr_encoder_state_dict(pretrained_mae_state_dict)
+        encoder_state_dict = self.create_omr_encoder_state_dict_from_mae(pretrained_mae_state_dict)
         self.encoder.load_state_dict(encoder_state_dict)
 
         # depending on the type of encoder being used, either freeze the whole thing or just the frozen blocks or none at all (for full fine-tune)
@@ -465,7 +508,7 @@ class ViTOMR(nn.Module):
             nn.Linear(transition_head_dim, self.decoder.hidden_dim)
         )
 
-    def create_omr_encoder_state_dict(self, pretrained_mae_state_dict):
+    def create_omr_encoder_state_dict_from_mae(self, pretrained_mae_state_dict):
         # preprocess state dict: remove redundant prefixes added by MAE class since 
         pretrained_mae_state_dict = {
             param[len("encoder."):]: value for param, value in pretrained_mae_state_dict.items() if param.startswith("encoder.")
@@ -480,8 +523,8 @@ class ViTOMR(nn.Module):
         omr_encoder_state_dict = {}
         freeze_threshold_depth = self.encoder.num_layers - self.encoder.fine_tune_depth
         last_norm_layer_parameters = ["encoder_blocks.norm.weight", "encoder_blocks.norm.bias"]
+        layer_num_pattern = re.compile(r"(?:\w|\.)+?(\d+)(?:\w|\.)+")
         for param in pretrained_mae_state_dict.keys():
-            layer_num_pattern = re.compile(r"(?:\w|\.)+?(\d+)(?:\w|\.)+")
             if match := layer_num_pattern.match(param): # this is a layer in MAEEncoder's encoder_blocks variable
                 layer_num = int(match.group(1))
                 if layer_num < freeze_threshold_depth:
@@ -501,19 +544,6 @@ class ViTOMR(nn.Module):
         
         return omr_encoder_state_dict
    
-    # lmx_seqs is a list of int tensors containing the unmodified lmx sequences associated with the input images,
-    # in lmx token indices
-    def batchify_and_split_lmx_seqs(self, lmx_seqs: list[torch.Tensor], device):
-        # split lmx sequences into right-shifted inputs and left-shifted targets
-        padding_idx = self.decoder.padding_idx
-        lmx_seqs = torch.nested.as_nested_tensor(lmx_seqs)
-        lmx_seqs = lmx_seqs.to_padded_tensor(padding=padding_idx)
-        input_seqs = lmx_seqs[:, :-1]
-        target_seqs = lmx_seqs[:, 1:]
-
-        lmx_attention_mask = (input_seqs == padding_idx) # (B, L_lmxmax), True means that lmx token is a pad token
-        lmx_attention_mask = lmx_attention_mask.to(device)
-        return input_seqs, target_seqs, lmx_attention_mask
 
     """
     Input
@@ -524,8 +554,6 @@ class ViTOMR(nn.Module):
     """
     def forward(self, x: list[tuple[torch.Tensor, torch.Tensor]]):
         imgs, lmx_seqs = zip(*x)
-        imgs = list(imgs)
-        lmx_seqs = list(lmx_seqs)
 
         # encode images
         img_latent, latent_attention_mask = self.encoder(imgs)        
@@ -534,7 +562,7 @@ class ViTOMR(nn.Module):
         img_latent = self.transition_head(img_latent)
 
         # prepare lmx sequences and mask
-        input_seqs, target_seqs, lmx_attention_mask = self.batchify_and_split_lmx_seqs(lmx_seqs, img_latent.device)
+        input_seqs, target_seqs, lmx_attention_mask = batchify_and_split_lmx_seqs(lmx_seqs, self.decoder.pad_idx, img_latent.device)
 
         # decode lmx with cross-attention to image latent
         pred = self.decoder(input_seqs, img_latent, lmx_attention_mask, latent_attention_mask)
@@ -542,7 +570,7 @@ class ViTOMR(nn.Module):
 
     """
     Input
-        img_latent: a (1, CP^2, E_dec) latent representation of the image to run inference on (must have already been fed through the transition head)
+        img_latent: a (1, T, E_dec) latent representation of the image to run inference on (must have already been fed through the transition head)
         seqs: a (beam_width, seq_len) tensor of the sequences to append to. Unlike the regular forward method used for training,
         for this method at the start each sequence should just be one <bos> token
     Output
@@ -586,11 +614,11 @@ class ViTOMR(nn.Module):
         return param_groups, layer_lrs
 
 # wrapper to handle the logic with cross entropy loss
-class OMRLoss(nn.Module):
-    def __init__(self, padding_idx, label_smoothing=0.0):
+class OMRCELoss(nn.Module):
+    def __init__(self, pad_idx, label_smoothing=0.0):
         super().__init__()
         self.label_smoothing = label_smoothing
-        self.loss_fn = nn.CrossEntropyLoss(ignore_index=padding_idx, label_smoothing=self.label_smoothing)
+        self.loss_fn = nn.CrossEntropyLoss(ignore_index=pad_idx, label_smoothing=self.label_smoothing)
 
     def forward(self, pred, target_seqs):
         """
@@ -599,3 +627,201 @@ class OMRLoss(nn.Module):
         """
         # flatten tensors since target tensor needs to be shape (N, )
         return self.loss_fn(pred.reshape(-1, pred.shape[-1]), target_seqs.reshape(-1))
+
+class ScheduledSamplingViTOMR(TeacherForcedViTOMR):
+    # mix teacher forced sequence with first pass predictions: at each time step i, if sample = True we use the first 
+    # pass' predicted distribution for the ith token to create an expected embedding and use that as the second pass' ith input embedding
+    def sample_and_mix_seqs(self, teacher_forcing_prob, tf_input_seqs, tf_pred_logits, sample_tau, use_hard_sampling, device):
+        sampling_ratio = 1 - teacher_forcing_prob
+        sample_mask = torch.rand(tf_input_seqs.shape, device=device) < sampling_ratio # (B, T)
+
+        gold_token_embeddings = self.decoder.vocab_embedding(tf_input_seqs)
+
+        # create expected embeddings at each token position using teacher-forced pass predictions
+        tf_pred_distrs = F.gumbel_softmax(tf_pred_logits, tau=sample_tau, hard=use_hard_sampling) # (B, T, V)
+        tf_expected_embeddings = tf_pred_distrs @ self.decoder.vocab_embedding.weight # (B x T x V) x (V x E) = (B x V x E)
+
+        # rightshift predicted sequence to align it with rightshifted teacher forced inputs for sampling
+        bos_stem = gold_token_embeddings[:, 0:1, :]
+        tf_expected_embeddings = torch.cat([bos_stem, tf_expected_embeddings], dim=1)
+        tf_expected_embeddings = tf_expected_embeddings[:, :-1]
+
+        mixed_input_seqs = torch.where(sample_mask.unsqueeze(-1), tf_expected_embeddings, gold_token_embeddings)
+        return mixed_input_seqs
+
+    def forward_train(self, x: list[tuple[torch.Tensor, torch.Tensor]], teacher_forcing_prob: float, sample_tau: float, use_hard_sampling: bool):
+        imgs, lmx_seqs = zip(*x)
+
+        img_latent, latent_attention_mask = self.encoder(imgs)
+        img_latent = self.transition_head(img_latent)
+        device = img_latent.device
+
+        tf_input_seqs, target_seqs, lmx_attention_mask = batchify_and_split_lmx_seqs(lmx_seqs, self.decoder.pad_idx, device)
+
+        # first decoder pass: generate logits from completely gold inputs
+        tf_pred_logits = self.decoder(tf_input_seqs, img_latent, lmx_attention_mask, latent_attention_mask) # (B, T, V)
+
+        mixed_input_seqs = self.sample_and_mix_seqs(teacher_forcing_prob, tf_input_seqs, tf_pred_logits, sample_tau, use_hard_sampling, device)
+
+        pred = self.decoder(mixed_input_seqs, img_latent, lmx_attention_mask, latent_attention_mask, token_idxs_input=False)
+        return pred, target_seqs # target sequences for loss calculation remain the same
+
+    # for validation/evaluation, we stick with regular teacher forcing
+    def forward_eval(self, x: list[tuple[torch.Tensor, torch.Tensor]]):
+        return super().forward(x)
+
+class GRPOViTOMR(nn.Module):
+    # encoder, transition_head, and decoder should be module instances matching those of a TeacherForcedViTOMR 
+    # instance. init essentially will convert that instance into a version prepared for GRPO training
+    def __init__(self, encoder, transition_head, decoder, teacher_forced_state_dict):
+        super().__init__()
+        if isinstance(encoder, FineTuneOMREncoder):
+            teacher_forced_state_dict = self.convert_teacher_forced_state_dict(teacher_forced_state_dict, encoder.num_frozen_layers)
+            encoder = OMREncoder(encoder.patch_size, encoder.pe_max_height, encoder.pe_max_width, encoder.num_layers, encoder.hidden_dim, **encoder.superclass_kwargs)
+            
+        self.encoder = encoder
+        self.transition_head = transition_head
+        self.decoder = decoder
+        self.load_state_dict(teacher_forced_state_dict)
+        # freeze encoder/transition head which by now should be well-trained for the seq2seq task. Also disable their dropout
+        self.freeze_component(self.encoder)
+        self.freeze_component(self.transition_head)
+
+    def freeze_component(self, component):
+        for param in component.parameters():
+            param.requires_grad = False
+        for child in component.modules():
+            if isinstance(child, nn.Dropout):
+                child.p = 0.0
+
+    def convert_teacher_forced_state_dict(self, teacher_forced_state_dict, num_frozen_layers):
+        converted_state_dict = {} # new dict since can't mutate old dict while iterating over it
+
+        layer_num_pattern = re.compile(r"(?:\w|\.)+?(\d+)(?:\w|\.)+")
+        for param in teacher_forced_state_dict.keys():
+            if "frozen_blocks" in param:
+                new_param_name = param.replace("frozen_blocks", "encoder_blocks")
+            # fine-tune blocks have shifted layer numbers for partial fine-tune
+            elif "fine_tune_blocks" in param:
+                new_param_name = param.replace("fine_tune_blocks", "encoder_blocks")
+                # no match means this is a parameter for the last norm of the whole encoder, in which case
+                # the name replacement was enough
+                if match := layer_num_pattern.match(param):
+                    layer_num = int(match.group(1))
+                    new_param_name = new_param_name.replace(f"layers.{layer_num}", f"layers.{layer_num + num_frozen_layers}")
+            else:
+                new_param_name = param
+
+            converted_state_dict[new_param_name] = teacher_forced_state_dict[param]
+        return converted_state_dict
+
+    # expand latent/mask to create multiple rollouts for each example
+    def expand_img_latent_for_rollout(self, img_latent, latent_attention_mask, group_size):
+        img_latent = img_latent.unsqueeze(1)
+        img_latent = img_latent.expand(-1, group_size, -1, -1) # (B, group_size, T, E_enc)
+        img_latent = img_latent.flatten(start_dim=0, end_dim=1) # (B x group_size, T, E_enc)
+
+        latent_attention_mask = latent_attention_mask.unsqueeze(1)
+        latent_attention_mask = latent_attention_mask.expand(-1, group_size, -1)
+        latent_attention_mask = latent_attention_mask.flatten(start_dim=0, end_dim=1)
+        return img_latent, latent_attention_mask
+
+    # returns mask where True = token is part of a rollout, False = token is junk after a rollout ended
+    def create_rollout_mask(self, rollouts):
+        # marks where <eos> tokens are
+        eos_mask = (rollouts == self.decoder.eos_idx)
+        # 0 when there's been no <eos> up to/including this point, 1 when there's been 1 up to/including this point, etc.
+        seen_eos_mask = eos_mask.int().cumsum(dim=-1)
+        # first <eos> is when we have an <eos> token and have only seen 1 so far (ie at that position)
+        first_eos_mask = eos_mask & (seen_eos_mask == 1)
+        # only count each rollout as tokens up to and including the first <eos> (if it exists and if include_eos = True)
+        rollout_mask = (seen_eos_mask == 0) | first_eos_mask
+        return rollout_mask
+
+    """
+    Inputs
+        img_latent: (R, T, E_enc) batched, padded tensor of B image latents each duplicated across group_size rollouts into 
+        B x group_size = R total rows
+        latent_attention_mask: (R, T) mask showing what embeddings in img_latent are padding
+        Note that this can also be used for batched evaluation/inference: simply pass in an unexpanded img_latent and mask to get one
+        rollout per example
+    Outputs
+        rollouts: (R, T) padded tensor of rollouts. May contain junk if some sequences terminated early
+        rollout_log_probs: (R, T) tensor of the log prob for choosing the chosen token at each step of rollouts
+        rollout_mask: (R, T) tensor where True = token is part of a rollout, False = token isn't
+    For each (T, E_enc) image latent in img_latent, create group_size autoregressive rollouts according to the
+    policy defined by the model's outputted distributions, up to max_actions steps in total (where <bos> stems count as 1 action) for each. 
+    At each autoregressive step, set logits that aren't in the top_k top logits to -inf, then apply softmax with temperature, 
+    then extend the sequence according to the resulting distribution 
+    Note: predictions after first train seem pretty peaky so default is to use temperature > 1 to slightly smooth things and 
+    encourage more exploration.
+    Also note that this should be called with torch_no_grad by the old policy and img_latent and latent_attention_mask should
+    be the result of self.expand_img_tensors_for_rollout
+    """
+    def forward_rollout_policy(self, img_latent, latent_attention_mask, max_actions=768, top_k=50, temperature=1.2):
+        device = img_latent.device
+
+        total_rollouts = img_latent.shape[0]
+        # for efficiency, preallocate tensors to later fill in by indexing in place
+        rollouts = torch.full([total_rollouts, max_actions + 1], fill_value=self.decoder.pad_idx, dtype=torch.long, device=device)
+        rollouts[:, 0] = torch.full([total_rollouts], fill_value=self.decoder.bos_idx)
+
+        # per-token log probs help us later mask out junk parts of sequences/calculating GRPO objective per step. Use log-probs
+        # for numerical stability, eg with super small regular probs
+        rollout_log_probs = torch.zeros_like(rollouts, dtype=torch.float, device=device)
+        for t in range(1, max_actions):
+            logits = self.decoder.generate(rollouts, img_latent, latent_attention_mask=latent_attention_mask)
+            logits = logits[:, -1, :] # (R x E_dec), next token distributions for each rollout
+
+            # top-k filtering
+            top_k_logits, top_k_indices = torch.topk(logits, top_k, dim=-1)
+            top_k_mask = torch.full_like(logits, float("-inf"))
+            logits = top_k_mask.scatter(-1, top_k_indices, top_k_logits)
+
+            # extend sequences
+            softmax_logits = logits / temperature # apply temperature for softmax
+            next_token_distr = F.softmax(softmax_logits, dim=-1)
+            next_token_idxs = torch.multinomial(next_token_distr, num_samples=1) # (R, 1)
+            rollouts[:, t] = next_token_idxs.squeeze(1)
+
+            token_log_probs = F.log_softmax(softmax_logits, dim=-1)
+            next_token_log_probs = token_log_probs.gather(-1, index=next_token_idxs)
+            rollout_log_probs[:, t] = next_token_log_probs.squeeze(1)
+
+            # end early if all seqs are done early
+            finished_seqs = torch.any((rollouts == self.decoder.eos_idx), dim=-1)
+            if torch.all(finished_seqs):
+                break
+        
+        rollout_mask = self.create_rollout_mask(rollouts)
+        # explicitly set tokens that aren't part of rollouts to <pad>. Later functions assume this is the case
+        rollouts = rollouts.masked_fill(~rollout_mask, self.decoder.pad_idx)
+
+        return rollouts, rollout_log_probs, rollout_mask
+
+    # right shift rollouts and prepare an attention mask for it (since it's likely a padded tensor of ragged rollouts)
+    def prepare_rollouts_for_policy_theta(self, rollouts, rollout_mask):
+        # can't directly use rollout_mask as policy theta's rollout_attention_mask because it may include raggedly-placed
+        # <eos>'s as part of rollouts which we don't want included in our right shifted inputs
+        rollout_lens = rollout_mask.sum(dim=-1, keepdim=True)
+        right_shifted_rollout_lens = rollout_lens - 1 
+        rollout_attention_mask = torch.arange(torch.max(right_shifted_rollout_lens), device=rollouts.device).repeat([rollouts.shape[0], 1])
+        rollout_attention_mask = rollout_attention_mask >= right_shifted_rollout_lens
+        right_shifted_rollouts = rollouts[:, :-1]
+        return right_shifted_rollouts, rollout_attention_mask
+
+    # img_latent and latent_attention_mask should be the unexpanded results of an encoder pass so we can
+    # avoid unnecessarily recalculating them here. lmx_seqs should be the targets we're running the teacher forced
+    # pass on (again, this hasn't been expanded so we can save on computation)
+    def forward_teacher_forced(self, img_latent, latent_attention_mask, lmx_seqs: list[torch.Tensor], checkpoint_grads):
+        input_seqs, target_seqs, lmx_attention_mask = batchify_and_split_lmx_seqs(lmx_seqs, self.decoder.pad_idx, img_latent.device)
+
+        pred = self.decoder(input_seqs, img_latent, lmx_attention_mask, latent_attention_mask, checkpoint_grads=checkpoint_grads)
+        return pred, target_seqs 
+
+    # wrapper that takes a batch of image tensors, encodes them, and runs 1 rollout on each example. Should be used for 
+    # evaluation/inference, ie wrapped in no_grad()
+    def batch_policy_inference(self, imgs: list[torch.Tensor], max_actions, top_k, temperature):
+        img_latent, latent_attention_mask = self.encoder(imgs)
+        rollouts, rollout_log_probs, rollout_mask = self.forward_rollout_policy(img_latent, latent_attention_mask, max_actions, top_k, temperature)
+        return rollouts, rollout_log_probs, rollout_mask

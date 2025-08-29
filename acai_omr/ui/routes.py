@@ -1,9 +1,9 @@
 import torch
 from flask import Blueprint, render_template, request, Response
 from acai_omr.inference.vitomr_inference import beam_search
-from acai_omr.config import INFERENCE_VITOMR_PATH, LMX_BOS_TOKEN, LMX_EOS_TOKEN, InferenceEvent
-from acai_omr.train.omr_train import set_up_omr_train
-import logging
+from acai_omr.config import INFERENCE_VITOMR_PATH, InferenceEvent
+from acai_omr.train.omr_teacher_force_train import set_up_omr_teacher_force_train
+import logging  
 from PIL import Image
 import json
 import os
@@ -16,7 +16,7 @@ DEBUG_IMAGE_PATH = "inference_test.png"
 # without this, in debug mode flask runs import statements twice in two processes which means the model is duplicated and
 # takes up too much memory
 if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
-    vitomr, base_img_transform, _, device = set_up_omr_train()
+    vitomr, base_img_transform, _, device = set_up_omr_teacher_force_train()
     
     logger.info(f"Loading state dict from {INFERENCE_VITOMR_PATH}")
     if device == "cpu":
@@ -25,9 +25,6 @@ if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
         vitomr_state_dict = torch.load(INFERENCE_VITOMR_PATH)
 
     vitomr.load_state_dict(vitomr_state_dict)
-
-    bos_token_idx = vitomr.decoder.tokens_to_idxs[LMX_BOS_TOKEN]
-    eos_token_idx = vitomr.decoder.tokens_to_idxs[LMX_EOS_TOKEN]
 
 @main.route("/")
 def index():
@@ -79,10 +76,10 @@ def stream_inference():
 #    weights_path = "debug_omr_train/debug_vitomr.pth"
     # end debug
     image = Image.open(DEBUG_IMAGE_PATH).convert("L")
-    image = base_img_transform(image)
+    image = base_img_transform(image).to(device)
 
     # make sure to transform any images using patch transform
     logger.info("Starting inference and streaming from endpoint")
     logger.info(f"Running beam search with beam width {beam_width} and max inference length {max_inference_len}")
 
-    return Response(stream_beam_search_wrapper(vitomr, image, bos_token_idx, eos_token_idx, device, beam_width, max_inference_len), mimetype="text/event-stream")
+    return Response(stream_beam_search_wrapper(vitomr, image, device, beam_width, max_inference_len), mimetype="text/event-stream")

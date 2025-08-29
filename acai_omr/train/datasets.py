@@ -6,12 +6,14 @@ from PIL import Image
 
 # superclass to deal with the commonalities between the LMX datasets
 class LMXDataset(Dataset):
-    def __init__(self, root_dir, split_file_name, img_transform=None, lmx_transform=None):
+    # if include_musicxml, include the target musicxml file contents when indexed
+    def __init__(self, root_dir, split_file_name, img_transform=None, lmx_transform=None, include_musicxml=False):
         self.root_dir = Path(root_dir)
         split_file = self.root_dir / split_file_name
         self.id_df = pd.read_csv(split_file, header=None)
         self.img_transform = img_transform
         self.lmx_transform = lmx_transform
+        self.include_musicxml = include_musicxml
 
     def __len__(self):
         return len(self.id_df)
@@ -37,14 +39,21 @@ class GrandStaffLMXDataset(LMXDataset):
             original_img = self.img_transform(original_img)
             distorted_img = self.img_transform(distorted_img)
 
-        lmx_path = self.root_dir / (self.id_df.iat[idx, 0] + ".lmx")
+        ex_id = self.id_df.iat[idx, 0]
+        lmx_path = self.root_dir / (ex_id + ".lmx")
         with open(lmx_path, "r") as f:
             lmx = f.read()
 
         if self.lmx_transform:
             lmx = self.lmx_transform(lmx)
 
-        return original_img, distorted_img, lmx
+        if self.include_musicxml:
+            musicxml_path = self.root_dir / (ex_id + ".musicxml")
+            with open(musicxml_path, "r") as f:
+                musicxml = f.read()
+            return original_img, distorted_img, lmx, musicxml
+        else:
+            return original_img, distorted_img, lmx
 
 """Base wrapper for MAE pre-training in the simplest case where a dataset instance returns
 one item, the score image. Indexing this returns a tuple of input_img, target_img, allowing
@@ -120,22 +129,32 @@ class PreparedDataset(Dataset):
 # can either specify the synthetic or scanned dataset
 class OlimpicDataset(LMXDataset):
     def __getitem__(self, idx):
+
+        if isinstance(idx, (list, torch.Tensor)):
+            return [self.__getitem__(int(i)) for i in idx]
         img_path = self.root_dir / (self.id_df.iat[idx, 0] + ".png")
         img = Image.open(img_path).convert("L")
 
         if self.img_transform:
             img = self.img_transform(img)
 
-        lmx_path = self.root_dir / (self.id_df.iat[idx, 0] + ".lmx")
+        ex_id = self.id_df.iat[idx, 0]
+        lmx_path = self.root_dir / (ex_id + ".lmx")
         with open(lmx_path, "r") as f:
             lmx = f.read()
 
         if self.lmx_transform:
             lmx = self.lmx_transform(lmx)
 
-        return img, lmx
+        if self.include_musicxml:
+            musicxml_path = self.root_dir / (ex_id + ".musicxml")
+            with open(musicxml_path, "r") as f:
+                musicxml = f.read()
+            return img, lmx, musicxml
+        else:
+            return img, lmx
 
-# different wrapper for OMR training since target is now an lmx token sequence. Augmentaiton arguments
+# different wrapper for OMR training since target is now an lmx token sequence. Augmentation arguments
 # relate to image augmentation. Base transformations on images and lmx sequences should be passed in the base dataset creation
 class GrandStaffOMRTrainWrapper(Dataset):
     def __init__(self, base_dataset, augment_p=0.0, transform=None):
@@ -149,10 +168,18 @@ class GrandStaffOMRTrainWrapper(Dataset):
         return len(self.base_dataset)
 
     def __getitem__(self, idx):
-        original_img, distorted_img, lmx = self.base_dataset[idx]
+        if self.base_dataset.include_musicxml:
+            original_img, distorted_img, lmx, musicxml = self.base_dataset[idx]
+        else:
+            original_img, distorted_img, lmx = self.base_dataset[idx]
+
         rand = torch.rand(1).item()
         if rand < self.augment_p: # augment distorted image and return it as the input image
             input_img = self.transform(distorted_img)
-            return input_img, lmx
         else: # return original image as input image
-            return original_img, lmx
+            input_img = original_img
+
+        if self.base_dataset.include_musicxml:
+            return input_img, lmx, musicxml
+        else:
+            return input_img, lmx

@@ -27,9 +27,12 @@ class InferenceEvent(Enum):
     STEP = "step" # each inference step yields both beam(s) and log prob(s)
     INFERENCE_FINISH = "inference_finish" # include the result from the last step which we treat differently (eg only has one sequence, want to stream its score to the ui)
 
-INFERENCE_EVENT_JSON_PATH = pathlib.Path("acai_omr/ui/static/inference_events.json")
+INFERENCE_EVENTS_JSON_PATH = pathlib.Path("acai_omr/ui/static/inference_events.json")
 
 inference_events = {e.name: e.value for e in InferenceEvent}
-INFERENCE_EVENT_JSON_PATH.write_text(json.dumps(inference_events, indent=2))
+INFERENCE_EVENTS_JSON_PATH.write_text(json.dumps(inference_events, indent=2))
 
 OLIMPIC_ROOT_DIR = "olimpic-icdar24/"
+
+# weights for a teacher-forced ViTOMR using the debug mae
+DEBUG_TEACHER_FORCED_PATH = "debug_teacher_forced_omr_train/debug_vitomr.pth"

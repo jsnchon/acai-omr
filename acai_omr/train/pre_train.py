@@ -1,7 +1,7 @@
 import torch
 from acai_omr.train.datasets import GrandStaffLMXDataset, PreparedDataset, OlimpicDataset, GrandStaffPreTrainWrapper, OlimpicPreTrainWrapper, PreTrainWrapper
 from acai_omr.config import GRAND_STAFF_ROOT_DIR, PRIMUS_PREPARED_ROOT_DIR, DOREMI_PREPARED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
-from acai_omr.utils.utils import DynamicResize, cosine_anneal_with_warmup, save_training_stats, ragged_collate_fn
+from acai_omr.utils.utils import DynamicResize, cosine_anneal_with_warmup, save_pre_train_stats, ragged_collate_fn
 from torch.utils.data import ConcatDataset, DataLoader
 from torchvision.transforms import InterpolationMode, v2
 from acai_omr.models.models import MAE, MAELoss
@@ -142,10 +142,10 @@ def pre_train(mae, train_dataset, validation_dataset):
             checkpoint_path = CHECKPOINTS_DIR_PATH / f"epoch_{i+1}_checkpoint.pth"
             save_pretraining_state(checkpoint_path, mae, optimizer, scheduler)
             print("Checkpointing stats plots")
-            save_training_stats(STATS_DIR_PATH, epoch_training_losses, epoch_validation_losses, epoch_lrs)
+            save_pre_train_stats(STATS_DIR_PATH, epoch_training_losses, epoch_validation_losses, epoch_lrs)
 
     print("Plotting final stats")
-    save_training_stats(STATS_DIR_PATH, epoch_training_losses, epoch_validation_losses, epoch_lrs)
+    save_pre_train_stats(STATS_DIR_PATH, epoch_training_losses, epoch_validation_losses, epoch_lrs)
     print("Saving final pretraining state")
     pretrain_state_path = MODEL_DIR_PATH / f"ending_pretrain_state.pth"
     save_pretraining_state(pretrain_state_path, mae, optimizer, scheduler)
