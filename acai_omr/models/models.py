@@ -4,6 +4,7 @@ from torch import nn
 from torch.utils.checkpoint import checkpoint_sequential
 from functools import partial
 from acai_omr.config import LMX_PAD_TOKEN, LMX_BOS_TOKEN, LMX_EOS_TOKEN
+from acai_omr.models.caching import KVCache
 import re
 
 NUM_CHANNELS = 1 # assume these images all are grayscale
@@ -387,6 +388,8 @@ class OMRDecoder(nn.Module):
         self.pad_idx = self.tokens_to_idxs[LMX_PAD_TOKEN]
         self.bos_idx = self.tokens_to_idxs[LMX_BOS_TOKEN]
         self.eos_idx = self.tokens_to_idxs[LMX_EOS_TOKEN]
+        self.num_heads = num_heads
+        self.head_dim = hidden_dim / num_heads
         self.vocab_size = len(tokens)
 
         self.vocab_embedding = nn.Embedding(
@@ -446,12 +449,9 @@ class OMRDecoder(nn.Module):
         pred = self.unembed(hidden_state)
         return pred #(B, L_lmxmax, vocab_size)
 
-    # given a padded batch tensor of input_seqs and corresponding img_latent (optionally with a latent padding mask),
-    # generate next predictions for each sequence at each token position.
-    # if curr_prefix_len is not None, input_seqs' length dimension has been preallocated to a size of the max length each sequence
-    # can be, but the actual prefix generated so far is only of length curr_prefix_len. To avoid wasting compute on useless positions,
-    # we only calculate attention on the actual prefix
-    def generate(self, input_seqs, img_latent, curr_prefix_len=None, latent_attention_mask=None):
+    # minimal wrapper for batch inference: given a padded batch tensor of input_seqs and corresponding img_latent (optionally 
+    # with a latent padding mask), generate next predictions for each sequence at each token position.
+    def generate(self, input_seqs, img_latent, latent_attention_mask=None):
         seq_len = input_seqs.shape[1] 
         if seq_len > self.max_lmx_seq_len:
                 raise ValueError(f"{seq_len} long lmx sequence length is too long for max sequence length of {self.max_lmx_seq_len}")
@@ -757,8 +757,9 @@ class GRPOViTOMR(nn.Module):
     encourage more exploration.
     Also note that this should be called with torch_no_grad by the old policy and img_latent and latent_attention_mask should
     be the result of self.expand_img_tensors_for_rollout
+    TODO: change this so keeps track of an active mask so only keep doing inference on active seqs, fill rest with <pad> and 0 log prob for next token
     """
-    def forward_rollout_policy(self, img_latent, latent_attention_mask, max_actions=768, top_k=50, temperature=1.2):
+    def uncached_forward_rollout_policy(self, img_latent, latent_attention_mask, max_actions=768, top_k=50, temperature=1.2):
         device = img_latent.device
 
         total_rollouts = img_latent.shape[0]
@@ -770,7 +771,8 @@ class GRPOViTOMR(nn.Module):
         # for numerical stability, eg with super small regular probs
         rollout_log_probs = torch.zeros_like(rollouts, dtype=torch.float, device=device)
         for t in range(1, max_actions):
-            logits = self.decoder.generate(rollouts, img_latent, latent_attention_mask=latent_attention_mask)
+            prefix = rollouts[:, :t] # preallocated tensors to max_actions, so only pass in the prefix so far 
+            logits = self.decoder.generate(prefix, img_latent, latent_attention_mask=latent_attention_mask)
             logits = logits[:, -1, :] # (R x E_dec), next token distributions for each rollout
 
             # top-k filtering
@@ -794,8 +796,9 @@ class GRPOViTOMR(nn.Module):
                 break
         
         rollout_mask = self.create_rollout_mask(rollouts)
-        # explicitly set tokens that aren't part of rollouts to <pad>. Later functions assume this is the case
+        # explicitly set tokens that aren't part of rollouts to <pad> and their log probs to 0. Later functions assume this is the case
         rollouts = rollouts.masked_fill(~rollout_mask, self.decoder.pad_idx)
+        rollout_log_probs = rollout_log_probs.masked_fill(~rollout_mask, 0.0)
 
         return rollouts, rollout_log_probs, rollout_mask
 
@@ -825,3 +828,8 @@ class GRPOViTOMR(nn.Module):
         img_latent, latent_attention_mask = self.encoder(imgs)
         rollouts, rollout_log_probs, rollout_mask = self.forward_rollout_policy(img_latent, latent_attention_mask, max_actions, top_k, temperature)
         return rollouts, rollout_log_probs, rollout_mask
+
+    # version with KV caching
+    def cached_forward_rollout_policy(self, img_latent, latent_attention_mask, max_actions=768, top_k=50, temperature=1.2):
+        kv_cache = KVCache(batch_size=img_latent.shape[0], max_seq_len=max_actions, num_kv_heads=self.decoder.num_heads, head_dim=self.decoder.head_dim, dtype=torch.float)
+        pass

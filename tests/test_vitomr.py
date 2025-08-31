@@ -450,9 +450,8 @@ def test_rollout_policy():
     img_latent = torch.rand([batch_size, seq_len, encoder_hidden_dim])
     latent_mask = torch.full([img_latent.shape[0], img_latent.shape[1]], fill_value=False)
 
-    num_rollouts = 3 
-    rollouts, rollout_scores, rollout_entropies = vitomr.forward_rollout_policy(img_latent, latent_mask, max_actions=10)
-    print(f"Rollouts:\n{rollouts}\nScores:\n{rollout_scores}\nEntropies:\n{rollout_entropies}")
+    rollouts, rollout_log_probs, mask = vitomr.forward_rollout_policy(img_latent, latent_mask, max_actions=10)
+    print(f"Rollouts:\n{rollouts}\nLog probs:\n{rollout_log_probs}\nMask:\n{mask}")
 
 def test_prepare_rollouts():
     vitomr = debug_grpo_vitomr
@@ -521,4 +520,4 @@ def test_batch_policy_inference():
     assert mask.shape == rollouts.shape
 
 if __name__ == "__main__":
-    test_batch_policy_inference()
+    test_rollout_policy()
