@@ -226,12 +226,13 @@ class CachedTransformerDecoderLayer(nn.TransformerDecoderLayer):
 class MemoryCache(nn.Module):
     def __init__(self, layer: CachedTransformerDecoderLayer):
         super().__init__()
-        self.W_kv = layer.multihead_attn.in_proj_weight[layer.hidden_dim:, :]
-        self.b_kv = layer.multihead_attn.in_proj_bias[layer.hidden_dim:]
+        # make shallow "views" that stay tied to weights (so when old_policy is synced, these are also synced)
+        self.register_buffer("W_kv", layer.multihead_attn.in_proj_weight[layer.hidden_dim:, :], persistent=False)
+        self.register_buffer("b_kv", layer.multihead_attn.in_proj_bias[layer.hidden_dim:], persistent=False)
         self.num_heads = layer.num_heads
         self.head_dim = layer.head_dim
-        self.K_cross = None
-        self.V_cross = None
+        self.register_buffer("K_cross", None, persistent=False)
+        self.register_buffer("b_kv", None, persistent=False)
 
     # called per batch with a (B, T_latent, E) memory tensor to reset/update the cached K_cross, V_cross. Stores
     # K_cross and V_cross as (B, H, T_latent, E) tensors
@@ -239,6 +240,7 @@ class MemoryCache(nn.Module):
         batch_size = memory.shape[0]
         memory_len = memory.shape[1]
 
+        print(f"DEBUG: W_kv being used in cross cache: {self.W_kv[0]}")
         KV_cross = F.linear(memory, self.W_kv, self.b_kv)
         K_cross, V_cross = KV_cross.chunk(2, dim=-1)
         # split the last (embedding) dimension into heads, then transpose latent_len and num_heads to match sdpa's expected dim order.
@@ -273,7 +275,7 @@ class CachedTransformerDecoder(nn.TransformerDecoder):
         super().__init__(decoder_layer, num_layers, norm)
        
         # initialize caches for each layer 
-        self.self_attn_caches = nn.ModuleList([KVCache(max_batch_size, max_decoder_seq_len, layer.num_heads, layer.head_dim, dtype=torch.float) for layer in self.layers])
+        self.self_attn_caches = nn.ModuleList([KVCache(max_batch_size, max_decoder_seq_len, layer.num_heads, layer.head_dim, dtype=torch.bfloat16) for layer in self.layers])
         self.cross_attn_caches = nn.ModuleList([MemoryCache(layer) for layer in self.layers])
 
     # reset each layer's self and cross attention caches. Fill cross attention caches using this batch's memory

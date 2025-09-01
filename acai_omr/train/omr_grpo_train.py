@@ -23,9 +23,10 @@ LOG_DIR = "runs/grpo"
 
 AUGMENTATION_P = 0.25
 
-TRAIN_BATCH_SIZE = 16 
+TRAIN_BATCH_SIZE = 1 # DEBUG 16 
 VALIDATION_BATCH_SIZE = 128
-NUM_WORKERS = 26
+NUM_WORKERS = 128
+NUM_EDIT_COST_PROCESSES = 26
 
 LR = 2e-5
 ADAMW_BETAS = (0.9, 0.999)
@@ -42,7 +43,7 @@ CHECKPOINT_FREQ = 1000
 TEACHER_FORCED_STATE_DICT_PATH = "tf_omr_train/vitomr.pth"
 
 INITIAL_ROLLOUT_CONFIG = RolloutConfig(
-    group_size=8, 
+    group_size=2, # DEBUG 8, 
     max_actions=768, 
     top_k=50, 
     temperature=1.2
@@ -132,7 +133,7 @@ def expand_target_lmx_seqs(target_lmx_seqs: tuple[torch.Tensor], group_size, pad
 # target_musicxml_strs is a tuple where target_musicxml_strs[i] = the target musicxml for image i in the minibatch
 # Returns three tensors of metrics across all rollouts, one for raw edit_costs, one for a bool on if a castrophic error 
 # happened, and one for counts of minor delinearization errors
-def calc_edit_costs(rollouts, pad_idx, num_groups, group_size, target_musicxml_strs: tuple, idxs_to_tokens, num_parallel_processes=12):
+def calc_edit_costs(rollouts, pad_idx, num_groups, group_size, target_musicxml_strs: tuple, idxs_to_tokens, num_parallel_processes=NUM_EDIT_COST_PROCESSES):
     # unfold into individual groups since we can't broadcast the musicxml strings within groups
     rollout_groups = rollouts.view(num_groups, group_size, rollouts.shape[-1])
     tedn_call_args = []
@@ -328,6 +329,7 @@ def grpo_update(old_policy: GRPOViTOMR, policy_theta: GRPOViTOMR, optimizer, bat
             img_latent, latent_attention_mask = old_policy.expand_img_latent_for_rollout(unexpanded_img_latent, unexpanded_latent_attention_mask, group_size)
             rollouts, old_policy_log_probs, rollout_mask = old_policy.cached_forward_rollout_policy(img_latent, latent_attention_mask, max_actions=rollout_config.max_actions, top_k=rollout_config.top_k, temperature=rollout_config.temperature)
 
+    print(f"DEBUG: rollouts done")
     # reward rollouts and calculate group-normalized advantages. Note these targets aren't left-shifted
     target_lmx_seqs = expand_target_lmx_seqs(unexpanded_target_lmx_seqs, group_size, pad_idx, device)
     raw_group_rewards, reward_components = reward_rollouts(reward_config, rollouts, rollout_mask, target_lmx_seqs, target_musicxml_strs, num_groups, group_size, old_policy.decoder.idxs_to_tokens, pad_idx)
@@ -346,8 +348,10 @@ def grpo_update(old_policy: GRPOViTOMR, policy_theta: GRPOViTOMR, optimizer, bat
     with autocast(device_type=device, dtype=torch.bfloat16):
         update_epochs = update_config.update_epochs
         for _ in range(update_epochs):
+            print(f"DEBUG decoder unembed between updates: {old_policy.decoder.unembed}")
             # generate next token logits at each time step by using rollouts in a teacher forcing step
             theta_logits = policy_theta.decoder(right_shifted_rollouts, img_latent, rollout_attention_mask, latent_attention_mask, checkpoint_grads=True)
+            print(theta_logits.requires_grad)
             grpo_objective = calc_grpo_objective(theta_logits, rollouts, rollout_attention_mask, old_policy_log_probs, advantages, update_config.epsilon, num_groups)
             entropy_bonus = calc_entropy_bonus(theta_logits, rollout_attention_mask, vocab_size)
 
@@ -363,11 +367,11 @@ def grpo_update(old_policy: GRPOViTOMR, policy_theta: GRPOViTOMR, optimizer, bat
             batch_ce_loss += ce_loss.item()
             logger.log_overall_loss(loss, counter.global_step)
 
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(policy_theta.parameters(), max_norm=1.0)
-        optimizer.step()
-        optimizer.zero_grad()
-        counter.global_step += 1
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(policy_theta.parameters(), max_norm=1.0)
+            optimizer.step()
+            optimizer.zero_grad()
+            counter.global_step += 1
 
     avg_update_overall_loss = batch_overall_loss / update_epochs
     avg_update_ce_loss = batch_ce_loss / update_epochs
@@ -420,7 +424,8 @@ def epoch_train_loop(train_dataloader, mini_val_dataloader, old_policy, policy_t
         logger.log_configs(grpo_config, counter.global_step)
         # each batch, we need to refresh old_policy to match the resulting updated policy_theta from the previous GRPO updates.
         # Instead of repeatedly deepcopying, and since the encoder and transition head are frozen, we can just refresh the decoder parameters
-        old_policy.decoder.load_state_dict(policy_theta.decoder.state_dict())
+        old_policy_state_dict = {k: v.clone() for k, v in policy_theta.decoder.state_dict().items()}
+        old_policy.decoder.load_state_dict(old_policy_state_dict)
 
         avg_update_overall_loss, avg_update_ce_loss, avg_batch_reward, avg_batch_reward_components = grpo_update(old_policy, policy_theta, optimizer, batch, grpo_config, ce_loss_fn, device, logger, counter)
         epoch_train_overall_loss += avg_update_overall_loss
@@ -507,8 +512,10 @@ if __name__ == "__main__":
     teacher_forced_vitomr, base_img_transform, base_lmx_transform, device = set_up_omr_teacher_force_train()
     encoder = teacher_forced_vitomr.encoder
     transition_head = teacher_forced_vitomr.transition_head
-    # remake decoder into variant that supports KV caching so GRPO doesn't take forever
-    decoder = teacher_forced_vitomr.decoder.to_cached_version(TRAIN_BATCH_SIZE)
+    # remake decoder into variant that supports KV caching so GRPO doesn't take forever. Caches need to support a max batch of 
+    # batch size * number of rollouts per group since groups are flattened during inference
+    max_batch_size = TRAIN_BATCH_SIZE * INITIAL_ROLLOUT_CONFIG.group_size
+    decoder = teacher_forced_vitomr.decoder.to_cached_version(max_batch_size)
 
     teacher_forced_state_dict = torch.load(TEACHER_FORCED_STATE_DICT_PATH)
 
@@ -519,7 +526,8 @@ if __name__ == "__main__":
     print(f"General hyperparameters\n{'-' * 50}\nImage augmentation probability: {AUGMENTATION_P}\n" \
           f"Train batch size: {TRAIN_BATCH_SIZE}\nValidation batch size: {VALIDATION_BATCH_SIZE}\nLearning rate: {LR}\nAdamW betas: {ADAMW_BETAS}, " \
           f"weight decay: {ADAMW_WEIGHT_DECAY}\nEpochs: {EPOCHS}\nMini validation size: {MINI_VALIDATION_SIZE} exs, frequency (in outer steps): " \
-          f"{MINI_VALIDATION_FREQ}\nCheckpoint frequency (in outer steps): {CHECKPOINT_FREQ}\nDataloader workers: {NUM_WORKERS}\n")
+          f"{MINI_VALIDATION_FREQ}\nCheckpoint frequency (in outer steps): {CHECKPOINT_FREQ}\nDataloader workers: {NUM_WORKERS}\nNumber of parallel " \
+          f"processes for calculating edit costs: {NUM_EDIT_COST_PROCESSES}")
 
     # RL is more unstable and teacher force train already included augmentations, so slightly decrease strength
     camera_augment = v2.RandomApply(transforms=[
@@ -563,7 +571,10 @@ if __name__ == "__main__":
     mini_validation_dataloader = DataLoader(mini_validation_dataset, batch_size=VALIDATION_BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
 
     # old_policy should never be changed from eval() or have any of its requires_grad changed
-    old_policy = copy.deepcopy(policy_theta).eval()
+    old_policy = GRPOViTOMR(encoder, transition_head, decoder, teacher_forced_state_dict) # a separate copy using the same parameters
+    old_policy.to(device)
+    old_policy.eval()
+
     for p in old_policy.parameters():
         p.requires_grad = False
 

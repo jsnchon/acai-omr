@@ -905,7 +905,6 @@ class GRPOViTOMR(nn.Module):
 
         rollout_log_probs = torch.zeros_like(rollouts, dtype=torch.float, device=device)
         for t in range(1, max_actions):
-#            print(f"Time step {t} rollouts: {rollouts}")
             logits = self.decoder.cached_generate(rollouts[:, t - 1].unsqueeze(1), t, latent_attention_mask=latent_attention_mask) # (R x 1 x E)
 #            print(f"Logits: {logits.shape}")
             logits = logits.squeeze(1) # (R x E), next token distributions for each rollout
