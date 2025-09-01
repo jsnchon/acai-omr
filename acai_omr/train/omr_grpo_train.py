@@ -507,6 +507,7 @@ if __name__ == "__main__":
     teacher_forced_vitomr, base_img_transform, base_lmx_transform, device = set_up_omr_teacher_force_train()
     encoder = teacher_forced_vitomr.encoder
     transition_head = teacher_forced_vitomr.transition_head
+    # remake decoder into variant that supports KV caching so GRPO doesn't take forever
     decoder = teacher_forced_vitomr.decoder
 
     teacher_forced_state_dict = torch.load(TEACHER_FORCED_STATE_DICT_PATH)

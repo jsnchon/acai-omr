@@ -4,7 +4,7 @@ from torch import nn
 from torch.utils.checkpoint import checkpoint_sequential
 from functools import partial
 from acai_omr.config import LMX_PAD_TOKEN, LMX_BOS_TOKEN, LMX_EOS_TOKEN
-from acai_omr.models.caching import KVCache
+from acai_omr.models.kv_caching import CachedTransformerDecoder, CachedTransformerDecoderLayer
 import re
 
 NUM_CHANNELS = 1 # assume these images all are grayscale
@@ -375,7 +375,9 @@ class FineTuneOMREncoder(OMREncoder):
         return x
 
 class OMRDecoder(nn.Module):
-    def __init__(self, max_lmx_seq_len, lmx_vocab_path, num_layers=10, hidden_dim=1024, num_heads=16, mlp_dim=4096, transformer_dropout=0.1):
+    # if use_caching = True, we use cached decoder layers and caches are set up with max_batch_size (which has to be 
+    # changed from its default of None). Otherwise, we use vanilla pytorch layers (and max_batch_size does nothing)
+    def __init__(self, max_lmx_seq_len, lmx_vocab_path, num_layers=10, hidden_dim=1024, num_heads=16, mlp_dim=4096, transformer_dropout=0.1, use_caching=False, max_batch_size=None):
         super().__init__()
         self.max_lmx_seq_len = max_lmx_seq_len
         self.hidden_dim = hidden_dim
@@ -401,11 +403,20 @@ class OMRDecoder(nn.Module):
         )
         nn.init.trunc_normal_(self.pos_embedding, std=0.1)
 
-        self.decoder_blocks = nn.TransformerDecoder(
-            decoder_layer=nn.TransformerDecoderLayer(d_model=self.hidden_dim, nhead=num_heads, dim_feedforward=mlp_dim, dropout=transformer_dropout, activation="gelu", batch_first=True),
-            num_layers=num_layers,
-            norm=nn.LayerNorm(self.hidden_dim, eps=1e-6)
-        )
+        if use_caching:
+            self.decoder_blocks = CachedTransformerDecoder(
+                decoder_layer=CachedTransformerDecoderLayer(d_model=self.hidden_dim, nhead=num_heads, dim_feedforward=mlp_dim, dropout=transformer_dropout, activation="gelu", batch_first=True),
+                num_layers=num_layers,
+                max_batch_size=max_batch_size,
+                max_decoder_seq_len=max_lmx_seq_len,
+                norm=nn.LayerNorm(self.hidden_dim, eps=1e-6)
+            )
+        else:
+            self.decoder_blocks = nn.TransformerDecoder(
+                decoder_layer=nn.TransformerDecoderLayer(d_model=self.hidden_dim, nhead=num_heads, dim_feedforward=mlp_dim, dropout=transformer_dropout, activation="gelu", batch_first=True),
+                num_layers=num_layers,
+                norm=nn.LayerNorm(self.hidden_dim, eps=1e-6)
+            )
 
         self.unembed = nn.Linear(self.hidden_dim, self.vocab_size)
 
@@ -454,14 +465,43 @@ class OMRDecoder(nn.Module):
     def generate(self, input_seqs, img_latent, latent_attention_mask=None):
         seq_len = input_seqs.shape[1] 
         if seq_len > self.max_lmx_seq_len:
-                raise ValueError(f"{seq_len} long lmx sequence length is too long for max sequence length of {self.max_lmx_seq_len}")
+            raise ValueError(f"{seq_len} long lmx sequence length is too long for max sequence length of {self.max_lmx_seq_len}")
 
         lmx_embeddings = self.vocab_embedding(input_seqs)
 
         pos_embed_slice = self.pos_embedding[:seq_len, :]
         lmx_embeddings = lmx_embeddings + pos_embed_slice.unsqueeze(0)
 
-        hidden_state = self.decoder_blocks(lmx_embeddings, memory=img_latent, memory_key_padding_mask=latent_attention_mask)
+        causal_mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool() 
+        hidden_state = self.decoder_blocks(lmx_embeddings, memory=img_latent, tgt_mask=causal_mask, memory_key_padding_mask=latent_attention_mask)
+        pred = self.unembed(hidden_state)
+        return pred
+
+    # tiny wrapper so caller only has to call functions at the OMRDecoder level (instead of doing decoder.decoder_blocks.prepare_caches)
+    def prepare_caches(self, encoder_memory):
+        if not isinstance(self.decoder_blocks, CachedTransformerDecoder):
+            raise RuntimeError("Trying to use cached inference pathway with an uncached TransformerDecoder instance")
+
+        self.decoder_blocks.prepare_caches(encoder_memory)
+
+    """
+    Inputs:
+        token_t: (B, 1), this time step's token. For each example in the batch, this function returns the logits for the token following
+        the passed in token given the cached encoder memory and the cached keys and values from past time steps' calls of this function
+        time_step: what decoding step we're on, 0-indexed
+    Output:
+        pred: the logits for the next token for each example in the batch
+    Before starting generation for a batch, you must call prepare_caches()
+    """
+    def cached_generate(self, token_t: torch.Tensor, time_step: int, latent_attention_mask=None):
+        if time_step >= self.max_lmx_seq_len:
+            raise RuntimeError(f"{time_step + 1} decoding steps is too long for max sequence length of {self.max_lmx_seq_len}")
+
+        embedding_t = self.vocab_embedding(token_t)
+        pos_embed_slice = self.pos_embedding[time_step, :]
+        embedding_t = embedding_t + pos_embed_slice.unsqueeze(0).unsqueeze(0)
+
+        hidden_state = self.decoder_blocks.cached_generate(embedding_t, memory_key_padding_mask=latent_attention_mask)
         pred = self.unembed(hidden_state)
         return pred
 
@@ -544,7 +584,6 @@ class TeacherForcedViTOMR(nn.Module):
         
         return omr_encoder_state_dict
    
-
     """
     Input
         x: a list of (image, lmx_sequence) tuples where each lmx_sequence is an int tensor of input token indices, with <bos> and <eos> tokens added to each already
@@ -831,5 +870,4 @@ class GRPOViTOMR(nn.Module):
 
     # version with KV caching
     def cached_forward_rollout_policy(self, img_latent, latent_attention_mask, max_actions=768, top_k=50, temperature=1.2):
-        kv_cache = KVCache(batch_size=img_latent.shape[0], max_seq_len=max_actions, num_kv_heads=self.decoder.num_heads, head_dim=self.decoder.head_dim, dtype=torch.float)
         pass
