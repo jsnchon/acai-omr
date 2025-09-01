@@ -449,8 +449,9 @@ def test_rollout_policy():
 
     img_latent = torch.rand([batch_size, seq_len, encoder_hidden_dim])
     latent_mask = torch.full([img_latent.shape[0], img_latent.shape[1]], fill_value=False)
+    latent_mask[1, 2:] = True
 
-    rollouts, rollout_log_probs, mask = vitomr.forward_rollout_policy(img_latent, latent_mask, max_actions=10)
+    rollouts, rollout_log_probs, mask = vitomr.uncached_forward_rollout_policy(img_latent, latent_mask, max_actions=10)
     print(f"Rollouts:\n{rollouts}\nLog probs:\n{rollout_log_probs}\nMask:\n{mask}")
 
 def test_prepare_rollouts():
@@ -519,5 +520,21 @@ def test_batch_policy_inference():
     assert log_probs.shape == rollouts.shape
     assert mask.shape == rollouts.shape
 
+def test_cached_rollout_policy():
+    batch_size = 16
+    decoder = OMRDecoder(MAX_LMX_SEQ_LEN, "lmx_vocab.txt", **debug_kwargs, use_caching=True, max_batch_size=16)
+    vitomr = GRPOViTOMR(pretrained_debug_encoder, debug_teacher_forced_vitomr.transition_head, decoder, debug_teacher_forced_state_dict)
+
+    batch_size = 2
+    seq_len = 4
+    encoder_hidden_dim = vitomr.encoder.hidden_dim
+
+    img_latent = torch.rand([batch_size, seq_len, encoder_hidden_dim])
+    latent_mask = torch.full([batch_size, seq_len], fill_value=False)
+    latent_mask[1, 2:] = True
+
+    rollouts, rollout_log_probs, mask = vitomr.cached_forward_rollout_policy(img_latent, latent_mask, top_k=5, max_actions=5)
+    print(f"Rollouts:\n{rollouts}\nLog probs:\n{rollout_log_probs}\nMask:\n{mask}")
+
 if __name__ == "__main__":
-    test_rollout_policy()
+    test_cached_rollout_policy()

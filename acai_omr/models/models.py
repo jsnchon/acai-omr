@@ -380,7 +380,13 @@ class OMRDecoder(nn.Module):
     def __init__(self, max_lmx_seq_len, lmx_vocab_path, num_layers=10, hidden_dim=1024, num_heads=16, mlp_dim=4096, transformer_dropout=0.1, use_caching=False, max_batch_size=None):
         super().__init__()
         self.max_lmx_seq_len = max_lmx_seq_len
+        self.lmx_vocab_path = lmx_vocab_path
+        self.num_layers = num_layers
         self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        self.head_dim = hidden_dim / num_heads
+        self.mlp_dim = mlp_dim
+        self.transformer_dropout = transformer_dropout
 
         with open(lmx_vocab_path, "r") as f:
             tokens = [line.strip() for line in f if line.strip()]
@@ -390,7 +396,6 @@ class OMRDecoder(nn.Module):
         self.pad_idx = self.tokens_to_idxs[LMX_PAD_TOKEN]
         self.bos_idx = self.tokens_to_idxs[LMX_BOS_TOKEN]
         self.eos_idx = self.tokens_to_idxs[LMX_EOS_TOKEN]
-        self.num_heads = num_heads
         self.head_dim = hidden_dim / num_heads
         self.vocab_size = len(tokens)
 
@@ -419,6 +424,20 @@ class OMRDecoder(nn.Module):
             )
 
         self.unembed = nn.Linear(self.hidden_dim, self.vocab_size)
+
+    # utility function to return a cachable OMRDecoder that's otherwise identical to this instance
+    def to_cached_version(self, max_batch_size):
+        return OMRDecoder(
+            self.max_lmx_seq_len,
+            self.lmx_vocab_path,
+            self.num_layers,
+            self.hidden_dim,
+            self.num_heads,
+            self.mlp_dim,
+            self.transformer_dropout,
+            use_caching=True,
+            max_batch_size=max_batch_size
+        )
 
     def forward(self, input_seqs, img_latent, lmx_attention_mask, latent_attention_mask, token_idxs_input=True, checkpoint_grads=False):
         """
@@ -488,7 +507,7 @@ class OMRDecoder(nn.Module):
     Inputs:
         token_t: (B, 1), this time step's token. For each example in the batch, this function returns the logits for the token following
         the passed in token given the cached encoder memory and the cached keys and values from past time steps' calls of this function
-        time_step: what decoding step we're on, 0-indexed
+        time_step: what decoding step we're on, 0-indexed (and with <bos> counting as the first time step)
     Output:
         pred: the logits for the next token for each example in the batch
     Before starting generation for a batch, you must call prepare_caches()
@@ -778,24 +797,7 @@ class GRPOViTOMR(nn.Module):
         return rollout_mask
 
     """
-    Inputs
-        img_latent: (R, T, E_enc) batched, padded tensor of B image latents each duplicated across group_size rollouts into 
-        B x group_size = R total rows
-        latent_attention_mask: (R, T) mask showing what embeddings in img_latent are padding
-        Note that this can also be used for batched evaluation/inference: simply pass in an unexpanded img_latent and mask to get one
-        rollout per example
-    Outputs
-        rollouts: (R, T) padded tensor of rollouts. May contain junk if some sequences terminated early
-        rollout_log_probs: (R, T) tensor of the log prob for choosing the chosen token at each step of rollouts
-        rollout_mask: (R, T) tensor where True = token is part of a rollout, False = token isn't
-    For each (T, E_enc) image latent in img_latent, create group_size autoregressive rollouts according to the
-    policy defined by the model's outputted distributions, up to max_actions steps in total (where <bos> stems count as 1 action) for each. 
-    At each autoregressive step, set logits that aren't in the top_k top logits to -inf, then apply softmax with temperature, 
-    then extend the sequence according to the resulting distribution 
-    Note: predictions after first train seem pretty peaky so default is to use temperature > 1 to slightly smooth things and 
-    encourage more exploration.
-    Also note that this should be called with torch_no_grad by the old policy and img_latent and latent_attention_mask should
-    be the result of self.expand_img_tensors_for_rollout
+    Warning: for GRPO this is absurdly slow so really only the cached version should be used and this should be treated as deprecated
     TODO: change this so keeps track of an active mask so only keep doing inference on active seqs, fill rest with <pad> and 0 log prob for next token
     """
     def uncached_forward_rollout_policy(self, img_latent, latent_attention_mask, max_actions=768, top_k=50, temperature=1.2):
@@ -803,7 +805,7 @@ class GRPOViTOMR(nn.Module):
 
         total_rollouts = img_latent.shape[0]
         # for efficiency, preallocate tensors to later fill in by indexing in place
-        rollouts = torch.full([total_rollouts, max_actions + 1], fill_value=self.decoder.pad_idx, dtype=torch.long, device=device)
+        rollouts = torch.full([total_rollouts, max_actions], fill_value=self.decoder.pad_idx, dtype=torch.long, device=device)
         rollouts[:, 0] = torch.full([total_rollouts], fill_value=self.decoder.bos_idx)
 
         # per-token log probs help us later mask out junk parts of sequences/calculating GRPO objective per step. Use log-probs
@@ -869,5 +871,87 @@ class GRPOViTOMR(nn.Module):
         return rollouts, rollout_log_probs, rollout_mask
 
     # version with KV caching
+    """
+    Inputs
+        img_latent: (R, T, E_enc) batched, padded tensor of B image latents each duplicated across group_size rollouts into 
+        B x group_size = R total rows
+        latent_attention_mask: (R, T) mask showing what embeddings in img_latent are padding
+        Note that this can also be used for batched evaluation/inference: simply pass in an unexpanded img_latent and mask to get one
+        rollout per example
+    Outputs
+        rollouts: (R, T) padded tensor of rollouts. May contain junk if some sequences terminated early
+        rollout_log_probs: (R, T) tensor of the log prob for choosing the chosen token at each step of rollouts
+        rollout_mask: (R, T) tensor where True = token is part of a rollout, False = token isn't
+    For each (T, E_enc) image latent in img_latent, create group_size autoregressive rollouts according to the
+    policy defined by the model's outputted distributions, up to max_actions steps in total (where <bos> stems count as 1 action) for each. 
+    At each autoregressive step, set logits that aren't in the top_k top logits to -inf, then apply softmax with temperature, 
+    then extend the sequence according to the resulting distribution 
+    Note: predictions after first train seem pretty peaky so default is to use temperature > 1 to slightly smooth things and 
+    encourage more exploration.
+    Also note that this should be called with torch_no_grad by the old policy and img_latent and latent_attention_mask should
+    be the result of self.expand_img_tensors_for_rollout
+ 
+    """
     def cached_forward_rollout_policy(self, img_latent, latent_attention_mask, max_actions=768, top_k=50, temperature=1.2):
-        pass
+        device = img_latent.device
+
+        # reset caches for this batch of rollouts
+        self.decoder.prepare_caches(img_latent)
+
+        total_rollouts = img_latent.shape[0]
+        rollouts = torch.full([total_rollouts, max_actions], fill_value=self.decoder.pad_idx, dtype=torch.long, device=device)
+        rollouts[:, 0] = torch.full([total_rollouts], fill_value=self.decoder.bos_idx)
+        finished_rollouts = torch.full([total_rollouts], fill_value=False)
+
+        rollout_log_probs = torch.zeros_like(rollouts, dtype=torch.float, device=device)
+        for t in range(1, max_actions):
+#            print(f"Time step {t} rollouts: {rollouts}")
+            logits = self.decoder.cached_generate(rollouts[:, t - 1].unsqueeze(1), t, latent_attention_mask=latent_attention_mask) # (R x 1 x E)
+#            print(f"Logits: {logits.shape}")
+            logits = logits.squeeze(1) # (R x E), next token distributions for each rollout
+
+            # top-k filtering
+            top_k_logits, top_k_indices = torch.topk(logits, top_k, dim=-1)
+
+            # extend sequences. Here, we operate in the topk results space for a bit for efficiency
+            softmax_logits = top_k_logits / temperature 
+            next_token_distr = F.softmax(softmax_logits, dim=-1)
+            next_token_idxs = torch.multinomial(next_token_distr, num_samples=1) # (top_k, 1)
+            next_vocab_token_idxs = top_k_indices.gather(-1, next_token_idxs) # (R, 1), map indexes in topk result space to the indexes in the vocab space
+#            print(f"topk logits/idxs: {softmax_logits}\n{top_k_indices}\nchosen rollout tokens: {next_token_idxs}")
+            rollouts[:, t] = next_vocab_token_idxs.squeeze(1)
+#            print(f"Extended rollouts: {rollouts}")
+
+            token_log_probs = F.log_softmax(top_k_logits, dim=-1)
+#            print(f"topk token log probs: {token_log_probs}")
+            next_token_log_probs = token_log_probs.gather(-1, index=next_token_idxs)
+            rollout_log_probs[:, t] = next_token_log_probs.squeeze(1)
+#            print(f"Extended log probs: {rollout_log_probs}")
+
+            # debug for testing premature finishing
+#            if t == 2:
+#                rollouts[0, t] = self.decoder.eos_idx
+#            if t == 3:
+#                rollouts[1, t] = self.decoder.eos_idx
+ 
+            # mark rollouts that just were extended with <eos> as finished
+            finished_rollouts[rollouts[:, t] == self.decoder.eos_idx] = True
+#            print(f"Finished rollouts: {finished_rollouts}")
+
+            # end early if all seqs are done early
+            if torch.all(finished_rollouts):
+                break
+       
+        rollout_mask = self.create_rollout_mask(rollouts)
+        # explicitly set tokens that aren't part of rollouts to <pad> and their log probs to 0. Later functions assume this is the case
+        rollouts = rollouts.masked_fill(~rollout_mask, self.decoder.pad_idx)
+
+        # if all rollouts ended early, only return the filled part of the preallocated tensor
+        max_rollout_len = torch.max(rollout_mask.sum(dim=-1))
+        rollouts = rollouts[:, :max_rollout_len]
+        rollout_log_probs = rollout_log_probs[:, :max_rollout_len]
+        rollout_mask = rollout_mask[:, :max_rollout_len]
+
+        rollout_log_probs = rollout_log_probs.masked_fill(~rollout_mask, 0.0)
+
+        return rollouts, rollout_log_probs, rollout_mask

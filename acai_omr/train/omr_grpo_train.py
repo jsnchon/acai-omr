@@ -6,7 +6,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.multiprocessing import Pool # regular multiprocessing complains about torch's multi-threadedness
 from acai_omr.train.omr_teacher_force_train import set_up_omr_teacher_force_train
 from acai_omr.train.datasets import GrandStaffLMXDataset, GrandStaffOMRTrainWrapper, OlimpicDataset
-from acai_omr.models.models import GRPOViTOMR, OMRCELoss
+from acai_omr.models.models import GRPOViTOMR, OMRCELoss, OMRDecoder
 from acai_omr.utils.utils import stringify_lmx_seq, ragged_collate_fn, stepwise_cosine_anneal_with_warmup
 from acai_omr.utils.utils import RolloutConfig, RewardConfig, RewardComponents, LossConfig, UpdateConfig, GRPOConfig, StepCounter, GRPOLogger
 from acai_omr.config import GRAND_STAFF_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
@@ -326,7 +326,7 @@ def grpo_update(old_policy: GRPOViTOMR, policy_theta: GRPOViTOMR, optimizer, bat
             unexpanded_img_latent = old_policy.transition_head(unexpanded_img_latent)
             # run rollouts
             img_latent, latent_attention_mask = old_policy.expand_img_latent_for_rollout(unexpanded_img_latent, unexpanded_latent_attention_mask, group_size)
-            rollouts, old_policy_log_probs, rollout_mask = old_policy.forward_rollout_policy(img_latent, latent_attention_mask, max_actions=rollout_config.max_actions, top_k=rollout_config.top_k, temperature=rollout_config.temperature)
+            rollouts, old_policy_log_probs, rollout_mask = old_policy.cached_forward_rollout_policy(img_latent, latent_attention_mask, max_actions=rollout_config.max_actions, top_k=rollout_config.top_k, temperature=rollout_config.temperature)
 
     # reward rollouts and calculate group-normalized advantages. Note these targets aren't left-shifted
     target_lmx_seqs = expand_target_lmx_seqs(unexpanded_target_lmx_seqs, group_size, pad_idx, device)
@@ -508,7 +508,7 @@ if __name__ == "__main__":
     encoder = teacher_forced_vitomr.encoder
     transition_head = teacher_forced_vitomr.transition_head
     # remake decoder into variant that supports KV caching so GRPO doesn't take forever
-    decoder = teacher_forced_vitomr.decoder
+    decoder = teacher_forced_vitomr.decoder.to_cached_version(TRAIN_BATCH_SIZE)
 
     teacher_forced_state_dict = torch.load(TEACHER_FORCED_STATE_DICT_PATH)
 
