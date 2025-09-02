@@ -1,5 +1,5 @@
 import torch
-from acai_omr.train.omr_grpo_train import calc_edit_costs, calc_tedn_scores, calc_wellformedness, calc_token_f1, calc_n_gram_penalty, calc_repeat_penalty, calc_len_penalty, calc_main_grpo_objective, calc_policy_theta_entropy, calc_entropy_bonus
+from acai_omr.train.omr_grpo_train import calc_edit_costs, calc_tedn_scores, calc_wellformedness, calc_token_f1, calc_n_gram_penalty, calc_repeat_penalty, calc_len_penalty, calc_grpo_objective, calc_policy_theta_entropy, calc_entropy_bonus
 from acai_omr.train.omr_teacher_force_train import set_up_omr_teacher_force_train
 from acai_omr.train.datasets import OlimpicDataset
 from acai_omr.config import OLIMPIC_SYNTHETIC_ROOT_DIR
@@ -172,7 +172,7 @@ def test_calc_grpo():
     # probability ratios should be 0.25 / 0.25 where rollout token is 0, 0.25 / 0.1 where rollout token is 5. Final results will
     # vary depending on length of each rollout
     print(f"Theta logits:\n{theta_logits}\nRollouts:\n{rollouts}\nRollout attn mask:\n{rollout_attention_mask}\nOld policy log probs:\n{old_policy_log_probs}\nAdvantages:\n{advantages}")
-    grpo_objective = calc_main_grpo_objective(theta_logits, rollouts, rollout_attention_mask, old_policy_log_probs, advantages, 100, num_groups)
+    grpo_objective = calc_grpo_objective(theta_logits, rollouts, rollout_attention_mask, old_policy_log_probs, advantages, 100, num_groups)
 
     expected_ratios = torch.full([total_rollouts, 3], fill_value=1.0)
     expected_ratios[1, :] = 0.25 / 0.1 # ratio for 5 tokens
