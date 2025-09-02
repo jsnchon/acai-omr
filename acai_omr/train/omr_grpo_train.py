@@ -4,10 +4,11 @@ from torch.amp import autocast
 from torch.utils.data import ConcatDataset, DataLoader, Subset
 from torch.utils.tensorboard import SummaryWriter
 from torch.multiprocessing import Pool # regular multiprocessing complains about torch's multi-threadedness
+from torch.optim.lr_scheduler import LinearLR
 from acai_omr.train.omr_teacher_force_train import set_up_omr_teacher_force_train
 from acai_omr.train.datasets import GrandStaffLMXDataset, GrandStaffOMRTrainWrapper, OlimpicDataset
 from acai_omr.models.models import GRPOViTOMR, OMRCELoss, OMRDecoder
-from acai_omr.utils.utils import stringify_lmx_seq, ragged_collate_fn, stepwise_cosine_anneal_with_warmup
+from acai_omr.utils.utils import stringify_lmx_seq, ragged_collate_fn
 from acai_omr.utils.utils import RolloutConfig, RewardConfig, RewardComponents, LossConfig, UpdateConfig, GRPOConfig, StepCounter, GRPOLogger
 from acai_omr.config import GRAND_STAFF_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
 from torchvision.transforms import v2, InterpolationMode
@@ -17,15 +18,11 @@ import pandas as pd
 import copy
 import time
 
-# TODOS: fix theta_logits from teacher force step not having requires_grad = True (likely a problem introduced with caching)
-# back on gpu machine, test that old policy doesnt update between update steps but is being synced between batches
-# using debug print
-
 MODEL_DIR_PATH = Path("grpo_omr_train")
 CHECKPOINTS_DIR_PATH = MODEL_DIR_PATH / "checkpoints"
 LOG_DIR = "runs/grpo"
 
-AUGMENTATION_P = 0.25
+AUGMENTATION_P = 0.3
 
 TRAIN_BATCH_SIZE = 16 
 VALIDATION_BATCH_SIZE = 128
@@ -33,41 +30,41 @@ VALIDATION_BATCH_SIZE = 128
 NUM_DATALOADER_WORKERS = 2
 NUM_EDIT_COST_PROCESSES = 24
 
-LR = 2e-5
+LR = 1e-6
 ADAMW_BETAS = (0.9, 0.95)
 ADAMW_WEIGHT_DECAY = 0.0
 
-EPOCHS = 8 # enough for ~25000 outer steps
+EPOCHS = 1 # enough for ~3500 outer steps
 
 MINI_VALIDATION_SIZE = 1000 # subset size
 
 # in outer steps within each epoch (ie minibatches)
-MINI_VALIDATION_FREQ = 250
-CHECKPOINT_FREQ = 1000
+MINI_VALIDATION_FREQ = 100
+CHECKPOINT_FREQ = 100
 
 TEACHER_FORCED_STATE_DICT_PATH = "tf_omr_train/vitomr.pth"
 
 INITIAL_ROLLOUT_CONFIG = RolloutConfig(
     group_size=8, 
-    max_actions=512, 
+    max_actions=768, 
     top_k=50, 
-    temperature=1.2
+    temperature=1.1
 )
 INITIAL_REWARD_CONFIG = RewardConfig(
-    lambda_tedn=6,
-    lambda_well_formed=2,
-    lambda_f1=3,
+    lambda_tedn=7,
+    lambda_well_formed=1.5,
+    lambda_f1=2.5,
     lambda_repeat=2,
-    lambda_len=0.25,
+    lambda_len=2,
     alpha_tedn=0.01,
-    alpha_well_formed=0.2,
+    alpha_well_formed=0.25,
     gamma=3,
     delta=5,
-    tau=100
+    tau=50
 )
 INITIAL_LOSS_CONFIG = LossConfig(
-    entropy_beta=0.25,
-    lambda_ce=0.15
+    entropy_beta=0.05,
+    lambda_ce=0.1
 )
 INITIAL_UPDATE_CONFIG = UpdateConfig(
     epsilon=0.2,
@@ -76,30 +73,27 @@ INITIAL_UPDATE_CONFIG = UpdateConfig(
 )
 
 # all these schedulers step per-batch
-WARMUP_STEPS = 750 # 3% of total steps
-MIN_LR = 4e-6
+LR_END_FACTOR = 0.1
 
-EXPLORATION_EPOCHS = 1
+EXPLORATION_STEPS = 30
 MAX_MAX_ACTIONS = 1536
 MIN_TOP_K = 10
-MIN_TEMPERATURE = 0.7
-MAX_LAMBDA_LEN = 2 
+MIN_TEMPERATURE = 0.6
 MIN_ENTROPY_BETA = 0
-MIN_LAMBDA_CE = 0
+MIN_LAMBDA_CE = 0.01
 
 class CurriculumScheduler:
-    def __init__(self, grpo_config, exploration_epochs, total_epochs, num_outer_steps_per_epoch,
-                 max_max_actions, min_top_k, min_temperature, max_lambda_len, min_beta, min_lambda_ce):
+    def __init__(self, grpo_config, exploration_steps, total_epochs, num_outer_steps_per_epoch,
+                 max_max_actions, min_top_k, min_temperature, min_beta, min_lambda_ce):
         self.grpo_config = grpo_config
         self.step_count = 0
-        self.exploration_steps = exploration_epochs * num_outer_steps_per_epoch
-        self.anneal_steps = (total_epochs - exploration_epochs) * num_outer_steps_per_epoch
+        self.exploration_steps = exploration_steps
+        self.anneal_steps = total_epochs * num_outer_steps_per_epoch - exploration_steps
         self.total_steps = self.exploration_steps + self.anneal_steps
         # tuples of (init_value, min/max_value) depending on if being increased or annealed
         self.max_actions = (grpo_config.rollout_config.max_actions, max_max_actions)
         self.top_k = (grpo_config.rollout_config.top_k, min_top_k)
         self.temperature = (grpo_config.rollout_config.temperature, min_temperature)
-        self.lambda_len = (grpo_config.reward_config.lambda_len, max_lambda_len)
         self.entropy_beta = (grpo_config.loss_config.entropy_beta, min_beta)
         self.lambda_ce = (grpo_config.loss_config.lambda_ce, min_lambda_ce)
 
@@ -118,7 +112,6 @@ class CurriculumScheduler:
         self.grpo_config.rollout_config.max_actions = int(self.calc_increasing_value(progress, *self.max_actions))
         self.grpo_config.rollout_config.top_k = int(self.calc_annealing_value(progress, *self.top_k))
         self.grpo_config.rollout_config.temperature = self.calc_annealing_value(progress, *self.temperature)
-        self.grpo_config.reward_config.lambda_len = self.calc_increasing_value(progress, *self.lambda_len)
         self.grpo_config.loss_config.entropy_beta = self.calc_annealing_value(progress, *self.entropy_beta)
         self.grpo_config.loss_config.lambda_ce = self.calc_annealing_value(progress, *self.lambda_ce)
         
@@ -337,8 +330,6 @@ def grpo_update(old_policy: GRPOViTOMR, policy_theta: GRPOViTOMR, optimizer, bat
     # reward rollouts and calculate group-normalized advantages. Note these targets aren't left-shifted
     target_lmx_seqs = expand_target_lmx_seqs(unexpanded_target_lmx_seqs, group_size, pad_idx, device)
     raw_group_rewards, reward_components = reward_rollouts(reward_config, rollouts, rollout_mask, target_lmx_seqs, target_musicxml_strs, num_groups, group_size, old_policy.decoder.idxs_to_tokens, pad_idx)
-    print(f"DEBUG: raw rewards {raw_group_rewards}")
-    print(f"DEBUG: raw reward componetns {reward_components}")
     logger.log_raw_reward_stats(raw_group_rewards, counter.global_step)
     logger.log_raw_reward_components(reward_components, counter.global_step)
 
@@ -414,9 +405,9 @@ def epoch_train_loop(train_dataloader, mini_val_dataloader, old_policy, policy_t
     batch_size = train_dataloader.batch_size
     len_dataset = len(train_dataloader.dataset)
     num_batches = len(train_dataloader)
-    # convert outer step frequencies to global step frequencies
-    mini_val_freq = grpo_config.mini_validation_freq * update_config.update_epochs
-    checkpoint_freq = grpo_config.checkpoint_freq * update_config.update_epochs
+    # these will be compared against batch index, ie their values are in outer steps (not global/optim steps)
+    mini_val_freq = grpo_config.mini_validation_freq 
+    checkpoint_freq = grpo_config.checkpoint_freq 
 
     # these are epoch level metrics. Within each batch, average over rollouts, steps, exs, etc.,
     # accumulate totals for each loop, then average those at the end for epoch-level averages. We exclude
@@ -446,7 +437,7 @@ def epoch_train_loop(train_dataloader, mini_val_dataloader, old_policy, policy_t
             current_ex = i * batch_size + len(batch)
             print(f"[{current_ex:>5d}/{len_dataset:>5d}]")
 
-        if (i + 1) % (mini_val_freq * update_config.update_epochs) == 0:
+        if (i + 1) % mini_val_freq == 0:
             print(f"{'-' * 25}\nMini validation")
             policy_theta.eval()
             mini_val_reward, mini_val_reward_components, mini_val_ce_loss = validation_loop(mini_val_dataloader, policy_theta, reward_config, rollout_config, ce_loss_fn, policy_theta.decoder.pad_idx, device)
@@ -455,7 +446,7 @@ def epoch_train_loop(train_dataloader, mini_val_dataloader, old_policy, policy_t
             logger.log_mini_validation_stats(mini_val_reward, mini_val_reward_components, mini_val_ce_loss, counter.global_step)
             policy_theta.train() 
 
-        if (i + 1) % (grpo_config.checkpoint_freq * update_config.update_epochs) == 0:
+        if (i + 1) % checkpoint_freq == 0:
             checkpoint_train_state((CHECKPOINTS_DIR_PATH / f"step_{counter.global_step}_checkpoint.pth"), policy_theta, optimizer, logger)
 
     epoch_stats = average_epoch_stats(epoch_train_overall_loss, epoch_train_ce_loss, epoch_train_reward, epoch_train_reward_components, num_batches)
@@ -584,9 +575,9 @@ if __name__ == "__main__":
     for p in old_policy.parameters():
         p.requires_grad = False
 
-    print(f"Scheduler hyperparematers\n{'-' * 50}\nLr warmup steps: {WARMUP_STEPS}\nMinimum lr: {MIN_LR}\nExploration " \
-          f"epochs: {EXPLORATION_EPOCHS}\nMax max_actions: {MAX_MAX_ACTIONS}\nMin top_k: {MIN_TOP_K}\nMin softmax " \
-          f"temperature: {MIN_TEMPERATURE}\nMax lambda_len: {MAX_LAMBDA_LEN}\nMin entropy beta: {MIN_ENTROPY_BETA}\n" \
+    print(f"Curriculum hyperparameters\n{'-' * 50}\nMinimum lr: {LR * LR_END_FACTOR}\nExploration " \
+          f"steps: {EXPLORATION_STEPS}\nMax max_actions: {MAX_MAX_ACTIONS}\nMin top_k: {MIN_TOP_K}\nMin softmax " \
+          f"temperature: {MIN_TEMPERATURE}\nMin entropy beta: {MIN_ENTROPY_BETA}\n" \
           f"Min lambda_ce: {MIN_LAMBDA_CE}\n")
 
     rollout_config = INITIAL_ROLLOUT_CONFIG
@@ -605,9 +596,9 @@ if __name__ == "__main__":
     logger = GRPOLogger(writer, epoch_stats_df)
     grpo_config = GRPOConfig(rollout_config, reward_config, loss_config, update_config, MINI_VALIDATION_FREQ, CHECKPOINT_FREQ)
     num_steps_per_epoch = len(train_dataloader)
-    lr_scheduler = stepwise_cosine_anneal_with_warmup(optimizer, WARMUP_STEPS, EPOCHS, MIN_LR, num_steps_per_epoch)
-    curriculum_scheduler = CurriculumScheduler(grpo_config, EXPLORATION_EPOCHS, EPOCHS, num_steps_per_epoch,
-                                               MAX_MAX_ACTIONS, MIN_TOP_K, MIN_TEMPERATURE, MAX_LAMBDA_LEN, MIN_ENTROPY_BETA, MIN_LAMBDA_CE)
+    lr_scheduler = LinearLR(optimizer, start_factor=1.0, end_factor=LR_END_FACTOR, total_iters=(EPOCHS * num_steps_per_epoch))
+    curriculum_scheduler = CurriculumScheduler(grpo_config, EXPLORATION_STEPS, EPOCHS, num_steps_per_epoch,
+                                               MAX_MAX_ACTIONS, MIN_TOP_K, MIN_TEMPERATURE, MIN_ENTROPY_BETA, MIN_LAMBDA_CE)
     counter = StepCounter(0)
 
     for i in range(EPOCHS):

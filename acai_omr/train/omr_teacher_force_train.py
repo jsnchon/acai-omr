@@ -4,8 +4,9 @@ from pathlib import Path
 from acai_omr.models.models import FineTuneOMREncoder, OMRDecoder, ScheduledSamplingViTOMR, OMRCELoss
 from acai_omr.train.datasets import GrandStaffLMXDataset, GrandStaffOMRTrainWrapper, OlimpicDataset
 from acai_omr.config import GRAND_STAFF_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, LMX_BOS_TOKEN, LMX_EOS_TOKEN
-from acai_omr.utils.utils import DynamicResize, cosine_anneal_with_warmup, ragged_collate_fn, save_teacher_force_training_stats
+from acai_omr.utils.utils import DynamicResize, cosine_anneal_with_warmup, ragged_collate_fn, StepCounter
 from torch.utils.data import ConcatDataset, DataLoader
+from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import v2, InterpolationMode
 from torch.amp import autocast
 from acai_omr.train.pre_train import PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH
@@ -13,9 +14,10 @@ import time
 import pandas as pd
 from dataclasses import dataclass
 
+LOG_DIR = "runs/tf_omr_train"
+
 MODEL_DIR_PATH = Path("tf_omr_train")
 CHECKPOINTS_DIR_PATH = MODEL_DIR_PATH / "checkpoints"
-STATS_DIR_PATH = MODEL_DIR_PATH / "stats"
 
 PRETRAINED_MAE_STATE_DICT_PATH = "mae_pre_train/pretrained_mae.pth"
 ENCODER_FINE_TUNE_DEPTH = 12
@@ -25,7 +27,7 @@ LMX_VOCAB_PATH = "lmx_vocab.txt"
 NUM_DECODER_LAYERS = 12
 
 # training settings
-EPOCHS = 30
+EPOCHS = 35
 CHECKPOINT_FREQ = 5
 FINE_TUNE_BASE_LR = 1e-5 # 0.1x base lr
 FINE_TUNE_DECAY_FACTOR = 0.9
@@ -39,7 +41,7 @@ GRAD_ACCUMULATION_STEPS = 4
 NUM_WORKERS = 26
 
 # regularization settings
-AUGMENTATION_P = 0.4
+AUGMENTATION_P = 0.5
 ENCODER_DROPOUT = 0.05
 TRANSITION_HEAD_DROPOUT = 0.05
 DECODER_DROPOUT = 0.1
@@ -47,17 +49,38 @@ LABEL_SMOOTHING = 0.0
 
 # teacher forcing/scheduled sampling settings. Teacher forcing prob decreases linearly, tau decreases exponentially
 INITIAL_TEACHER_FORCING_PROB = 1.0
-MIN_TEACHER_FORCING_PROB = 0.5
-INITIAL_TAU = 5.0
+MIN_TEACHER_FORCING_PROB = 0.0
+INITIAL_TAU = 1.5
 MIN_TAU = 0.1
-NUM_SOFT_EPOCHS = EPOCHS // 2
+TF_ANNEAL_EPOCHS = 25 # number of epochs to anneal tf prob and tau down to. Remaining epochs, they'll remain at their floor
+SOFT_EPOCHS = EPOCHS // 2
 
 @dataclass
-class HyperparamConfig:
-    grad_accumulation_steps: int
-    teacher_forcing_prob: float
+class TFConfig:
+    tf_prob: float
     tau: float
     use_hard_sampling: bool
+
+class TFScheduler:
+    def __init__(self, tf_config: TFConfig, init_tf_prob, min_tf_prob, init_tau, min_tau, soft_epochs, anneal_epochs, num_steps_per_epoch):
+        self.tf_config = tf_config
+        self.init_tf_prob = init_tf_prob
+        self.min_tf_prob = min_tf_prob
+        self.init_tau = init_tau
+        self.min_tau = min_tau
+        self.soft_steps = soft_epochs * num_steps_per_epoch
+        self.anneal_steps = anneal_epochs * num_steps_per_epoch
+        self.step_count = 0
+
+    def step(self):
+        if self.step_count >= self.soft_steps:
+            self.tf_config.use_hard_sampling = True
+
+        anneal_progress = self.step_count / self.anneal_steps
+        self.tf_config.tf_prob = max(self.init_tf_prob - (self.init_tf_prob - self.min_tf_prob) * anneal_progress, self.min_tf_prob)
+        self.tf_config.tau = max(self.init_tau * (self.min_tau / self.init_tau) ** anneal_progress, self.min_tau)
+
+        self.step_count += 1
 
 class PrepareLMXSequence(nn.Module):
     def __init__(self, tokens_to_idxs):
@@ -78,10 +101,11 @@ def save_omr_training_state(path, vitomr, optimizer, scheduler):
         "scheduler_state_dict": scheduler.state_dict(),
     }, path)
 
-def train_loop(vitomr: ScheduledSamplingViTOMR, dataloader, loss_fn, optimizer, scheduler, device, hyperparams: HyperparamConfig):
+def train_loop(vitomr: ScheduledSamplingViTOMR, dataloader, loss_fn, optimizer, scheduler, device, grad_accumulation_steps, tf_config: TFConfig, tf_scheduler: TFScheduler, writer, counter):
     print("Starting training")
     vitomr.train()
     epoch_loss = 0
+    effective_batch_loss = 0
     num_batches = len(dataloader)
     len_dataset = len(dataloader.dataset)
     batch_size = dataloader.batch_size
@@ -89,19 +113,29 @@ def train_loop(vitomr: ScheduledSamplingViTOMR, dataloader, loss_fn, optimizer, 
     for batch_idx, batch in enumerate(dataloader):
         batch = [(x.to(device, non_blocking=True), y.to(device, non_blocking=True)) for x, y in batch]
         with autocast(device_type=device, dtype=torch.bfloat16):
-            pred, target_seqs = vitomr.forward_train(batch, hyperparams.teacher_forcing_prob, hyperparams.tau, hyperparams.use_hard_sampling)
+            pred, target_seqs = vitomr.forward_train(batch, tf_config.tf_prob, tf_config.tau, tf_config.use_hard_sampling)
             loss = loss_fn(pred, target_seqs)
         epoch_loss += loss.item()
+        effective_batch_loss += loss.item()
         loss.backward()
 
         if batch_idx % 100 == 0:
             current_ex = batch_idx * batch_size + len(batch)
             print(f"[{current_ex:>5d}/{len_dataset:>5d}]")
 
-        if (batch_idx + 1) % hyperparams.grad_accumulation_steps == 0 or (batch_idx + 1) == len(dataloader):
+        if (batch_idx + 1) % grad_accumulation_steps == 0 or (batch_idx + 1) == len(dataloader):
             optimizer.step()
             optimizer.zero_grad()
             scheduler.step()
+            tf_scheduler.step()
+
+            writer.add_scalar(f"train/loss", effective_batch_loss, counter.global_step)
+            writer.add_scalar(f"train/hyperparams/base_lr", optimizer.param_groups[0]["lr"], counter.global_step)
+            writer.add_scalar(f"train/hyperparams/fine_tune_base_lr", optimizer.param_groups[2]["lr"], counter.global_step)
+            writer.add_scalar(f"train/hyperparams/teacher_forcing_prob", tf_config.tf_prob, counter.global_step)
+            writer.add_scalar(f"train/hyperparams/tau", tf_config.tau, counter.global_step)
+            effective_batch_loss = 0
+            counter.increment()
     
     avg_loss = epoch_loss / num_batches
     print(f"Average training loss over this epoch: {avg_loss}")
@@ -131,93 +165,101 @@ def validation_loop(vitomr, dataloader, loss_fn, device):
     return avg_loss
 
 # this should be called at each epoch's start (ie before the train loop). Both epoch and max_epochs should be 0-indexed
-def calc_teacher_forcing_prob(epoch, max_epochs, initial_prob, min_prob):
-    return max(initial_prob - epoch / max_epochs, min_prob)
+def calc_teacher_forcing_prob(epoch, tf_anneal_epochs, initial_prob, min_prob):
+    if epoch < tf_anneal_epochs:
+        progress = epoch / tf_anneal_epochs
+        return initial_prob - (initial_prob - min_prob) * progress
+    else:
+        return min_prob
 
 # same use as calc_teacher_forcing_prob
-def calc_tau(epoch, max_epochs, initial_tau, min_tau):
-    progress = epoch / max_epochs
-    return initial_tau * (min_tau / initial_tau) ** progress
+def calc_tau(epoch, tf_anneal_epochs, initial_tau, min_tau):
+    if epoch < tf_anneal_epochs:
+        progress = epoch / tf_anneal_epochs
+        return initial_tau * (min_tau / initial_tau) ** progress
+    else:
+        return min_tau
 
 def omr_teacher_force_train(vitomr, train_dataset, validation_dataset, device):
-    print("Model architecture\n--------------------")
-    print(vitomr)
+    MODEL_DIR_PATH.mkdir()
+    CHECKPOINTS_DIR_PATH.mkdir()
+    print(f"Created directories {MODEL_DIR_PATH}, {CHECKPOINTS_DIR_PATH}\n")
+
+    print(f"Model architecture\n{'-' * 50}\n{vitomr}")
     encoder_params_count = sum(p.numel() for p in vitomr.encoder.parameters() if p.requires_grad)
     transition_head_params_count = sum(p.numel() for p in vitomr.transition_head.parameters() if p.requires_grad)
     decoder_params_count = sum(p.numel() for p in vitomr.decoder.parameters() if p.requires_grad)
-    print(f"Trainable parameters count\n--------------------\nEncoder: {encoder_params_count}\nTransition head: {transition_head_params_count}\nDecoder: {decoder_params_count}\nTotal: {encoder_params_count + transition_head_params_count + decoder_params_count}") 
+    print(f"Trainable parameters count\nEncoder: {encoder_params_count}\nTransition head: {transition_head_params_count}\nDecoder: {decoder_params_count}\nTotal: {encoder_params_count + transition_head_params_count + decoder_params_count}\n") 
 
-    print(f"Setting up DataLoaders with batch size {BATCH_SIZE}, shuffle, {NUM_WORKERS} workers, ragged collate function, pinned memory")
+    print(f"General hyperparameters\n{'-' * 50}\nEpochs: {EPOCHS}\nWarmup epochs: {WARMUP_EPOCHS}\nCheckpoint frequency: {CHECKPOINT_FREQ} epochs\n" \
+          f"Base lr: {BASE_LR}\nFine tune base lr: {FINE_TUNE_BASE_LR}, layer-wise decay factor of {FINE_TUNE_DECAY_FACTOR}\nMinimum lr: {MIN_LR}\n" \
+          f"AdamW betas: {ADAMW_BETAS}, weight decay: {ADAMW_WEIGHT_DECAY}\nBatch size: {BATCH_SIZE}\nGradient accumulation steps: {GRAD_ACCUMULATION_STEPS}\n" \
+          f"Number of DataLoader workers: {NUM_WORKERS}\n")
+
     train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
     validation_dataloader = DataLoader(validation_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
-    print(f"Dataset augmentation probability: {AUGMENTATION_P}")
 
-    print(f"Creating optimizer parameter groups using base lr {BASE_LR} for transition head and decoder, {FINE_TUNE_BASE_LR} as encoder fine-tune base lr with {FINE_TUNE_DECAY_FACTOR} layer-wise decay factor")
     param_groups, layer_lrs = vitomr.create_fine_tune_param_groups(BASE_LR, FINE_TUNE_BASE_LR, FINE_TUNE_DECAY_FACTOR)
-    print(f"Encoder fine-tune base lrs by layer: {layer_lrs}")
+    print(f"Encoder fine-tune base lrs by layer: {layer_lrs}\n")
+    print(f"Regularization hyperparameters\n{'-' * 50}\nImage augmentation probability: {AUGMENTATION_P}\nEncoder dropout: {ENCODER_DROPOUT}\n" \
+          f"Transition head dropout: {TRANSITION_HEAD_DROPOUT}\nDecoder dropout: {DECODER_DROPOUT}\nLabel smoothing: {LABEL_SMOOTHING}\n")
 
-    print(f"Setting up AdamW with betas {ADAMW_BETAS}, weight decay {ADAMW_WEIGHT_DECAY}")
     optimizer = torch.optim.AdamW(param_groups, betas=ADAMW_BETAS, weight_decay=ADAMW_WEIGHT_DECAY)
 
-    print(f"Accumulating gradients for {GRAD_ACCUMULATION_STEPS} steps for an effective batch size of {GRAD_ACCUMULATION_STEPS * BATCH_SIZE}")
     num_batches = -(len(train_dataloader) // -GRAD_ACCUMULATION_STEPS)
-    print(f"Setting up scheduler with {WARMUP_EPOCHS} warm-up epochs, {EPOCHS} total epochs, {MIN_LR} minimum learning rate, {num_batches} (effective) batches per epoch")
     scheduler = cosine_anneal_with_warmup(optimizer, WARMUP_EPOCHS, EPOCHS, MIN_LR, num_train_batches=num_batches)
     
-    print(f"Using label smoothing of {LABEL_SMOOTHING} for cross entropy loss")
     loss_fn = OMRCELoss(vitomr.decoder.pad_idx, label_smoothing=LABEL_SMOOTHING)
 
-    print(f"Teacher forcing settings\n{'-' * 30}\nInitial teacher forcing per-token probability: {INITIAL_TEACHER_FORCING_PROB}\n" \
+    print(f"Teacher forcing hyperparameters\n{'-' * 50}\nInitial teacher forcing per-token probability: {INITIAL_TEACHER_FORCING_PROB}\n" \
           f"Minimum teacher forcing probability: {MIN_TEACHER_FORCING_PROB}\nInitial Gumbel-Softmax tau: {INITIAL_TAU}\n" \
-          f"Minimum Gumbel-Softmax tau: {MIN_TAU}\nNumber of epochs with soft prediction sampling: {NUM_SOFT_EPOCHS}")
+          f"Minimum Gumbel-Softmax tau: {MIN_TAU}\nNumber of epochs with soft prediction sampling: {SOFT_EPOCHS}\n" \
+          f"Annealing teacher forcing probability and tau over {TF_ANNEAL_EPOCHS} epochs")
 
-    MODEL_DIR_PATH.mkdir()
-    CHECKPOINTS_DIR_PATH.mkdir()
-    STATS_DIR_PATH.mkdir()
-    print(f"Created directories {MODEL_DIR_PATH}, {CHECKPOINTS_DIR_PATH}, {STATS_DIR_PATH}")
-
-    train_stats_df = pd.DataFrame(columns=["Train loss", "Validation loss", "Base lr at start", 
-                                           "Fine-tune lr at start", "Teacher forcing probability", "Gumbel-softmax tau", 
-                                           "Using hard sampling"])
+    writer = SummaryWriter(LOG_DIR, max_queue=50)
+    counter = StepCounter()
+    tf_config = TFConfig(INITIAL_TEACHER_FORCING_PROB, INITIAL_TAU, False)
+    tf_scheduler = TFScheduler(tf_config, INITIAL_TEACHER_FORCING_PROB, MIN_TEACHER_FORCING_PROB, INITIAL_TAU, MIN_TAU, SOFT_EPOCHS, TF_ANNEAL_EPOCHS, num_batches)
+    epoch_stats_df = pd.DataFrame(columns=["train_loss", "validation_loss", "base_lr", "fine_tune_base_lr", "teacher_forcing_prob", "tau", "use_hard_sampling"])
 
     print(f"OMR training for {EPOCHS} epochs. Checkpointing every {CHECKPOINT_FREQ} epochs")
     for i in range(EPOCHS):
-        print(f"Epoch {i + 1}\n{'-' * 30}")
+        print(f"\nEpoch {i + 1}\n{'-' * 50}")
         base_lr = optimizer.param_groups[0]["lr"] # assuming transition head/decoder lr is the same
         fine_tune_base_lr = optimizer.param_groups[2]["lr"] # record the highest fine-tune lr all the decayed ones are based on
         print(f"Hyperparameters at epoch start:")
         print(f"Base learning rate: {base_lr:>0.8f}\nFine-tune learning rate: {fine_tune_base_lr:>0.8f}")
-        tf_prob = calc_teacher_forcing_prob(i, EPOCHS - 1, INITIAL_TEACHER_FORCING_PROB, MIN_TEACHER_FORCING_PROB)
-        tau = calc_tau(i, EPOCHS - 1, INITIAL_TAU, MIN_TAU)
-        use_hard_sampling = i >= NUM_SOFT_EPOCHS
-        print(f"Teacher forcing probability: {tf_prob}\nGumbel-softmax tau: {tau}\nUsing hard sampling: {use_hard_sampling}")
-        hyperparams = HyperparamConfig(GRAD_ACCUMULATION_STEPS, tf_prob, tau, use_hard_sampling)
+        print(f"Teacher forcing probability: {tf_config.tf_prob:>0.8f}\nGumbel-softmax tau: {tf_config.tau:>0.8f}\nUsing hard sampling: {tf_config.use_hard_sampling}")
 
         train_start_time = time.perf_counter()
-        epoch_train_loss = train_loop(vitomr, train_dataloader, loss_fn, optimizer, scheduler, device, hyperparams)
+        epoch_train_loss = train_loop(vitomr, train_dataloader, loss_fn, optimizer, scheduler, device, GRAD_ACCUMULATION_STEPS, tf_config, tf_scheduler, writer, counter)
         train_end_time = time.perf_counter()
         time_delta = train_end_time - train_start_time
         print(f"Time for this training epoch: {time_delta:>0.2f} seconds ({time_delta / 60:>0.2f} minutes)")
 
         epoch_validation_loss = validation_loop(vitomr, validation_dataloader, loss_fn, device)
-        epoch_stats = [epoch_train_loss, epoch_validation_loss, base_lr, fine_tune_base_lr, tf_prob, tau, use_hard_sampling]
-        train_stats_df.loc[i] = epoch_stats
+
+        writer.add_scalars("epoch", {"train_loss": epoch_train_loss, "validation_loss": epoch_validation_loss}, counter.global_step)
+        epoch_stats = [epoch_train_loss, epoch_validation_loss, base_lr, fine_tune_base_lr, tf_config.tf_prob, tf_config.tau, tf_config.use_hard_sampling]
+        epoch_stats_df.loc[i] = epoch_stats
 
         if (i + 1) % CHECKPOINT_FREQ == 0:
             print("Checkpointing model, optimizer, scheduler state dicts")
             checkpoint_path = CHECKPOINTS_DIR_PATH / f"epoch_{i+1}_checkpoint.pth"
             save_omr_training_state(checkpoint_path, vitomr, optimizer, scheduler)
-            print("Checkpointing stats plots")
-            save_teacher_force_training_stats(STATS_DIR_PATH, train_stats_df)
+            print("Saving training stats csv")
+            epoch_stats_df.to_csv((MODEL_DIR_PATH / "training_stats.csv"))
+            writer.flush()
 
-    print("Plotting final stats")
-    save_teacher_force_training_stats(STATS_DIR_PATH, train_stats_df)
     print("Saving final omr training state")
     omr_train_state_path = MODEL_DIR_PATH / "ending_omr_train_state.pth"
     save_omr_training_state(omr_train_state_path, vitomr, optimizer, scheduler)
     model_path = MODEL_DIR_PATH / "vitomr.pth"
     print(f"Saving final model state dict separately to {model_path}")
     torch.save(vitomr.state_dict(), model_path)
+    
+    epoch_stats_df.to_csv((MODEL_DIR_PATH / "training_stats.csv"))
+    writer.flush()
 
 # constructing/loading the model definition into memory can be intensive, so instead of doing this whenever this module is imported,
 # separate it into a function that can be called when it's needed

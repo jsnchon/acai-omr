@@ -35,7 +35,7 @@ to allow for the possibility of streaming each stage of the inference pipeline t
 it'll only be concerned with the final generated result
 """
 def beam_search(
-    vitomr: ViTOMR, 
+    vitomr, 
     img: torch.Tensor, 
     device, 
     beam_width: int, 
@@ -141,7 +141,7 @@ def convert_back_to_img(xml_file_path: str, img_file_path: str):
 
 # non-streamed local (ie back-end only) inference. We just consume the generator until we get the final result
 def inference(
-    vitomr: ViTOMR, 
+    vitomr, 
     img: torch.Tensor, 
     device, 
     beam_width=3, 
@@ -179,9 +179,3 @@ if __name__ == "__main__":
     lmx_seq, score = inference(vitomr, image, device, beam_width=beam_width, max_inference_len=max_inference_len)
     lmx_seq = stringify_lmx_seq(lmx_seq)
     logger.info(f"Decoded inference result: {lmx_seq}\nSequence score: {score}")
-
-    response = delinearize(lmx_seq, "inference_result.lmx", "inference_result.musicxml")
-    if response["ok"]:
-        convert_back_to_img(response["xml_file_path"], "inference_result.png")
-    else:
-        logger.info("Delinearization failed, skipping conversion into image. You should check the .lmx file")

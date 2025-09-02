@@ -699,7 +699,7 @@ class ScheduledSamplingViTOMR(TeacherForcedViTOMR):
 
         # create expected embeddings at each token position using teacher-forced pass predictions
         tf_pred_distrs = F.gumbel_softmax(tf_pred_logits, tau=sample_tau, hard=use_hard_sampling) # (B, T, V)
-        tf_expected_embeddings = tf_pred_distrs @ self.decoder.vocab_embedding.weight # (B x T x V) x (V x E) = (B x V x E)
+        tf_expected_embeddings = tf_pred_distrs @ self.decoder.vocab_embedding.weight # (B x T x V) x (V x E) = (B x T x E)
 
         # rightshift predicted sequence to align it with rightshifted teacher forced inputs for sampling
         bos_stem = gold_token_embeddings[:, 0:1, :]

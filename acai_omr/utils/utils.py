@@ -104,11 +104,14 @@ class GRPOConfig:
     def get_configs(self):
         return self.rollout_config, self.reward_config, self.loss_config, self.update_config
 
-@dataclass
 class StepCounter:
+    def __init__(self):
+        self.global_step = 0
+
     # we log at many different granularities, but keep track of one global step to align everything. Each
     # optimizer step is a global step
-    global_step: int
+    def increment(self):
+        self.global_step += 1
 
 class GRPOLogger:
     def __init__(self, writer, epoch_stats_df):
@@ -123,7 +126,6 @@ class GRPOLogger:
         self.writer.add_scalar(f"{prefix}/max_actions", rollout_config.max_actions, global_step)
         self.writer.add_scalar(f"{prefix}/top_k", rollout_config.top_k, global_step)
         self.writer.add_scalar(f"{prefix}/temperature", rollout_config.temperature, global_step)
-        self.writer.add_scalar(f"{prefix}/lambda_len", reward_config.lambda_len, global_step)
         self.writer.add_scalar(f"{prefix}/entropy_beta", loss_config.entropy_beta, global_step)
         self.writer.add_scalar(f"{prefix}/lambda_ce", loss_config.lambda_ce, global_step)
 
