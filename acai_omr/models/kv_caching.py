@@ -18,7 +18,8 @@ class KVCache(nn.Module):
         max_seq_len (int): maximum sequence length model will be run with
         num_kv_heads (int): number of key/value heads.
         head_dim (int): per-attention head embedding dimension
-        dtype (torch.dtype): dtype for the caches
+        dtype (torch.dtype): dtype for the caches. This manually has to be set to a lower precision type
+        if using autocast
     """
 
     def __init__(
@@ -137,7 +138,6 @@ class CachedMultiheadAttention(nn.MultiheadAttention):
         attention_output = self.out_proj(attention_output) 
         return attention_output
 
-# and then subclass a TransformerDecoder class using this, and then subclass OMRDecoder to have a cached variant using that TransformerDecoder
 class CachedTransformerDecoderLayer(nn.TransformerDecoderLayer):
     def __init__(
         self,
@@ -240,7 +240,6 @@ class MemoryCache(nn.Module):
         batch_size = memory.shape[0]
         memory_len = memory.shape[1]
 
-        print(f"DEBUG: W_kv being used in cross cache: {self.W_kv[0]}")
         KV_cross = F.linear(memory, self.W_kv, self.b_kv)
         K_cross, V_cross = KV_cross.chunk(2, dim=-1)
         # split the last (embedding) dimension into heads, then transpose latent_len and num_heads to match sdpa's expected dim order.
@@ -269,13 +268,14 @@ class CachedTransformerDecoder(nn.TransformerDecoder):
             decoder_layer: CachedTransformerDecoderLayer, 
             num_layers: int, 
             max_batch_size: int, 
-            max_decoder_seq_len: int, 
+            max_decoder_seq_len: int,
+            cache_dtype, 
             norm: nn.Module = None):
         assert isinstance(decoder_layer, CachedTransformerDecoderLayer), "Can't use uncached TransformerDecoderLayer in a cached TransformerDecoder"
         super().__init__(decoder_layer, num_layers, norm)
        
         # initialize caches for each layer 
-        self.self_attn_caches = nn.ModuleList([KVCache(max_batch_size, max_decoder_seq_len, layer.num_heads, layer.head_dim, dtype=torch.bfloat16) for layer in self.layers])
+        self.self_attn_caches = nn.ModuleList([KVCache(max_batch_size, max_decoder_seq_len, layer.num_heads, layer.head_dim, dtype=cache_dtype) for layer in self.layers])
         self.cross_attn_caches = nn.ModuleList([MemoryCache(layer) for layer in self.layers])
 
     # reset each layer's self and cross attention caches. Fill cross attention caches using this batch's memory

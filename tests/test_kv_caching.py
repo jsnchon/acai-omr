@@ -329,7 +329,7 @@ def test_omr_decoder_with_caching():
         "mlp_dim": 48
     }
     uncached_decoder = OMRDecoder(**omr_decoder_kwargs)
-    cached_decoder = OMRDecoder(**omr_decoder_kwargs, use_caching=True, max_batch_size=batch_size)
+    cached_decoder = OMRDecoder(**omr_decoder_kwargs, use_caching=True, max_batch_size=batch_size, cache_dtype=torch.float)
     uncached_decoder.eval()
     cached_decoder.eval()
     cached_decoder.load_state_dict(uncached_decoder.state_dict())
@@ -361,7 +361,10 @@ def test_omr_decoder_with_caching():
     assert torch.allclose(cached_out, uncached_out, atol=1e-6, rtol=1e-5)
 
     # test uncached path works fine
-    cached_out_tf = uncached_decoder.generate(full_sequence, latent, latent_attention_mask=latent_mask)
+    cached_out_tf = cached_decoder.generate(full_sequence, latent, latent_attention_mask=latent_mask)
+    assert(cached_out_tf.requires_grad)
+    cached_out_tf = cached_decoder.forward(full_sequence, latent, None, latent_attention_mask=latent_mask)
+    assert(cached_out_tf.requires_grad)
     assert torch.allclose(cached_out_tf, uncached_out, atol=1e-6, rtol=1e-5)
 
     # test trying to go past max decoder limit

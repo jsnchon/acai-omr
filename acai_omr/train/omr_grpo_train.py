@@ -14,8 +14,11 @@ from torchvision.transforms import v2, InterpolationMode
 from olimpic_app.evaluation.TEDn_lmx_xml import TEDn_lmx_xml
 from pathlib import Path
 import pandas as pd
-import copy
 import time
+
+# TODOS: fix theta_logits from teacher force step not having requires_grad = True (likely a problem introduced with caching)
+# back on gpu machine, test that old policy doesnt update between update steps but is being synced between batches
+# using debug print
 
 MODEL_DIR_PATH = Path("grpo_omr_train")
 CHECKPOINTS_DIR_PATH = MODEL_DIR_PATH / "checkpoints"
@@ -25,8 +28,8 @@ AUGMENTATION_P = 0.25
 
 TRAIN_BATCH_SIZE = 1 # DEBUG 16 
 VALIDATION_BATCH_SIZE = 128
-NUM_WORKERS = 128
-NUM_EDIT_COST_PROCESSES = 26
+NUM_WORKERS = 12
+NUM_EDIT_COST_PROCESSES = 14
 
 LR = 2e-5
 ADAMW_BETAS = (0.9, 0.999)
@@ -350,8 +353,9 @@ def grpo_update(old_policy: GRPOViTOMR, policy_theta: GRPOViTOMR, optimizer, bat
         for _ in range(update_epochs):
             print(f"DEBUG decoder unembed between updates: {old_policy.decoder.unembed}")
             # generate next token logits at each time step by using rollouts in a teacher forcing step
-            theta_logits = policy_theta.decoder(right_shifted_rollouts, img_latent, rollout_attention_mask, latent_attention_mask, checkpoint_grads=True)
-            print(theta_logits.requires_grad)
+            theta_logits = policy_theta.decoder.forward(right_shifted_rollouts, img_latent, rollout_attention_mask, latent_attention_mask, checkpoint_grads=True)
+            print(f"DEBUG {torch.is_grad_enabled()} {any(p.requires_grad for p in policy_theta.parameters())}")
+            print(f"DEBUG {theta_logits.requires_grad}")
             grpo_objective = calc_grpo_objective(theta_logits, rollouts, rollout_attention_mask, old_policy_log_probs, advantages, update_config.epsilon, num_groups)
             entropy_bonus = calc_entropy_bonus(theta_logits, rollout_attention_mask, vocab_size)
 
@@ -515,7 +519,7 @@ if __name__ == "__main__":
     # remake decoder into variant that supports KV caching so GRPO doesn't take forever. Caches need to support a max batch of 
     # batch size * number of rollouts per group since groups are flattened during inference
     max_batch_size = TRAIN_BATCH_SIZE * INITIAL_ROLLOUT_CONFIG.group_size
-    decoder = teacher_forced_vitomr.decoder.to_cached_version(max_batch_size)
+    decoder = teacher_forced_vitomr.decoder.to_cached_version(max_batch_size, torch.bfloat16)
 
     teacher_forced_state_dict = torch.load(TEACHER_FORCED_STATE_DICT_PATH)
 

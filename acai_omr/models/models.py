@@ -375,9 +375,9 @@ class FineTuneOMREncoder(OMREncoder):
         return x
 
 class OMRDecoder(nn.Module):
-    # if use_caching = True, we use cached decoder layers and caches are set up with max_batch_size (which has to be 
-    # changed from its default of None). Otherwise, we use vanilla pytorch layers (and max_batch_size does nothing)
-    def __init__(self, max_lmx_seq_len, lmx_vocab_path, num_layers=10, hidden_dim=1024, num_heads=16, mlp_dim=4096, transformer_dropout=0.1, use_caching=False, max_batch_size=None):
+    # if use_caching = True, we use cached decoder layers and caches are set up with max_batch_size and a dtype of cache_dtype
+    # (which have to be changed from their defaults of None). Otherwise, we use vanilla pytorch layers (and cache args do nothing)
+    def __init__(self, max_lmx_seq_len, lmx_vocab_path, num_layers=10, hidden_dim=1024, num_heads=16, mlp_dim=4096, transformer_dropout=0.1, use_caching=False, max_batch_size=None, cache_dtype=None):
         super().__init__()
         self.max_lmx_seq_len = max_lmx_seq_len
         self.lmx_vocab_path = lmx_vocab_path
@@ -414,6 +414,7 @@ class OMRDecoder(nn.Module):
                 num_layers=num_layers,
                 max_batch_size=max_batch_size,
                 max_decoder_seq_len=max_lmx_seq_len,
+                cache_dtype=cache_dtype,
                 norm=nn.LayerNorm(self.hidden_dim, eps=1e-6)
             )
         else:
@@ -426,7 +427,7 @@ class OMRDecoder(nn.Module):
         self.unembed = nn.Linear(self.hidden_dim, self.vocab_size)
 
     # utility function to return a cachable OMRDecoder that's otherwise identical to this instance
-    def to_cached_version(self, max_batch_size):
+    def to_cached_version(self, max_batch_size, cache_dtype):
         return OMRDecoder(
             self.max_lmx_seq_len,
             self.lmx_vocab_path,
@@ -436,7 +437,8 @@ class OMRDecoder(nn.Module):
             self.mlp_dim,
             self.transformer_dropout,
             use_caching=True,
-            max_batch_size=max_batch_size
+            max_batch_size=max_batch_size,
+            cache_dtype=cache_dtype,
         )
 
     def forward(self, input_seqs, img_latent, lmx_attention_mask, latent_attention_mask, token_idxs_input=True, checkpoint_grads=False):
@@ -884,13 +886,12 @@ class GRPOViTOMR(nn.Module):
         rollout_mask: (R, T) tensor where True = token is part of a rollout, False = token isn't
     For each (T, E_enc) image latent in img_latent, create group_size autoregressive rollouts according to the
     policy defined by the model's outputted distributions, up to max_actions steps in total (where <bos> stems count as 1 action) for each. 
-    At each autoregressive step, set logits that aren't in the top_k top logits to -inf, then apply softmax with temperature, 
+    At each autoregressive step, select the topk logits, then apply softmax with temperature, 
     then extend the sequence according to the resulting distribution 
     Note: predictions after first train seem pretty peaky so default is to use temperature > 1 to slightly smooth things and 
     encourage more exploration.
     Also note that this should be called with torch_no_grad by the old policy and img_latent and latent_attention_mask should
     be the result of self.expand_img_tensors_for_rollout
- 
     """
     def cached_forward_rollout_policy(self, img_latent, latent_attention_mask, max_actions=768, top_k=50, temperature=1.2):
         device = img_latent.device
