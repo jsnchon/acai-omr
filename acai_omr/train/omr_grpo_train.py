@@ -28,8 +28,9 @@ AUGMENTATION_P = 0.25
 
 TRAIN_BATCH_SIZE = 1 # DEBUG 16 
 VALIDATION_BATCH_SIZE = 128
-NUM_WORKERS = 12
-NUM_EDIT_COST_PROCESSES = 14
+# should add up to number of cpus, with edit cost having many more processes since that's much more of a bottleneck
+NUM_DATALOADER_WORKERS = 8 
+NUM_EDIT_COST_PROCESSES = 18
 
 LR = 2e-5
 ADAMW_BETAS = (0.9, 0.999)
@@ -530,7 +531,7 @@ if __name__ == "__main__":
     print(f"General hyperparameters\n{'-' * 50}\nImage augmentation probability: {AUGMENTATION_P}\n" \
           f"Train batch size: {TRAIN_BATCH_SIZE}\nValidation batch size: {VALIDATION_BATCH_SIZE}\nLearning rate: {LR}\nAdamW betas: {ADAMW_BETAS}, " \
           f"weight decay: {ADAMW_WEIGHT_DECAY}\nEpochs: {EPOCHS}\nMini validation size: {MINI_VALIDATION_SIZE} exs, frequency (in outer steps): " \
-          f"{MINI_VALIDATION_FREQ}\nCheckpoint frequency (in outer steps): {CHECKPOINT_FREQ}\nDataloader workers: {NUM_WORKERS}\nNumber of parallel " \
+          f"{MINI_VALIDATION_FREQ}\nCheckpoint frequency (in outer steps): {CHECKPOINT_FREQ}\nDataloader workers: {NUM_DATALOADER_WORKERS}\nNumber of parallel " \
           f"processes for calculating edit costs: {NUM_EDIT_COST_PROCESSES}")
 
     # RL is more unstable and teacher force train already included augmentations, so slightly decrease strength
@@ -570,9 +571,9 @@ if __name__ == "__main__":
     # make sure to use a list as indices so datasets are indexed with integers and not tensors 
     mini_validation_dataset = Subset(validation_dataset, torch.randint(low=0, high=len(validation_dataset), size=(MINI_VALIDATION_SIZE, )).tolist())
 
-    train_dataloader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
-    validation_dataloader = DataLoader(validation_dataset, batch_size=VALIDATION_BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
-    mini_validation_dataloader = DataLoader(mini_validation_dataset, batch_size=VALIDATION_BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
+    train_dataloader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True, num_workers=NUM_DATALOADER_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
+    validation_dataloader = DataLoader(validation_dataset, batch_size=VALIDATION_BATCH_SIZE, shuffle=True, num_workers=NUM_DATALOADER_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
+    mini_validation_dataloader = DataLoader(mini_validation_dataset, batch_size=VALIDATION_BATCH_SIZE, shuffle=True, num_workers=NUM_DATALOADER_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
 
     # old_policy should never be changed from eval() or have any of its requires_grad changed
     old_policy = GRPOViTOMR(encoder, transition_head, decoder, teacher_forced_state_dict) # a separate copy using the same parameters
