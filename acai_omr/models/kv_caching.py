@@ -18,7 +18,8 @@ class KVCache(nn.Module):
         max_seq_len (int): maximum sequence length model will be run with
         num_kv_heads (int): number of key/value heads.
         head_dim (int): per-attention head embedding dimension
-        dtype (torch.dtype): dtype for the caches
+        dtype (torch.dtype): dtype for the caches. This manually has to be set to a lower precision type
+        if using autocast
     """
 
     def __init__(
@@ -137,7 +138,6 @@ class CachedMultiheadAttention(nn.MultiheadAttention):
         attention_output = self.out_proj(attention_output) 
         return attention_output
 
-# and then subclass a TransformerDecoder class using this, and then subclass OMRDecoder to have a cached variant using that TransformerDecoder
 class CachedTransformerDecoderLayer(nn.TransformerDecoderLayer):
     def __init__(
         self,
@@ -224,28 +224,29 @@ class CachedTransformerDecoderLayer(nn.TransformerDecoderLayer):
 # cache for encoder memory for cross attention. Each instance is assigned to a layer and will use that layer's 
 # in_proj_weight/bias to store a K_cross and V_cross for a given encoder memory tensor
 class MemoryCache(nn.Module):
-    def __init__(self, layer: CachedTransformerDecoderLayer):
+    def __init__(self):
         super().__init__()
-        self.W_kv = layer.multihead_attn.in_proj_weight[layer.hidden_dim:, :]
-        self.b_kv = layer.multihead_attn.in_proj_bias[layer.hidden_dim:]
-        self.num_heads = layer.num_heads
-        self.head_dim = layer.head_dim
-        self.K_cross = None
-        self.V_cross = None
+        self.register_buffer("K_cross", None, persistent=False)
+        self.register_buffer("b_kv", None, persistent=False)
 
-    # called per batch with a (B, T_latent, E) memory tensor to reset/update the cached K_cross, V_cross. Stores
-    # K_cross and V_cross as (B, H, T_latent, E) tensors
-    def cache_memory_keys_and_vals(self, memory: torch.Tensor):
+    # called per batch with a (B, T_latent, E) memory tensor and the layer this cache is assigned to in order to 
+    # reset/update the cached K_cross, V_cross. Stores K_cross and V_cross as (B, H, T_latent, E) tensors
+    def cache_memory_keys_and_vals(self, memory: torch.Tensor, layer: CachedTransformerDecoderLayer):
         batch_size = memory.shape[0]
         memory_len = memory.shape[1]
 
-        KV_cross = F.linear(memory, self.W_kv, self.b_kv)
+        num_heads = layer.num_heads
+        head_dim = layer.head_dim
+        W_kv = layer.multihead_attn.in_proj_weight[layer.hidden_dim:, :]
+        b_kv = layer.multihead_attn.in_proj_bias[layer.hidden_dim:]
+        
+        KV_cross = F.linear(memory, W_kv, b_kv)
         K_cross, V_cross = KV_cross.chunk(2, dim=-1)
         # split the last (embedding) dimension into heads, then transpose latent_len and num_heads to match sdpa's expected dim order.
         # Can't just do this all in one view() because it's not easy to specify one unambiguous shape configuration that matches the intention
         # of splitting heads/transposing in one step
-        K_cross = K_cross.view(batch_size, memory_len, self.num_heads, self.head_dim).transpose(1, 2)
-        V_cross = V_cross.view(batch_size, memory_len, self.num_heads, self.head_dim).transpose(1, 2)
+        K_cross = K_cross.view(batch_size, memory_len, num_heads, head_dim).transpose(1, 2)
+        V_cross = V_cross.view(batch_size, memory_len, num_heads, head_dim).transpose(1, 2)
 
         self.K_cross = K_cross
         self.V_cross = V_cross
@@ -267,21 +268,22 @@ class CachedTransformerDecoder(nn.TransformerDecoder):
             decoder_layer: CachedTransformerDecoderLayer, 
             num_layers: int, 
             max_batch_size: int, 
-            max_decoder_seq_len: int, 
+            max_decoder_seq_len: int,
+            cache_dtype, 
             norm: nn.Module = None):
         assert isinstance(decoder_layer, CachedTransformerDecoderLayer), "Can't use uncached TransformerDecoderLayer in a cached TransformerDecoder"
         super().__init__(decoder_layer, num_layers, norm)
        
         # initialize caches for each layer 
-        self.self_attn_caches = nn.ModuleList([KVCache(max_batch_size, max_decoder_seq_len, layer.num_heads, layer.head_dim, dtype=torch.float) for layer in self.layers])
-        self.cross_attn_caches = nn.ModuleList([MemoryCache(layer) for layer in self.layers])
+        self.self_attn_caches = nn.ModuleList([KVCache(max_batch_size, max_decoder_seq_len, layer.num_heads, layer.head_dim, dtype=cache_dtype) for layer in self.layers])
+        self.cross_attn_caches = nn.ModuleList([MemoryCache() for layer in self.layers])
 
     # reset each layer's self and cross attention caches. Fill cross attention caches using this batch's memory
     def prepare_caches(self, encoder_memory):
         for self_attn_cache in self.self_attn_caches:
             self_attn_cache.reset()
-        for cross_attn_cache in self.cross_attn_caches:
-            cross_attn_cache.cache_memory_keys_and_vals(encoder_memory)
+        for i, cross_attn_cache in enumerate(self.cross_attn_caches):
+            cross_attn_cache.cache_memory_keys_and_vals(encoder_memory, self.layers[i])
 
     # carries out one autoregressive inference step, predicting the next token after embedding_t given 
     # the past sequence KVs cached in self.self_attn_caches and encoder memory cached in self.cross_attn_caches. 

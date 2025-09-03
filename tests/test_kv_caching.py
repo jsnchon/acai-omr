@@ -213,8 +213,8 @@ def test_memory_cache():
         expected_K_cross = expected_K_cross.view(batch_size, latent_len, num_heads, head_dim).transpose(1, 2)
         expected_V_cross = expected_V_cross.view(batch_size, latent_len, num_heads, head_dim).transpose(1, 2)
 
-        memory_cache = MemoryCache(layer)
-        memory_cache.cache_memory_keys_and_vals(latent)
+        memory_cache = MemoryCache()
+        memory_cache.cache_memory_keys_and_vals(latent, layer)
         K_cross, V_cross = memory_cache.get_cached_keys_and_vals()
 
         assert torch.allclose(K_cross, expected_K_cross)
@@ -243,7 +243,7 @@ def test_cached_transformer_decoder():
     max_decoder_seq_len = 200
 
     uncached_decoder = nn.TransformerDecoder(uncached_layer, **decoder_kwargs)
-    cached_decoder = CachedTransformerDecoder(cached_layer, max_batch_size=batch_size, max_decoder_seq_len=max_decoder_seq_len, **decoder_kwargs)
+    cached_decoder = CachedTransformerDecoder(cached_layer, max_batch_size=batch_size, max_decoder_seq_len=max_decoder_seq_len, cache_dtype=torch.float, **decoder_kwargs)
     cached_decoder.load_state_dict(uncached_decoder.state_dict())
     uncached_decoder.eval()
     cached_decoder.eval()
@@ -329,7 +329,7 @@ def test_omr_decoder_with_caching():
         "mlp_dim": 48
     }
     uncached_decoder = OMRDecoder(**omr_decoder_kwargs)
-    cached_decoder = OMRDecoder(**omr_decoder_kwargs, use_caching=True, max_batch_size=batch_size)
+    cached_decoder = OMRDecoder(**omr_decoder_kwargs, use_caching=True, max_batch_size=batch_size, cache_dtype=torch.float)
     uncached_decoder.eval()
     cached_decoder.eval()
     cached_decoder.load_state_dict(uncached_decoder.state_dict())
@@ -361,7 +361,10 @@ def test_omr_decoder_with_caching():
     assert torch.allclose(cached_out, uncached_out, atol=1e-6, rtol=1e-5)
 
     # test uncached path works fine
-    cached_out_tf = uncached_decoder.generate(full_sequence, latent, latent_attention_mask=latent_mask)
+    cached_out_tf = cached_decoder.generate(full_sequence, latent, latent_attention_mask=latent_mask)
+    assert(cached_out_tf.requires_grad)
+    cached_out_tf = cached_decoder.forward(full_sequence, latent, None, latent_attention_mask=latent_mask)
+    assert(cached_out_tf.requires_grad)
     assert torch.allclose(cached_out_tf, uncached_out, atol=1e-6, rtol=1e-5)
 
     # test trying to go past max decoder limit

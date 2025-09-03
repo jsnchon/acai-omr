@@ -1,8 +1,9 @@
 import torch
-from acai_omr.models.models import TeacherForcedViTOMR
+from acai_omr.models.models import ViTOMR
 from acai_omr.train.omr_teacher_force_train import set_up_omr_teacher_force_train
-from acai_omr.config import InferenceEvent, INFERENCE_VITOMR_PATH
+from acai_omr.config import INFERENCE_VITOMR_PATH
 from acai_omr.utils.utils import stringify_lmx_seq
+from acai_omr.__init__ import InferenceEvent
 from torch.amp import autocast
 from PIL import Image
 import logging
@@ -10,99 +11,9 @@ import subprocess
 from pathlib import Path
 import os
 
-INFERENCE_IMAGE_PATH = "inference_test.png"
+INFERENCE_IMAGE_PATH = "scanned_inference_test.png"
 
 logger = logging.getLogger(__name__)
-
-# split seqs and corresponding log_probs into individual sequences, calculate normalized beam scores for each sequence,
-# and return a list of (seq, score) tuples
-def split_and_score_seqs(seqs, log_probs):
-    result = []
-
-    split_seqs = torch.split(seqs, 1, dim=0)
-    split_seqs_log_probs = torch.split(log_probs, 1, dim=0)
-    for seq, log_prob in zip(split_seqs, split_seqs_log_probs):
-        seq = seq
-        seq_len = seq.shape[1]
-        score = log_prob / seq_len
-        result.append((seq, score))
-    
-    return result
-
-"""
-Autoregressive beam search inference using average log probability as length normalization. This is a generator of events (dicts of event_type: payload_dict)
-to allow for the possibility of streaming each stage of the inference pipeline to the ui. If this module is ran as a stand-alone,
-it'll only be concerned with the final generated result
-"""
-def beam_search(
-    vitomr: ViTOMR, 
-    img: torch.Tensor, 
-    device, 
-    beam_width: int, 
-    max_inference_len: int): # <bos> token is counted as contributing one step to this limit
-
-    vitomr.eval()
-    # encode image latent once to avoid redundant encoder computations
-    logger.debug("Encoding image latent")
-    yield {"type": InferenceEvent.ENCODING_START.value, "payload": {"message": "Encoding image"}}
-    with torch.no_grad():
-        with autocast(device_type=device, dtype=torch.bfloat16):
-            img_latent = vitomr.encoder.generate(img)
-            img_latent = vitomr.transition_head(img_latent)
-    yield {"type": InferenceEvent.ENCODING_FINISH.value, "payload": {"message": "Finished encoding image"}}
-
-    completed_beams = [] # tuples of (sequence, score) where score is length-normalized log prob
-
-    # start with just one sequence of <bos> and expand into beam_width beams in the first iteration
-    active_seqs = torch.full((1, 1), vitomr.decoder.bos_idx, dtype=torch.long, device=device)
-    log_probs = torch.zeros(1, device=device)
-
-    logger.debug("Starting inference loop")
-    for _ in range(max_inference_len - 1):
-        logger.debug(f"Active beams:\n{active_seqs} with log probs {log_probs}")
-        with torch.no_grad():
-            with autocast(device_type=device, dtype=torch.bfloat16):
-                next_token_distr = vitomr.generate(img_latent, active_seqs) # (num_seqs, vocab_size), num_seqs is 1 in first iteration and beam_width otherwise
-
-        expanded_log_probs = log_probs.unsqueeze(1) + next_token_distr # cumulative log probs for all b * v possible extensions
-        logger.debug(f"Shape of all candidate extensions: {expanded_log_probs.shape}")
-
-        top_log_probs, top_indices = expanded_log_probs.view(-1).topk(beam_width)
-        # convert indices from being for flattened tensor to corresponding un-flattened values
-        vocab_size = expanded_log_probs.shape[1]
-        beam_indices = top_indices // vocab_size # each beam has vocab_size elements
-        token_indices = top_indices % vocab_size
-        logger.debug(f"Top k results. Probs: {top_log_probs}, flattened indices: {top_indices}, beam indices: {beam_indices}, vocab token indices: {token_indices}")
-
-        active_seqs = torch.cat([active_seqs.index_select(dim=0, index=beam_indices), token_indices.unsqueeze(1)], dim=1)
-        log_probs = top_log_probs
-
-        if torch.any(finished_seqs_filter := (active_seqs[:, -1] == vitomr.decoder.eos_idx)):
-            finished_seqs = active_seqs[finished_seqs_filter]
-            finished_seqs_log_probs = log_probs[finished_seqs_filter]
-            logger.debug(f"Newly finished beams: {finished_seqs} with log probs: {finished_seqs_log_probs}")
-
-            completed_beams += split_and_score_seqs(finished_seqs, finished_seqs_log_probs)
-            logger.debug(f"completed_beams after appending newly finished beams: {completed_beams}")
-
-            # only keep unfinished beams to further extend
-            active_seqs = active_seqs[~finished_seqs_filter]
-            log_probs = log_probs[~finished_seqs_filter]
-
-        yield {"type": InferenceEvent.STEP.value, "payload": {"beams": active_seqs, "log_probs": log_probs}}
-
-        if len(completed_beams) >= beam_width:
-            break
-    
-    logger.debug(f"Active beams at inference end:\n{active_seqs} with log probs {log_probs}")
-    if len(completed_beams) < beam_width: # didn't finish early and instead ran out of inference steps
-        completed_beams += split_and_score_seqs(active_seqs, log_probs) # add whatever incomplete beams we have as candidates
-
-    logger.debug(f"completed_beams before sort: {completed_beams}")
-    completed_beams.sort(key=lambda x: x[1], reverse=True) # sort sequences by score
-    best_seq, score = completed_beams[0] # best_seq is (1 x best_seq_len)
-    logger.info(f"INFERENCE RESULT\n{'-' * 20}\n{best_seq}\nScore: {score}")
-    yield {"type": InferenceEvent.INFERENCE_FINISH.value, "payload": {"lmx_seq": best_seq, "score": score}}
 
 # lmx_seq is the sequence of decoded lmx tokens (excluding <bos> and <eos>), lmx_seq_path and xml_file_path are where the lmx and xml files should be saved to
 def delinearize(lmx_seq: str, lmx_seq_path: str, xml_file_path: str):
@@ -139,27 +50,50 @@ def convert_back_to_img(xml_file_path: str, img_file_path: str):
     logger.info("Final image saved!")
     return {"img_file_path": img_file_path}
 
-# non-streamed local (ie back-end only) inference. We just consume the generator until we get the final result
+def streamed_inference(
+    vitomr: ViTOMR, 
+    img: torch.Tensor, 
+    device, 
+    max_inference_len=1536,
+    flush_interval=25):
+
+    vitomr.eval()
+    with torch.no_grad():
+        logger.debug("Encoding image into latent")
+        yield {"type": InferenceEvent.ENCODING_START.value, "payload": None}
+        img_latent, latent_attention_mask = vitomr.encoder(img)
+        with autocast(device_type=device, dtype=torch.bfloat16):
+            img_latent = vitomr.transition_head(img_latent)
+            yield {"type": InferenceEvent.ENCODING_FINISH.value, "payload": None}
+            logger.debug("Starting decoder generation")
+            for event in vitomr.streamed_cached_greedy_generate(img_latent, latent_attention_mask, max_len=max_inference_len, flush_interval=flush_interval):
+                yield event
+
+# non-streamed back-end only inference
 def inference(
     vitomr: ViTOMR, 
     img: torch.Tensor, 
     device, 
-    beam_width=3, 
     max_inference_len=1536):
 
-    inference_event = None
-    for event in beam_search(vitomr, img, device, beam_width, max_inference_len):
-        inference_event = event 
+    vitomr.eval()
+    with torch.no_grad():
+        img_latent, latent_attention_mask = vitomr.encoder(img)
+        with autocast(device_type=device, dtype=torch.bfloat16):
+            img_latent = vitomr.transition_head(img_latent)
+            seqs, log_probs, seq_mask = vitomr.cached_greedy_generate(img_latent, latent_attention_mask, max_len=max_inference_len)
 
-    # last yielded value by beam_search is the best sequence and its normalized score
-    return inference_event["payload"]["lmx_seq"], inference_event["payload"]["score"]
+    return seqs, log_probs, seq_mask
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
 
+    MAX_BATCH_SIZE = 32
+    CACHE_DTYPE = torch.bfloat16
     logger.info(f"Loading state dict from {INFERENCE_VITOMR_PATH}")
 
     vitomr, base_img_transform, _, device = set_up_omr_teacher_force_train()
+    vitomr.decoder = vitomr.decoder.to_cached_version(MAX_BATCH_SIZE, CACHE_DTYPE)
     if device == "cpu":
         vitomr_state_dict = torch.load(INFERENCE_VITOMR_PATH, map_location=torch.device("cpu"))
     else:
@@ -168,20 +102,20 @@ if __name__ == "__main__":
     vitomr.load_state_dict(vitomr_state_dict)
     
     # note to future self: make sure to convert any images to grayscale/transform using patch transform
-    image = Image.open(INFERENCE_IMAGE_PATH).convert("L")
-    image = base_img_transform(image).to(device)
-
-    # these are low so I can debug on my weak laptop
-    beam_width = 2
-    max_inference_len = 40
+    img = Image.open(INFERENCE_IMAGE_PATH).convert("L")
+    img = base_img_transform(img).to(device)
 
     logger.info("Starting inference")
-    lmx_seq, score = inference(vitomr, image, device, beam_width=beam_width, max_inference_len=max_inference_len)
-    lmx_seq = stringify_lmx_seq(lmx_seq)
-    logger.info(f"Decoded inference result: {lmx_seq}\nSequence score: {score}")
+    lmx_seqs, log_probs, seq_mask = inference(vitomr, img, device)
+    for i, lmx_seq in enumerate(lmx_seqs):
+        mask = seq_mask[i]
+        lmx_seq = lmx_seq[mask]
+        lmx_seq = stringify_lmx_seq(lmx_seq, vitomr.decoder.idxs_to_tokens)
+        average_log_prob = log_probs[i][mask].sum().item() / mask.sum().item()
+        logger.info(f"Decoded inference result: {lmx_seq}\nAverage log prob per token: {average_log_prob}")
 
-    response = delinearize(lmx_seq, "inference_result.lmx", "inference_result.musicxml")
-    if response["ok"]:
-        convert_back_to_img(response["xml_file_path"], "inference_result.png")
-    else:
-        logger.info("Delinearization failed, skipping conversion into image. You should check the .lmx file")
+        response = delinearize(lmx_seq, "inference_result.lmx", "inference_result.musicxml")
+        if response["ok"]:
+            convert_back_to_img(response["xml_file_path"], "inference_result.png")
+        else:
+            logger.info("Delinearization failed, skipping conversion into image. You should check the .lmx file")

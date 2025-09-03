@@ -4,10 +4,11 @@ from torch.amp import autocast
 from torch.utils.data import ConcatDataset, DataLoader, Subset
 from torch.utils.tensorboard import SummaryWriter
 from torch.multiprocessing import Pool # regular multiprocessing complains about torch's multi-threadedness
+from torch.optim.lr_scheduler import LinearLR
 from acai_omr.train.omr_teacher_force_train import set_up_omr_teacher_force_train
 from acai_omr.train.datasets import GrandStaffLMXDataset, GrandStaffOMRTrainWrapper, OlimpicDataset
 from acai_omr.models.models import GRPOViTOMR, OMRCELoss, OMRDecoder
-from acai_omr.utils.utils import stringify_lmx_seq, ragged_collate_fn, stepwise_cosine_anneal_with_warmup
+from acai_omr.utils.utils import stringify_lmx_seq, ragged_collate_fn
 from acai_omr.utils.utils import RolloutConfig, RewardConfig, RewardComponents, LossConfig, UpdateConfig, GRPOConfig, StepCounter, GRPOLogger
 from acai_omr.config import GRAND_STAFF_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
 from torchvision.transforms import v2, InterpolationMode
@@ -21,23 +22,25 @@ MODEL_DIR_PATH = Path("grpo_omr_train")
 CHECKPOINTS_DIR_PATH = MODEL_DIR_PATH / "checkpoints"
 LOG_DIR = "runs/grpo"
 
-AUGMENTATION_P = 0.25
+AUGMENTATION_P = 0.3
 
 TRAIN_BATCH_SIZE = 16 
 VALIDATION_BATCH_SIZE = 128
-NUM_WORKERS = 26
+# should add up to number of cpus, with edit cost having many more processes since that's much more of a bottleneck
+NUM_DATALOADER_WORKERS = 2
+NUM_EDIT_COST_PROCESSES = 24
 
-LR = 2e-5
-ADAMW_BETAS = (0.9, 0.999)
-ADAMW_WEIGHT_DECAY = 0.01
+LR = 1e-6
+ADAMW_BETAS = (0.9, 0.95)
+ADAMW_WEIGHT_DECAY = 0.0
 
-EPOCHS = 8 # enough for ~25000 outer steps
+EPOCHS = 1 # enough for ~3500 outer steps
 
 MINI_VALIDATION_SIZE = 1000 # subset size
 
 # in outer steps within each epoch (ie minibatches)
-MINI_VALIDATION_FREQ = 250
-CHECKPOINT_FREQ = 1000
+MINI_VALIDATION_FREQ = 100
+CHECKPOINT_FREQ = 100
 
 TEACHER_FORCED_STATE_DICT_PATH = "tf_omr_train/vitomr.pth"
 
@@ -45,23 +48,23 @@ INITIAL_ROLLOUT_CONFIG = RolloutConfig(
     group_size=8, 
     max_actions=768, 
     top_k=50, 
-    temperature=1.2
+    temperature=1.1
 )
 INITIAL_REWARD_CONFIG = RewardConfig(
-    lambda_tedn=6,
-    lambda_well_formed=2,
-    lambda_f1=3,
+    lambda_tedn=7,
+    lambda_well_formed=1.5,
+    lambda_f1=2.5,
     lambda_repeat=2,
-    lambda_len=0.25,
+    lambda_len=2,
     alpha_tedn=0.01,
-    alpha_well_formed=0.2,
+    alpha_well_formed=0.25,
     gamma=3,
     delta=5,
-    tau=100
+    tau=50
 )
 INITIAL_LOSS_CONFIG = LossConfig(
-    entropy_beta=0.25,
-    lambda_ce=0.15
+    entropy_beta=0.05,
+    lambda_ce=0.1
 )
 INITIAL_UPDATE_CONFIG = UpdateConfig(
     epsilon=0.2,
@@ -70,30 +73,27 @@ INITIAL_UPDATE_CONFIG = UpdateConfig(
 )
 
 # all these schedulers step per-batch
-WARMUP_STEPS = 750 # 3% of total steps
-MIN_LR = 4e-6
+LR_END_FACTOR = 0.1
 
-EXPLORATION_EPOCHS = 1
+EXPLORATION_STEPS = 30
 MAX_MAX_ACTIONS = 1536
 MIN_TOP_K = 10
-MIN_TEMPERATURE = 0.7
-MAX_LAMBDA_LEN = 2 
+MIN_TEMPERATURE = 0.6
 MIN_ENTROPY_BETA = 0
-MIN_LAMBDA_CE = 0
+MIN_LAMBDA_CE = 0.01
 
 class CurriculumScheduler:
-    def __init__(self, grpo_config, exploration_epochs, total_epochs, num_outer_steps_per_epoch,
-                 max_max_actions, min_top_k, min_temperature, max_lambda_len, min_beta, min_lambda_ce):
+    def __init__(self, grpo_config, exploration_steps, total_epochs, num_outer_steps_per_epoch,
+                 max_max_actions, min_top_k, min_temperature, min_beta, min_lambda_ce):
         self.grpo_config = grpo_config
         self.step_count = 0
-        self.exploration_steps = exploration_epochs * num_outer_steps_per_epoch
-        self.anneal_steps = (total_epochs - exploration_epochs) * num_outer_steps_per_epoch
+        self.exploration_steps = exploration_steps
+        self.anneal_steps = total_epochs * num_outer_steps_per_epoch - exploration_steps
         self.total_steps = self.exploration_steps + self.anneal_steps
         # tuples of (init_value, min/max_value) depending on if being increased or annealed
         self.max_actions = (grpo_config.rollout_config.max_actions, max_max_actions)
         self.top_k = (grpo_config.rollout_config.top_k, min_top_k)
         self.temperature = (grpo_config.rollout_config.temperature, min_temperature)
-        self.lambda_len = (grpo_config.reward_config.lambda_len, max_lambda_len)
         self.entropy_beta = (grpo_config.loss_config.entropy_beta, min_beta)
         self.lambda_ce = (grpo_config.loss_config.lambda_ce, min_lambda_ce)
 
@@ -112,7 +112,6 @@ class CurriculumScheduler:
         self.grpo_config.rollout_config.max_actions = int(self.calc_increasing_value(progress, *self.max_actions))
         self.grpo_config.rollout_config.top_k = int(self.calc_annealing_value(progress, *self.top_k))
         self.grpo_config.rollout_config.temperature = self.calc_annealing_value(progress, *self.temperature)
-        self.grpo_config.reward_config.lambda_len = self.calc_increasing_value(progress, *self.lambda_len)
         self.grpo_config.loss_config.entropy_beta = self.calc_annealing_value(progress, *self.entropy_beta)
         self.grpo_config.loss_config.lambda_ce = self.calc_annealing_value(progress, *self.lambda_ce)
         
@@ -132,7 +131,7 @@ def expand_target_lmx_seqs(target_lmx_seqs: tuple[torch.Tensor], group_size, pad
 # target_musicxml_strs is a tuple where target_musicxml_strs[i] = the target musicxml for image i in the minibatch
 # Returns three tensors of metrics across all rollouts, one for raw edit_costs, one for a bool on if a castrophic error 
 # happened, and one for counts of minor delinearization errors
-def calc_edit_costs(rollouts, pad_idx, num_groups, group_size, target_musicxml_strs: tuple, idxs_to_tokens, num_parallel_processes=12):
+def calc_edit_costs(rollouts, pad_idx, num_groups, group_size, target_musicxml_strs: tuple, idxs_to_tokens, num_parallel_processes=NUM_EDIT_COST_PROCESSES):
     # unfold into individual groups since we can't broadcast the musicxml strings within groups
     rollout_groups = rollouts.view(num_groups, group_size, rollouts.shape[-1])
     tedn_call_args = []
@@ -140,7 +139,7 @@ def calc_edit_costs(rollouts, pad_idx, num_groups, group_size, target_musicxml_s
         for rollout in group:
             rollout = rollout[~(rollout == pad_idx)] # ignore <pad> tokens
             predicted_lmx = stringify_lmx_seq(rollout, idxs_to_tokens)
-            tedn_call_args.append((predicted_lmx, target_musicxml_strs[i], "lmx")) # share each target str across the whole group
+            tedn_call_args.append((predicted_lmx, target_musicxml_strs[i], "lmx", False, False)) # share each target str across the whole group
 
     with Pool(processes=num_parallel_processes) as pool:
         results = pool.starmap( # list of (TEDnResult.edit_cost, catastrophic_errs, minor_errs) tuples, one per rollout
@@ -347,7 +346,7 @@ def grpo_update(old_policy: GRPOViTOMR, policy_theta: GRPOViTOMR, optimizer, bat
         update_epochs = update_config.update_epochs
         for _ in range(update_epochs):
             # generate next token logits at each time step by using rollouts in a teacher forcing step
-            theta_logits = policy_theta.decoder(right_shifted_rollouts, img_latent, rollout_attention_mask, latent_attention_mask, checkpoint_grads=True)
+            theta_logits = policy_theta.decoder.forward(right_shifted_rollouts, img_latent, rollout_attention_mask, latent_attention_mask, checkpoint_grads=True)
             grpo_objective = calc_grpo_objective(theta_logits, rollouts, rollout_attention_mask, old_policy_log_probs, advantages, update_config.epsilon, num_groups)
             entropy_bonus = calc_entropy_bonus(theta_logits, rollout_attention_mask, vocab_size)
 
@@ -363,11 +362,12 @@ def grpo_update(old_policy: GRPOViTOMR, policy_theta: GRPOViTOMR, optimizer, bat
             batch_ce_loss += ce_loss.item()
             logger.log_overall_loss(loss, counter.global_step)
 
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(policy_theta.parameters(), max_norm=1.0)
-        optimizer.step()
-        optimizer.zero_grad()
-        counter.global_step += 1
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(policy_theta.parameters(), max_norm=1.0)
+            optimizer.step()
+            optimizer.zero_grad()
+
+            counter.global_step += 1
 
     avg_update_overall_loss = batch_overall_loss / update_epochs
     avg_update_ce_loss = batch_ce_loss / update_epochs
@@ -405,7 +405,9 @@ def epoch_train_loop(train_dataloader, mini_val_dataloader, old_policy, policy_t
     batch_size = train_dataloader.batch_size
     len_dataset = len(train_dataloader.dataset)
     num_batches = len(train_dataloader)
-    mini_val_freq = grpo_config.mini_validation_freq
+    # these will be compared against batch index, ie their values are in outer steps (not global/optim steps)
+    mini_val_freq = grpo_config.mini_validation_freq 
+    checkpoint_freq = grpo_config.checkpoint_freq 
 
     # these are epoch level metrics. Within each batch, average over rollouts, steps, exs, etc.,
     # accumulate totals for each loop, then average those at the end for epoch-level averages. We exclude
@@ -420,7 +422,8 @@ def epoch_train_loop(train_dataloader, mini_val_dataloader, old_policy, policy_t
         logger.log_configs(grpo_config, counter.global_step)
         # each batch, we need to refresh old_policy to match the resulting updated policy_theta from the previous GRPO updates.
         # Instead of repeatedly deepcopying, and since the encoder and transition head are frozen, we can just refresh the decoder parameters
-        old_policy.decoder.load_state_dict(policy_theta.decoder.state_dict())
+        old_policy_state_dict = {k: v.clone() for k, v in policy_theta.decoder.state_dict().items()}
+        old_policy.decoder.load_state_dict(old_policy_state_dict)
 
         avg_update_overall_loss, avg_update_ce_loss, avg_batch_reward, avg_batch_reward_components = grpo_update(old_policy, policy_theta, optimizer, batch, grpo_config, ce_loss_fn, device, logger, counter)
         epoch_train_overall_loss += avg_update_overall_loss
@@ -430,7 +433,7 @@ def epoch_train_loop(train_dataloader, mini_val_dataloader, old_policy, policy_t
 
         lr_scheduler.step()
         curriculum_scheduler.step()
-        if i % 100 == 0:
+        if i % 50 == 0:
             current_ex = i * batch_size + len(batch)
             print(f"[{current_ex:>5d}/{len_dataset:>5d}]")
 
@@ -443,10 +446,8 @@ def epoch_train_loop(train_dataloader, mini_val_dataloader, old_policy, policy_t
             logger.log_mini_validation_stats(mini_val_reward, mini_val_reward_components, mini_val_ce_loss, counter.global_step)
             policy_theta.train() 
 
-        if (i + 1) % grpo_config.checkpoint_freq == 0:
+        if (i + 1) % checkpoint_freq == 0:
             checkpoint_train_state((CHECKPOINTS_DIR_PATH / f"step_{counter.global_step}_checkpoint.pth"), policy_theta, optimizer, logger)
-
-        counter.global_step += 1
 
     epoch_stats = average_epoch_stats(epoch_train_overall_loss, epoch_train_ce_loss, epoch_train_reward, epoch_train_reward_components, num_batches)
     return epoch_stats
@@ -507,19 +508,23 @@ if __name__ == "__main__":
     teacher_forced_vitomr, base_img_transform, base_lmx_transform, device = set_up_omr_teacher_force_train()
     encoder = teacher_forced_vitomr.encoder
     transition_head = teacher_forced_vitomr.transition_head
-    # remake decoder into variant that supports KV caching so GRPO doesn't take forever
-    decoder = teacher_forced_vitomr.decoder.to_cached_version(TRAIN_BATCH_SIZE)
+    # remake decoder into variant that supports KV caching so GRPO doesn't take forever. Caches need to support a max batch of 
+    # batch size * number of rollouts per group since groups are flattened during inference
+    max_batch_size = TRAIN_BATCH_SIZE * INITIAL_ROLLOUT_CONFIG.group_size
+    decoder = teacher_forced_vitomr.decoder.to_cached_version(max_batch_size, torch.bfloat16)
 
     teacher_forced_state_dict = torch.load(TEACHER_FORCED_STATE_DICT_PATH)
 
     policy_theta = GRPOViTOMR(encoder, transition_head, decoder, teacher_forced_state_dict)
     policy_theta.to(device)
+
     print(f"Model architecture\n{'-' * 50}\n{policy_theta}\n")
 
     print(f"General hyperparameters\n{'-' * 50}\nImage augmentation probability: {AUGMENTATION_P}\n" \
           f"Train batch size: {TRAIN_BATCH_SIZE}\nValidation batch size: {VALIDATION_BATCH_SIZE}\nLearning rate: {LR}\nAdamW betas: {ADAMW_BETAS}, " \
           f"weight decay: {ADAMW_WEIGHT_DECAY}\nEpochs: {EPOCHS}\nMini validation size: {MINI_VALIDATION_SIZE} exs, frequency (in outer steps): " \
-          f"{MINI_VALIDATION_FREQ}\nCheckpoint frequency (in outer steps): {CHECKPOINT_FREQ}\nDataloader workers: {NUM_WORKERS}\n")
+          f"{MINI_VALIDATION_FREQ}\nCheckpoint frequency (in outer steps): {CHECKPOINT_FREQ}\nDataloader workers: {NUM_DATALOADER_WORKERS}\nNumber of parallel " \
+          f"processes for calculating edit costs: {NUM_EDIT_COST_PROCESSES}\n")
 
     # RL is more unstable and teacher force train already included augmentations, so slightly decrease strength
     camera_augment = v2.RandomApply(transforms=[
@@ -558,18 +563,21 @@ if __name__ == "__main__":
     # make sure to use a list as indices so datasets are indexed with integers and not tensors 
     mini_validation_dataset = Subset(validation_dataset, torch.randint(low=0, high=len(validation_dataset), size=(MINI_VALIDATION_SIZE, )).tolist())
 
-    train_dataloader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
-    validation_dataloader = DataLoader(validation_dataset, batch_size=VALIDATION_BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
-    mini_validation_dataloader = DataLoader(mini_validation_dataset, batch_size=VALIDATION_BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
+    train_dataloader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True, num_workers=NUM_DATALOADER_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
+    validation_dataloader = DataLoader(validation_dataset, batch_size=VALIDATION_BATCH_SIZE, shuffle=True, num_workers=NUM_DATALOADER_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
+    mini_validation_dataloader = DataLoader(mini_validation_dataset, batch_size=VALIDATION_BATCH_SIZE, shuffle=True, num_workers=NUM_DATALOADER_WORKERS, collate_fn=ragged_collate_fn, pin_memory=True)
 
     # old_policy should never be changed from eval() or have any of its requires_grad changed
-    old_policy = copy.deepcopy(policy_theta).eval()
+    old_policy = copy.deepcopy(policy_theta)
+    old_policy.to(device)
+    old_policy.eval()
+
     for p in old_policy.parameters():
         p.requires_grad = False
 
-    print(f"Scheduler hyperparematers\n{'-' * 50}\nLr warmup steps: {WARMUP_STEPS}\nMinimum lr: {MIN_LR}\nExploration " \
-          f"epochs: {EXPLORATION_EPOCHS}\nMax max_actions: {MAX_MAX_ACTIONS}\nMin top_k: {MIN_TOP_K}\nMin softmax " \
-          f"temperature: {MIN_TEMPERATURE}\nMax lambda_len: {MAX_LAMBDA_LEN}\nMin entropy beta: {MIN_ENTROPY_BETA}\n" \
+    print(f"Curriculum hyperparameters\n{'-' * 50}\nMinimum lr: {LR * LR_END_FACTOR}\nExploration " \
+          f"steps: {EXPLORATION_STEPS}\nMax max_actions: {MAX_MAX_ACTIONS}\nMin top_k: {MIN_TOP_K}\nMin softmax " \
+          f"temperature: {MIN_TEMPERATURE}\nMin entropy beta: {MIN_ENTROPY_BETA}\n" \
           f"Min lambda_ce: {MIN_LAMBDA_CE}\n")
 
     rollout_config = INITIAL_ROLLOUT_CONFIG
@@ -588,13 +596,14 @@ if __name__ == "__main__":
     logger = GRPOLogger(writer, epoch_stats_df)
     grpo_config = GRPOConfig(rollout_config, reward_config, loss_config, update_config, MINI_VALIDATION_FREQ, CHECKPOINT_FREQ)
     num_steps_per_epoch = len(train_dataloader)
-    lr_scheduler = stepwise_cosine_anneal_with_warmup(optimizer, WARMUP_STEPS, EPOCHS, MIN_LR, num_steps_per_epoch)
-    curriculum_scheduler = CurriculumScheduler(grpo_config, EXPLORATION_EPOCHS, EPOCHS, num_steps_per_epoch,
-                                               MAX_MAX_ACTIONS, MIN_TOP_K, MIN_TEMPERATURE, MAX_LAMBDA_LEN, MIN_ENTROPY_BETA, MIN_LAMBDA_CE)
+    lr_scheduler = LinearLR(optimizer, start_factor=1.0, end_factor=LR_END_FACTOR, total_iters=(EPOCHS * num_steps_per_epoch))
+    curriculum_scheduler = CurriculumScheduler(grpo_config, EXPLORATION_STEPS, EPOCHS, num_steps_per_epoch,
+                                               MAX_MAX_ACTIONS, MIN_TOP_K, MIN_TEMPERATURE, MIN_ENTROPY_BETA, MIN_LAMBDA_CE)
     counter = StepCounter(0)
 
     for i in range(EPOCHS):
         print(f"EPOCH {i + 1}\n{'-' * 50}")
+        print(f"Lr at start: {optimizer.param_groups[0]["lr"]}")
         policy_theta.train()
         epoch_start_time = time.perf_counter()
         epoch_stats = epoch_train_loop(train_dataloader, mini_validation_dataloader, old_policy, policy_theta, optimizer, lr_scheduler, grpo_config, curriculum_scheduler, ce_loss_fn, logger, device, counter)

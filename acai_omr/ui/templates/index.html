@@ -11,12 +11,8 @@
         <form id="inference-form" class="toggleable-section">
             <p>Model weights path (defined in acai_omr/config.py): {{ weights_path }}</p>
 
-            <label for="beam-width">Beam width</label><br>
-            <input type="number" class="interactive-el num-input" id="beam-width" name="beam_width" value="3" min="1" required><br>
-
-            <label for="beam-width">Max inference token length</label><br>
-            <!--TODO: after testing change value to 1536-->
-            <input type="number" class="interactive-el num-input" id="max-inference-len" name="max_inference_len" value="3" min="2" max="1536" required><br>
+            <label for="max-inference-len">Max inference token length</label><br>
+            <input type="number" class="interactive-el num-input" id="max-inference-len" name="max_inference_len" value="1536" min="2" max="1536" required><br>
             <button type="submit" class="interactive-el">Start inference</button>
         </form>
         <section id="encoding-progress-view" class="toggleable-section">
@@ -30,8 +26,10 @@
             </div>
         </section>
         <section id="token-stream-view" class="token-stream-view toggleable-section">
-            <h3>Current beams</h3>
-            <div id="stream-output" class="stream-output gradient-border"></div>
+            <h3>Current sequence</h3>
+            <div class="stream-output gradient-border">
+                <div id="output-window" class="output-window"></div>
+            </div>
         </section>
         <script src="{{ url_for('static', filename='inference.js') }}" type="module"></script>
     </main>
