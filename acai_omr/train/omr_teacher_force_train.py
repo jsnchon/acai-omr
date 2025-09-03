@@ -129,7 +129,7 @@ def train_loop(vitomr: ScheduledSamplingViTOMR, dataloader, loss_fn, optimizer, 
             scheduler.step()
             tf_scheduler.step()
 
-            writer.add_scalar(f"train/loss", effective_batch_loss, counter.global_step)
+            writer.add_scalar(f"train/loss", effective_batch_loss / grad_accumulation_steps, counter.global_step)
             writer.add_scalar(f"train/hyperparams/base_lr", optimizer.param_groups[0]["lr"], counter.global_step)
             writer.add_scalar(f"train/hyperparams/fine_tune_base_lr", optimizer.param_groups[2]["lr"], counter.global_step)
             writer.add_scalar(f"train/hyperparams/teacher_forcing_prob", tf_config.tf_prob, counter.global_step)

@@ -1,8 +1,10 @@
 import torch
 from flask import Blueprint, render_template, request, Response
-from acai_omr.inference.vitomr_inference import beam_search
-from acai_omr.config import INFERENCE_VITOMR_PATH, InferenceEvent
+from acai_omr.inference.vitomr_inference import streamed_inference
+from acai_omr.config import INFERENCE_VITOMR_PATH
 from acai_omr.train.omr_teacher_force_train import set_up_omr_teacher_force_train
+from acai_omr.__init__ import InferenceEvent
+from acai_omr.utils.utils import stringify_lmx_seq
 import logging  
 from PIL import Image
 import json
@@ -12,11 +14,15 @@ main = Blueprint("main", __name__)
 logger = logging.getLogger(__name__)
 
 DEBUG_IMAGE_PATH = "inference_test.png"
+MAX_BATCH_SIZE = 1
+CACHE_DTYPE = torch.bfloat16
 
 # without this, in debug mode flask runs import statements twice in two processes which means the model is duplicated and
 # takes up too much memory
 if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
     vitomr, base_img_transform, _, device = set_up_omr_teacher_force_train()
+    logger.info(f"Enabling caching for decoder with a max batch size of {MAX_BATCH_SIZE} and cache datatype of {CACHE_DTYPE}")
+    vitomr.decoder = vitomr.decoder.to_cached_version(MAX_BATCH_SIZE, CACHE_DTYPE)
     
     logger.info(f"Loading state dict from {INFERENCE_VITOMR_PATH}")
     if device == "cpu":
@@ -26,60 +32,45 @@ if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
 
     vitomr.load_state_dict(vitomr_state_dict)
 
+    if device == "cpu":
+        flush_interval = 25
+    else:
+        flush_interval = 100 # buffer GPUs more
+
 @main.route("/")
 def index():
     return render_template("index.html", weights_path=INFERENCE_VITOMR_PATH)
 
-# SSE wrapper that 1) post-processes events yielded by beam_search for the UI and 2) yields a final event signalling the 
-# inference has ended and carrying the final inference result so the rest of the inference back-end can be ran
-def stream_beam_search_wrapper(vitomr, image, bos_token_idx, eos_token_idx, device, beam_width, max_inference_len):
-    inference_event = None
-    for event in beam_search(vitomr, image, bos_token_idx, eos_token_idx, device, beam_width, max_inference_len):
-        inference_event = event
-
+# SSE wrapper that post-processes and then yields events yielded by inference.
+# Again, we assume there's only one sequence being passed here at a time
+def stream_inference_wrapper(vitomr, img, device, max_inference_len, flush_interval):
+    for event in streamed_inference(vitomr, img, device, max_inference_len, flush_interval):
         if event["type"] == InferenceEvent.STEP.value:
-            # for intermediate inference steps, process the payload to only include the decoded/stringified beam tensors
-            beams_list = []
-            for beam in event["payload"]["beams"]:
-                decoded_beam = [vitomr.decoder.idxs_to_tokens[idx.item()] for idx in beam]
-                decoded_beam = " ".join(decoded_beam)
-                beams_list.append(decoded_beam)
-            # always yield whole beams instead of new tokens since newly generated tokens can be extensions for any beam(s) (eg all on one beam)
-            event["payload"] = {"beams": beams_list}
-        elif event["type"] == InferenceEvent.INFERENCE_FINISH.value:
-            # process payload for final yielded inference event before streaming. Including "done": True will signal the stream should be closed
-            decoded_lmx_seq = [vitomr.decoder.idxs_to_tokens[idx.item()] for idx in inference_event["payload"]["lmx_seq"].squeeze(0)]
-            decoded_lmx_seq = " ".join(decoded_lmx_seq)
-            final_payload = {"lmx_seq": decoded_lmx_seq, "score": inference_event["payload"]["score"].item()}
-            event["payload"] = final_payload
+            tokens = event["payload"]["tokens"]
+            tokens = tokens[tokens != vitomr.decoder.pad_idx] # last buffer may have leftover pad tokens
+            tokens = stringify_lmx_seq(tokens.squeeze(0), vitomr.decoder.idxs_to_tokens)
+            event["payload"] = {"tokens": tokens}
 
-        yield f"data: {json.dumps(event)}\n\n" # two \n to add a blank line which SSE uses as a signal for the event end
+        if event["type"] == InferenceEvent.INFERENCE_FINISH.value:
+            sequence = event["payload"]["sequence"]
+            seq_mask = event["payload"]["mask"]
+            sequence = stringify_lmx_seq(sequence.squeeze(0), vitomr.decoder.idxs_to_tokens)
+            logger.info("Inference finished")
+            seq_log_probs = event["payload"]["log_probs"]
+            average_log_prob = seq_log_probs.sum() / seq_mask.sum()
+            average_confidence = torch.exp(average_log_prob).item()
+            event["payload"] = {"sequence": sequence, "average_confidence": average_confidence}
+        
+        yield f"data: {json.dumps(event)}\n\n"
 
 @main.route("/inference/stream")
 def stream_inference():
-    beam_width = int(request.args.get("beam_width", 3))
     max_inference_len = int(request.args.get("max_inference_len", 1536))
 
-    # DEBUG
-#    from acai_omr.models.models import FineTuneOMREncoder, OMRDecoder, ViTOMR, MAE
-#    from acai_omr.train.pre_train import PE_MAX_HEIGHT, PE_MAX_WIDTH
-#    from acai_omr.train.omr_train import PE_MAX_HEIGHT, PE_MAX_WIDTH, MAX_LMX_SEQ_LEN, LMX_VOCAB_PATH
-#    from acai_omr.config import DEBUG_PRETRAINED_MAE_PATH
-#    DEBUG_KWARGS = {"num_layers": 2, "num_heads": 1, "mlp_dim": 1}
-#    DEBUG_PATCH_SIZE = 16
-#
-#    debug_encoder = FineTuneOMREncoder(DEBUG_PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH, 1, hidden_dim=10, **DEBUG_KWARGS)
-#    debug_decoder = OMRDecoder(MAX_LMX_SEQ_LEN, LMX_VOCAB_PATH, hidden_dim=10, **DEBUG_KWARGS)
-#    debug_mae_state_dict = torch.load(DEBUG_PRETRAINED_MAE_PATH)
-#    debug_vitomr = ViTOMR(debug_encoder, debug_mae_state_dict, debug_decoder)
-#    vitomr = debug_vitomr
-#    weights_path = "debug_omr_train/debug_vitomr.pth"
-    # end debug
-    image = Image.open(DEBUG_IMAGE_PATH).convert("L")
-    image = base_img_transform(image).to(device)
+    img = Image.open(DEBUG_IMAGE_PATH).convert("L")
+    img = base_img_transform(img).to(device)
 
     # make sure to transform any images using patch transform
-    logger.info("Starting inference and streaming from endpoint")
-    logger.info(f"Running beam search with beam width {beam_width} and max inference length {max_inference_len}")
+    logger.info(f"Starting inference with max length {max_inference_len} and streaming from endpoint with a flush interval of {flush_interval}")
 
-    return Response(stream_beam_search_wrapper(vitomr, image, device, beam_width, max_inference_len), mimetype="text/event-stream")
+    return Response(stream_inference_wrapper(vitomr, img, device, max_inference_len, flush_interval), mimetype="text/event-stream")

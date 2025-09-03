@@ -106,18 +106,25 @@ button:hover {
 }
 
 .stream-output {
-    min-height: 50vh;
+    min-height: 25vh;
     border: 4px solid transparent;
     border-radius: 12px;
+    padding: 10px;
     background: 
         linear-gradient(var(--lighter-primary-color), var(--lighter-primary-color)) padding-box, 
         linear-gradient(var(--angle), #230f2e, var(--accent-color)) border-box;
     animation: 6s rotate linear infinite;
     display: flex;
-    flex-direction: column;
-    justify-content: space-around;
-    align-items: flex-start;
-    flex-wrap: wrap;
+    align-items: center;   
+}
+
+/* Container containing the actual tokens, each wrapped by a span (so they can be individually animated) which are inline
+with other spans. Parent container will center this container */
+.output-window {
+    min-height: 0.5em;
+    display: inline-block; 
+    text-align: left;
+    white-space: pre-wrap;
 }
 
 @keyframes rotate {
@@ -133,7 +140,7 @@ button:hover {
 }
 
 .slide-in {
-    animation: 0.5s slide-in ease;
+    animation: 0.5s forwards slide-in ease;
 }
 
 @keyframes slide-in {

@@ -5,6 +5,7 @@ from torch.utils.checkpoint import checkpoint_sequential
 from functools import partial
 from acai_omr.config import LMX_PAD_TOKEN, LMX_BOS_TOKEN, LMX_EOS_TOKEN
 from acai_omr.models.kv_caching import CachedTransformerDecoder, CachedTransformerDecoderLayer
+from acai_omr.__init__ import InferenceEvent
 import re
 
 NUM_CHANNELS = 1 # assume these images all are grayscale
@@ -538,14 +539,124 @@ def batchify_and_split_lmx_seqs(lmx_seqs: tuple[torch.Tensor], pad_idx, device):
     lmx_attention_mask = lmx_attention_mask.to(device)
     return input_seqs, target_seqs, lmx_attention_mask
 
-class TeacherForcedViTOMR(nn.Module):
+class ViTOMR(nn.Module):
+    def __init__(self, encoder, transition_head, decoder):
+        super().__init__()
+        self.encoder = encoder
+        self.transition_head = transition_head
+        self.decoder = decoder
+
+    # returns mask where True = token is part of an autoregressively generated sequence, False = token is junk after a sequence ended
+    def create_inference_mask(self, seqs):
+        # marks where <eos> tokens are
+        eos_mask = (seqs == self.decoder.eos_idx)
+        # 0 when there's been no <eos> up to/including this point, 1 when there's been 1 up to/including this point, etc.
+        seen_eos_mask = eos_mask.int().cumsum(dim=-1)
+        # first <eos> is when we have an <eos> token and have only seen 1 so far (ie at that position)
+        first_eos_mask = eos_mask & (seen_eos_mask == 1)
+        # only count each rollout as tokens up to and including the first <eos> (if it exists and if include_eos = True)
+        mask = (seen_eos_mask == 0) | first_eos_mask
+        return mask
+
+    # reset caches, set up sequence tensors
+    def cached_set_up_inference(self, img_latent, max_len):
+        device = img_latent.device
+
+        self.decoder.prepare_caches(img_latent)
+
+        num_seqs = img_latent.shape[0]
+        seqs = torch.full([num_seqs, max_len], fill_value=self.decoder.pad_idx, dtype=torch.long, device=device) 
+        seqs[:, 0] = torch.full([num_seqs], fill_value=self.decoder.bos_idx)
+        seq_log_probs = torch.zeros_like(seqs, dtype=torch.float)
+        finished_seqs = torch.full([num_seqs], fill_value=False)
+
+        return seqs, seq_log_probs, finished_seqs
+
+    def cached_get_next_token(self, seqs, t, latent_attention_mask):
+        logits = self.decoder.cached_generate(seqs[:, t - 1].unsqueeze(1), t, latent_attention_mask)
+        logits = logits.squeeze(1)
+
+        next_token_idxs = torch.argmax(logits, dim=-1) # (B, )
+        log_probs = F.log_softmax(logits, dim=-1) # (B, E)
+        chosen_log_probs = log_probs.gather(-1, index=next_token_idxs.unsqueeze(1)).squeeze(1)
+
+        return next_token_idxs, chosen_log_probs
+
+    def mask_and_clip_seqs(self, seqs, seq_log_probs):
+        seq_mask = self.create_inference_mask(seqs) # mark what tokens are part of (potentially ragged) sequences
+        seqs = seqs.masked_fill(~seq_mask, self.decoder.pad_idx)
+        seq_log_probs = seq_log_probs.masked_fill(~seq_mask, 0.0)
+
+        # get rid of excess padding
+        max_seq_len = torch.max(seq_mask.sum(dim=-1))
+        seqs = seqs[:, :max_seq_len]
+        seq_log_probs = seq_log_probs[:, :max_seq_len]
+        seq_mask = seq_mask[:, :max_seq_len]
+
+        return seqs, seq_log_probs, seq_mask
+
+    # batched greedy autoregressive generation with KV caching. For one image, latent_attention_mask can be None and the
+    # returned sequence mask can be ignored (it'll just be all True)
+    def cached_greedy_generate(self, img_latent, latent_attention_mask=None, max_len=1536):
+        seqs, seq_log_probs, finished_seqs = self.cached_set_up_inference(img_latent, max_len)
+
+        for t in range(1, max_len):
+            next_token_idxs, chosen_log_probs = self.cached_get_next_token(seqs, t, latent_attention_mask)
+
+            seqs[:, t] = next_token_idxs
+            seq_log_probs[:, t] = chosen_log_probs
+
+            finished_seqs[seqs[:, t] == self.decoder.eos_idx] = True
+            if torch.all(finished_seqs):
+                break
+
+        seqs, seq_log_probs, seq_mask = self.mask_and_clip_seqs(seqs, seq_log_probs)
+
+        return seqs, seq_log_probs, seq_mask
+
+    # variant that supports streaming to UI. NOTE: as of now, this only supports batch sizes of one image at a time.
+    # Flush interval is how many tokens to buffer before sending out in stream. During inference, we yield the latest generated
+    # and buffered tokens and the whole finished sequence is yielded at the end
+    def streamed_cached_greedy_generate(self, img_latent, latent_attention_mask=None, max_len=1536, flush_interval=25):
+        if img_latent.shape[0] != 1:
+            raise ValueError("Streamed generation only supports single image batches")
+
+        seqs, seq_log_probs, finished_seqs = self.cached_set_up_inference(img_latent, max_len)
+        token_buffer = torch.full([seqs.shape[0], flush_interval], fill_value=self.decoder.pad_idx, dtype=torch.int, device=seqs.device)
+
+        for t in range(1, max_len):
+            next_token_idxs, chosen_log_probs = self.cached_get_next_token(seqs, t, latent_attention_mask)
+
+            seqs[:, t] = next_token_idxs
+            seq_log_probs[:, t] = chosen_log_probs
+            token_buffer[:, (t - 1) % flush_interval] = next_token_idxs
+
+            finished_seqs[seqs[:, t] == self.decoder.eos_idx] = True
+            if torch.all(finished_seqs):
+                break
+
+            if t % flush_interval == 0:
+                yield {"type": InferenceEvent.STEP.value, "payload": {"tokens": token_buffer}} 
+
+        seqs, seq_log_probs, seq_mask = self.mask_and_clip_seqs(seqs, seq_log_probs)
+        yield {"type": InferenceEvent.INFERENCE_FINISH.value, "payload": {"sequence": seqs, "log_probs": seq_log_probs, "mask": seq_mask}}
+
+class TeacherForcedViTOMR(ViTOMR):
     # create a model using parts from a pretrained MAE
     def __init__(self, omr_encoder, pretrained_mae_state_dict, omr_decoder, transition_head_dim=4096, transition_head_dropout=0.05):
-        super().__init__()
-        self.encoder = omr_encoder
+        encoder = omr_encoder
+        decoder = omr_decoder
+        # transition head to allow some task-specific adaptation of the latent representation
+        transition_head = nn.Sequential(
+            nn.Linear(encoder.hidden_dim, transition_head_dim),
+            nn.GELU(),
+            nn.Dropout(transition_head_dropout),
+            nn.Linear(transition_head_dim, decoder.hidden_dim)
+        )
+        super().__init__(encoder, transition_head, decoder)
 
         encoder_state_dict = self.create_omr_encoder_state_dict_from_mae(pretrained_mae_state_dict)
-        self.encoder.load_state_dict(encoder_state_dict)
+        encoder.load_state_dict(encoder_state_dict)
 
         # depending on the type of encoder being used, either freeze the whole thing or just the frozen blocks or none at all (for full fine-tune)
         if isinstance(self.encoder, FineTuneOMREncoder) and self.encoder.frozen_blocks:
@@ -558,16 +669,6 @@ class TeacherForcedViTOMR(nn.Module):
             for param in self.encoder.parameters():
                 param.requires_grad = False
         # for full fine-tune, we leave the state_dict as is (everything has requires_grad)
-
-        self.decoder = omr_decoder
-
-        # transition head to allow some task-specific adaptation of the latent representation
-        self.transition_head = nn.Sequential(
-            nn.Linear(self.encoder.hidden_dim, transition_head_dim),
-            nn.GELU(),
-            nn.Dropout(transition_head_dropout),
-            nn.Linear(transition_head_dim, self.decoder.hidden_dim)
-        )
 
     def create_omr_encoder_state_dict_from_mae(self, pretrained_mae_state_dict):
         # preprocess state dict: remove redundant prefixes added by MAE class since 
@@ -730,18 +831,15 @@ class ScheduledSamplingViTOMR(TeacherForcedViTOMR):
     def forward_eval(self, x: list[tuple[torch.Tensor, torch.Tensor]]):
         return super().forward(x)
 
-class GRPOViTOMR(nn.Module):
+class GRPOViTOMR(ViTOMR):
     # encoder, transition_head, and decoder should be module instances matching those of a TeacherForcedViTOMR 
     # instance. init essentially will convert that instance into a version prepared for GRPO training
     def __init__(self, encoder, transition_head, decoder, teacher_forced_state_dict):
-        super().__init__()
-        if isinstance(encoder, FineTuneOMREncoder):
+        super().__init__(encoder, transition_head, decoder)
+        if isinstance(self.encoder, FineTuneOMREncoder):
             teacher_forced_state_dict = self.convert_teacher_forced_state_dict(teacher_forced_state_dict, encoder.num_frozen_layers)
-            encoder = OMREncoder(encoder.patch_size, encoder.pe_max_height, encoder.pe_max_width, encoder.num_layers, encoder.hidden_dim, **encoder.superclass_kwargs)
+            self.encoder = OMREncoder(self.encoder.patch_size, self.encoder.pe_max_height, self.encoder.pe_max_width, self.encoder.num_layers, self.encoder.hidden_dim, **encoder.superclass_kwargs)
             
-        self.encoder = encoder
-        self.transition_head = transition_head
-        self.decoder = decoder
         self.load_state_dict(teacher_forced_state_dict)
         # freeze encoder/transition head which by now should be well-trained for the seq2seq task. Also disable their dropout
         self.freeze_component(self.encoder)
@@ -786,18 +884,6 @@ class GRPOViTOMR(nn.Module):
         latent_attention_mask = latent_attention_mask.flatten(start_dim=0, end_dim=1)
         return img_latent, latent_attention_mask
 
-    # returns mask where True = token is part of a rollout, False = token is junk after a rollout ended
-    def create_rollout_mask(self, rollouts):
-        # marks where <eos> tokens are
-        eos_mask = (rollouts == self.decoder.eos_idx)
-        # 0 when there's been no <eos> up to/including this point, 1 when there's been 1 up to/including this point, etc.
-        seen_eos_mask = eos_mask.int().cumsum(dim=-1)
-        # first <eos> is when we have an <eos> token and have only seen 1 so far (ie at that position)
-        first_eos_mask = eos_mask & (seen_eos_mask == 1)
-        # only count each rollout as tokens up to and including the first <eos> (if it exists and if include_eos = True)
-        rollout_mask = (seen_eos_mask == 0) | first_eos_mask
-        return rollout_mask
-
     """
     Warning: for GRPO this is absurdly slow so really only the cached version should be used and this should be treated as deprecated
     TODO: change this so keeps track of an active mask so only keep doing inference on active seqs, fill rest with <pad> and 0 log prob for next token
@@ -838,7 +924,7 @@ class GRPOViTOMR(nn.Module):
             if torch.all(finished_seqs):
                 break
         
-        rollout_mask = self.create_rollout_mask(rollouts)
+        rollout_mask = self.create_inference_mask(rollouts)
         # explicitly set tokens that aren't part of rollouts to <pad> and their log probs to 0. Later functions assume this is the case
         rollouts = rollouts.masked_fill(~rollout_mask, self.decoder.pad_idx)
         rollout_log_probs = rollout_log_probs.masked_fill(~rollout_mask, 0.0)
@@ -942,7 +1028,7 @@ class GRPOViTOMR(nn.Module):
             if torch.all(finished_rollouts):
                 break
        
-        rollout_mask = self.create_rollout_mask(rollouts)
+        rollout_mask = self.create_inference_mask(rollouts)
         # explicitly set tokens that aren't part of rollouts to <pad> and their log probs to 0. Later functions assume this is the case
         rollouts = rollouts.masked_fill(~rollout_mask, self.decoder.pad_idx)
 
