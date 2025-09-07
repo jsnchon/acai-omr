@@ -6,14 +6,58 @@ function hideSection(elem) {
     elem.classList.remove("active");
 }
 
-const inferenceForm = document.getElementById("inference-form");
-const firstSection = inferenceForm; // first section to show. Others are kept hidden until they should be activated
+const startView = document.getElementById("start-view");
+
+const firstSection = startView; // first section to show. Others are kept hidden until they should be activated
 
 document.addEventListener("DOMContentLoaded", () => {
     setTimeout(() => { // brief pause so animations play nicely
         showSection(firstSection);
     }, 500);
 });
+
+const imageForm = document.getElementById("image-form")
+const imageUpload = document.getElementById("image-upload");
+const imagePreviewWindow = document.getElementById("image-preview-window")
+const imagePreview = document.getElementById("image-preview")
+
+imageUpload.addEventListener("change", (e) => {
+    const imgFile = e.target.files[0];
+    if (imgFile) {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            imagePreviewWindow.classList.add("active")
+            imagePreview.src = ev.target.result;
+            imagePreview.style.display = "block";
+        };
+        reader.readAsDataURL(imgFile);
+    }
+});
+
+let imgPath = null
+const inferenceForm = document.getElementById("inference-form");
+
+imageForm.addEventListener("submit", 
+    async (e) => {
+        e.preventDefault();
+        hideSection(startView);
+        
+        const imgFile = imageUpload.files[0]
+        const formData = new FormData();
+        formData.append("img_file", imgFile);
+
+//        const resp = await fetch("/upload", {
+//            method: "POST",
+//            body: formData
+//        });
+//
+//        resp = await resp.json();
+//        console.log("Server response to image upload: ", resp);
+//        imgPath = resp.path;
+
+        showSection(inferenceForm);
+    }
+);
 
 const encodingProgressView = document.getElementById("encoding-progress-view");
 const tokenStreamView = document.getElementById("token-stream-view");

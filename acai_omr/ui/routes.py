@@ -1,5 +1,6 @@
 import torch
 from flask import Blueprint, render_template, request, Response
+from werkzeug.utils import secure_filename
 from acai_omr.inference.vitomr_inference import streamed_inference
 from acai_omr.config import INFERENCE_VITOMR_PATH
 from acai_omr.train.omr_teacher_force_train import set_up_omr_teacher_force_train
@@ -16,6 +17,8 @@ logger = logging.getLogger(__name__)
 DEBUG_IMAGE_PATH = "inference_test.png"
 MAX_BATCH_SIZE = 1
 CACHE_DTYPE = torch.bfloat16
+
+# TODO: this model loading code doesn't work when the app isn't run with --debug
 
 # without this, in debug mode flask runs import statements twice in two processes which means the model is duplicated and
 # takes up too much memory
@@ -35,11 +38,19 @@ if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
     if device == "cpu":
         flush_interval = 25
     else:
-        flush_interval = 100 # buffer GPUs more
+        flush_interval = 50 # buffer GPUs more
 
 @main.route("/")
 def index():
     return render_template("index.html", weights_path=INFERENCE_VITOMR_PATH)
+
+@main.route("/upload", methods=["POST"])
+def upload_img():
+    f = request.files["img_file"]
+    file_path = f"/var/www/uploads/{secure_filename(f.filename)}"
+    f.save(file_path)
+    logger.info(f"File saved to {file_path}")
+    return {"path": file_path}
 
 # SSE wrapper that post-processes and then yields events yielded by inference.
 # Again, we assume there's only one sequence being passed here at a time

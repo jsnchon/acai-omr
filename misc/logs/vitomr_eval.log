@@ -1,0 +1,94 @@
+Setting up MAE with mask ratio 0.75 and patch size 16
+Using device cuda
+Setting up encoder with patch size 16, pe grid of 60 x 200, fine-tuning last 12 layers
+Setting up decoder with max lmx sequence length 1536, vocab file lmx_vocab.txt
+Loaded pretrained mae state dict from mae_pre_train/pretrained_mae.pth
+Setting up ViTOMR model
+
+Using device cuda
+Loading state dict from tf_omr_train/vitomr.pth
+Creating ViTOMR model from loaded state dict
+Model architecture
+--------------------
+ScheduledSamplingViTOMR(
+  (encoder): FineTuneOMREncoder(
+    (unfold): Unfold(kernel_size=16, dilation=1, padding=0, stride=16)
+    (projection): Linear(in_features=256, out_features=768, bias=True)
+    (fine_tune_blocks): TransformerEncoder(
+      (layers): ModuleList(
+        (0-11): 12 x TransformerEncoderLayer(
+          (self_attn): MultiheadAttention(
+            (out_proj): NonDynamicallyQuantizableLinear(in_features=768, out_features=768, bias=True)
+          )
+          (linear1): Linear(in_features=768, out_features=3072, bias=True)
+          (dropout): Dropout(p=0.05, inplace=False)
+          (linear2): Linear(in_features=3072, out_features=768, bias=True)
+          (norm1): LayerNorm((768,), eps=1e-05, elementwise_affine=True)
+          (norm2): LayerNorm((768,), eps=1e-05, elementwise_affine=True)
+          (dropout1): Dropout(p=0.05, inplace=False)
+          (dropout2): Dropout(p=0.05, inplace=False)
+        )
+      )
+      (norm): LayerNorm((768,), eps=1e-06, elementwise_affine=True)
+    )
+  )
+  (decoder): OMRDecoder(
+    (vocab_embedding): Embedding(227, 1024, padding_idx=1)
+    (decoder_blocks): TransformerDecoder(
+      (layers): ModuleList(
+        (0-11): 12 x TransformerDecoderLayer(
+          (self_attn): MultiheadAttention(
+            (out_proj): NonDynamicallyQuantizableLinear(in_features=1024, out_features=1024, bias=True)
+          )
+          (multihead_attn): MultiheadAttention(
+            (out_proj): NonDynamicallyQuantizableLinear(in_features=1024, out_features=1024, bias=True)
+          )
+          (linear1): Linear(in_features=1024, out_features=4096, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear2): Linear(in_features=4096, out_features=1024, bias=True)
+          (norm1): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+          (norm2): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+          (norm3): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+          (dropout1): Dropout(p=0.1, inplace=False)
+          (dropout2): Dropout(p=0.1, inplace=False)
+          (dropout3): Dropout(p=0.1, inplace=False)
+        )
+      )
+      (norm): LayerNorm((1024,), eps=1e-06, elementwise_affine=True)
+    )
+    (unembed): Linear(in_features=1024, out_features=227, bias=True)
+  )
+  (transition_head): Sequential(
+    (0): Linear(in_features=768, out_features=4096, bias=True)
+    (1): GELU(approximate='none')
+    (2): Dropout(p=0.05, inplace=False)
+    (3): Linear(in_features=4096, out_features=1024, bias=True)
+  )
+)
+Setting up test dataset and dataloader
+Using a batch size of 64 and 24 workers
+Starting evaluation
+[   64/10647]
+[ 1664/10647]
+[ 3264/10647]
+[ 4864/10647]
+[ 6464/10647]
+[ 8064/10647]
+[ 9664/10647]
+Average test loss: 0.06128193112369069
+Creating directory at preds if it already doesn't exist
+Saving input image to preds/sample_0/input_image.png
+Saving predicted token sequence to preds/sample_0/pred.txt
+Saving target token sequence to preds/sample_0/target_seq.txt
+Saving input image to preds/sample_1/input_image.png
+Saving predicted token sequence to preds/sample_1/pred.txt
+Saving target token sequence to preds/sample_1/target_seq.txt
+Saving input image to preds/sample_2/input_image.png
+Saving predicted token sequence to preds/sample_2/pred.txt
+Saving target token sequence to preds/sample_2/target_seq.txt
+Saving input image to preds/sample_3/input_image.png
+Saving predicted token sequence to preds/sample_3/pred.txt
+Saving target token sequence to preds/sample_3/target_seq.txt
+Saving input image to preds/sample_4/input_image.png
+Saving predicted token sequence to preds/sample_4/pred.txt
+Saving target token sequence to preds/sample_4/target_seq.txt

@@ -2,7 +2,7 @@ import torch
 from acai_omr.config import GRAND_STAFF_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
 from acai_omr.utils.utils import show_mae_prediction, show_vitomr_prediction, ragged_collate_fn
 from pathlib import Path
-from models import MAELoss, OMRLoss
+from models import MAELoss, OMRCELoss
 from acai_omr.train.datasets import GrandStaffLMXDataset, OlimpicDataset, OlimpicPreTrainWrapper, GrandStaffPreTrainWrapper, GrandStaffOMRTrainWrapper
 from torch.utils.data import ConcatDataset, DataLoader
 from acai_omr.train.pre_train import set_up_mae, base_transform
@@ -113,7 +113,7 @@ def test_vitomr(vitomr, vitomr_state_dict, args, device):
     num_workers = args.num_workers
     print(f"Using a batch size of {batch_size} and {num_workers} workers")
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=ragged_collate_fn, pin_memory=True)
-    loss_fn = OMRLoss(vitomr.decoder.pad_idx, label_smoothing=0.0)
+    loss_fn = OMRCELoss(vitomr.decoder.pad_idx, label_smoothing=0.0)
 
     vitomr = vitomr.to(device)
 

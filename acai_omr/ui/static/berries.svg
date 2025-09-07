@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="120 100 360 360" role="img" aria-labelledby="titleDesc">
+  <title id="titleDesc">Three cartoon purple berries in a small triangular pile with leaves on the top berry</title>
+
+  <defs>
+    <!-- soft drop shadow -->
+    <filter id="dropShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="6" result="blur"/>
+      <feOffset in="blur" dx="0" dy="10" result="offset"/>
+      <feGaussianBlur in="offset" stdDeviation="2" result="offset2"/>
+      <feMerge>
+        <feMergeNode in="offset2"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- purple berry gradient -->
+    <radialGradient id="berryGrad" cx="35%" cy="30%" r="65%">
+      <stop offset="0%" stop-color="#b37bff"/>
+      <stop offset="55%" stop-color="#8b46d9"/>
+      <stop offset="100%" stop-color="#612a9a"/>
+    </radialGradient>
+
+    <!-- tiny stem gradient -->
+    <linearGradient id="stemGrad" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="#6b4b2e"/>
+      <stop offset="100%" stop-color="#3d2718"/>
+    </linearGradient>
+
+    <!-- gloss highlight -->
+    <radialGradient id="gloss" cx="25%" cy="25%" r="40%">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.95)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+    </radialGradient>
+  </defs>
+
+  <!-- shadows under berries -->
+  <ellipse cx="220" cy="408" rx="78" ry="24" fill="#000" opacity="0.12"/>
+  <ellipse cx="380" cy="408" rx="78" ry="24" fill="#000" opacity="0.12"/>
+  <ellipse cx="300" cy="260" rx="68" ry="20" fill="#000" opacity="0.10"/>
+
+  <!-- left-bottom berry -->
+  <g filter="url(#dropShadow)">
+    <circle cx="220" cy="330" r="78" fill="url(#berryGrad)"/>
+    <g opacity="0.12" transform="translate(-6,-4)">
+      <ellipse cx="205" cy="315" rx="5" ry="8" transform="rotate(-20 205 315)"/>
+      <ellipse cx="235" cy="340" rx="4" ry="6" transform="rotate(15 235 340)"/>
+    </g>
+    <path d="M220 255 C215 245, 235 240, 238 255" fill="none" stroke="url(#stemGrad)" stroke-width="6" stroke-linecap="round"/>
+    <ellipse cx="197" cy="307" rx="30" ry="18" fill="url(#gloss)" opacity="0.95" transform="rotate(-18 197 307)"/>
+  </g>
+
+  <!-- right-bottom berry -->
+  <g filter="url(#dropShadow)">
+    <circle cx="380" cy="330" r="78" fill="url(#berryGrad)"/>
+    <g opacity="0.12" transform="translate(6,-4)">
+      <ellipse cx="395" cy="315" rx="5" ry="8" transform="rotate(20 395 315)"/>
+      <ellipse cx="365" cy="340" rx="4" ry="6" transform="rotate(-15 365 340)"/>
+    </g>
+    <path d="M380 255 C375 245, 395 240, 398 255" fill="none" stroke="url(#stemGrad)" stroke-width="6" stroke-linecap="round"/>
+    <ellipse cx="403" cy="307" rx="30" ry="18" fill="url(#gloss)" opacity="0.95" transform="rotate(18 403 307)"/>
+  </g>
+
+  <!-- top berry -->
+  <g filter="url(#dropShadow)" transform="rotate(-15) translate(-60 70)">
+    <circle cx="300" cy="210" r="72" fill="url(#berryGrad)"/>
+    <g opacity="0.12" transform="translate(0,-6)">
+      <ellipse cx="288" cy="200" rx="4" ry="7" transform="rotate(-8 288 200)"/>
+      <ellipse cx="316" cy="218" rx="4" ry="6" transform="rotate(12 316 218)"/>
+    </g>
+    <path d="M300 146 C296 136, 312 134, 314 146" fill="none" stroke="url(#stemGrad)" stroke-width="5" stroke-linecap="round"/>
+    <ellipse cx="275" cy="185" rx="28" ry="16" fill="url(#gloss)" opacity="0.96" transform="rotate(-12 275 185)"/>
+  </g>
+
+  <!-- three larger leaves around top berry -->
+
+  <g opacity="0.9" fill="#2d7a39">
+    <!-- left leaf -->
+    <path d="M268 175 C245 160, 240 130, 270 125 C295 122, 300 150, 268 175 Z" transform="rotate(30 268 150) translate(-10 30)"/>
+    <!-- center leaf -->
+    <path d="M300 155 C280 130, 285 110, 305 108 C325 107, 330 130, 300 155 Z" transform="rotate(149 268 150) translate(-40 30)"/>
+    <!-- right leaf -->
+    <path d="M332 175 C355 160, 360 130, 330 125 C305 122, 300 150, 332 175 Z" transform="rotate(-45 268 120) translate(-75 20)"/>
+  </g>
+  <g opacity="0.9" fill="#266e31ff">
+    <path d="M268 175 C245 160, 240 130, 270 125 C295 122, 300 150" transform="rotate(30 268 150) translate(-10 30)"/>
+    <path d="M332 175 C355 160, 360 130, 330 125 C305 122" transform="rotate(-45 268 120) translate(-75 20)"/>
+  </g>
+</svg>

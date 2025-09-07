@@ -1,0 +1,2837 @@
+Using device cuda
+Setting up encoder with patch size 16, pe grid of 60 x 200, fine-tuning last 12 layers
+Setting up decoder with max lmx sequence length 1536, vocab file lmx_vocab.txt
+Loaded pretrained mae state dict from mae_pre_train/pretrained_mae.pth
+Setting up ViTOMR model
+
+Created directories tf_omr_train, tf_omr_train/checkpoints
+
+Model architecture
+--------------------------------------------------
+ScheduledSamplingViTOMR(
+  (encoder): FineTuneOMREncoder(
+    (unfold): Unfold(kernel_size=16, dilation=1, padding=0, stride=16)
+    (projection): Linear(in_features=256, out_features=768, bias=True)
+    (fine_tune_blocks): TransformerEncoder(
+      (layers): ModuleList(
+        (0-11): 12 x TransformerEncoderLayer(
+          (self_attn): MultiheadAttention(
+            (out_proj): NonDynamicallyQuantizableLinear(in_features=768, out_features=768, bias=True)
+          )
+          (linear1): Linear(in_features=768, out_features=3072, bias=True)
+          (dropout): Dropout(p=0.05, inplace=False)
+          (linear2): Linear(in_features=3072, out_features=768, bias=True)
+          (norm1): LayerNorm((768,), eps=1e-05, elementwise_affine=True)
+          (norm2): LayerNorm((768,), eps=1e-05, elementwise_affine=True)
+          (dropout1): Dropout(p=0.05, inplace=False)
+          (dropout2): Dropout(p=0.05, inplace=False)
+        )
+      )
+      (norm): LayerNorm((768,), eps=1e-06, elementwise_affine=True)
+    )
+  )
+  (decoder): OMRDecoder(
+    (vocab_embedding): Embedding(227, 1024, padding_idx=1)
+    (decoder_blocks): TransformerDecoder(
+      (layers): ModuleList(
+        (0-11): 12 x TransformerDecoderLayer(
+          (self_attn): MultiheadAttention(
+            (out_proj): NonDynamicallyQuantizableLinear(in_features=1024, out_features=1024, bias=True)
+          )
+          (multihead_attn): MultiheadAttention(
+            (out_proj): NonDynamicallyQuantizableLinear(in_features=1024, out_features=1024, bias=True)
+          )
+          (linear1): Linear(in_features=1024, out_features=4096, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear2): Linear(in_features=4096, out_features=1024, bias=True)
+          (norm1): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+          (norm2): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+          (norm3): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+          (dropout1): Dropout(p=0.1, inplace=False)
+          (dropout2): Dropout(p=0.1, inplace=False)
+          (dropout3): Dropout(p=0.1, inplace=False)
+        )
+      )
+      (norm): LayerNorm((1024,), eps=1e-06, elementwise_affine=True)
+    )
+    (unembed): Linear(in_features=1024, out_features=227, bias=True)
+  )
+  (transition_head): Sequential(
+    (0): Linear(in_features=768, out_features=4096, bias=True)
+    (1): GELU(approximate='none')
+    (2): Dropout(p=0.05, inplace=False)
+    (3): Linear(in_features=4096, out_features=1024, bias=True)
+  )
+)
+Trainable parameters count
+Encoder: 94469376
+Transition head: 7345152
+Decoder: 203600099
+Total: 305414627
+
+General hyperparameters
+--------------------------------------------------
+Epochs: 45
+Warmup epochs: 3
+Checkpoint frequency: 5 epochs
+Base lr: 0.0001
+Fine tune base lr: 1e-05, layer-wise decay factor of 0.9
+Minimum lr: 1e-06
+AdamW betas: (0.9, 0.95), weight decay: 0.01
+Batch size: 16
+Gradient accumulation steps: 4
+Number of DataLoader workers: 26
+
+Encoder fine-tune base lrs by layer: [1e-05, 9e-06, 8.1e-06, 7.290000000000001e-06, 6.561e-06, 5.904900000000001e-06, 5.314410000000001e-06, 4.782969000000001e-06, 4.304672100000001e-06, 3.8742048900000015e-06, 3.486784401000001e-06, 3.138105960900001e-06]
+
+Regularization hyperparameters
+--------------------------------------------------
+Image augmentation probability: 0.4
+Encoder dropout: 0.05
+Transition head dropout: 0.05
+Decoder dropout: 0.1
+Label smoothing: 0.0
+
+Teacher forcing hyperparameters
+--------------------------------------------------
+Initial teacher forcing per-token probability: 1.0
+Minimum teacher forcing probability: 0.25
+Initial Gumbel-Softmax tau: 5.0
+Minimum Gumbel-Softmax tau: 0.1
+Number of epochs with soft prediction sampling: 22
+Annealing teacher forcing probability and tau over 35 epochs
+OMR training for 45 epochs. Checkpointing every 5 epochs
+
+Epoch 1
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00000050
+Fine-tune learning rate: 0.00000005
+Teacher forcing probability: 1.00000000
+Gumbel-softmax tau: 5.00000000
+Using hard sampling: False
+Starting training
+/home/ubuntu/.cache/pypoetry/virtualenvs/acai-omr-BQvANxl_-py3.12/lib/python3.12/site-packages/torch/nested/__init__.py:117: UserWarning: The PyTorch API of nested tensors is in prototype stage and will change in the near future. We recommend specifying layout=torch.jagged when constructing a nested tensor, as this layout receives active development, has better operator coverage, and works with torch.compile. (Triggered internally at /pytorch/aten/src/ATen/NestedTensorImpl.cpp:178.)
+  return torch._nested_tensor_from_tensor_list(ts, dtype, None, device, None)
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 2.129273115291741
+Time for this training epoch: 1193.50 seconds (19.89 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 1.1817759838439763
+
+Epoch 2
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00003367
+Fine-tune learning rate: 0.00000337
+Teacher forcing probability: 0.97859564
+Gumbel-softmax tau: 4.47180497
+Using hard sampling: False
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 1.0066676561729353
+Time for this training epoch: 1188.47 seconds (19.81 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.7662328847689923
+
+Epoch 3
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00006683
+Fine-tune learning rate: 0.00000668
+Teacher forcing probability: 0.95716707
+Gumbel-softmax tau: 3.99890285
+Using hard sampling: False
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+/home/ubuntu/.cache/pypoetry/virtualenvs/acai-omr-BQvANxl_-py3.12/lib/python3.12/site-packages/torch/optim/lr_scheduler.py:198: UserWarning: The epoch parameter in `scheduler.step()` was not necessary and is being deprecated where possible. Please use `scheduler.step()` to step the scheduler. During the deprecation, if epoch is different from None, the closed form is used instead of the new chainable form, where available. Please open an issue if you are unable to replicate your use case: https://github.com/pytorch/pytorch/issues/new/choose.
+  warnings.warn(EPOCH_DEPRECATION_WARNING, UserWarning)
+Average training loss over this epoch: 0.7113448979238832
+Time for this training epoch: 1177.80 seconds (19.63 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.5310557119246485
+
+Epoch 4
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00010000
+Fine-tune learning rate: 0.00001000
+Teacher forcing probability: 0.93573850
+Gumbel-softmax tau: 3.57601106
+Using hard sampling: False
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.518794801139872
+Time for this training epoch: 1182.80 seconds (19.71 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.3729033304302931
+
+Epoch 5
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00009986
+Fine-tune learning rate: 0.00000999
+Teacher forcing probability: 0.91430993
+Gumbel-softmax tau: 3.19784091
+Using hard sampling: False
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.40142846830435547
+Time for this training epoch: 1180.65 seconds (19.68 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.28736277442496977
+Checkpointing model, optimizer, scheduler state dicts
+Saving omr training state to tf_omr_train/checkpoints/epoch_5_checkpoint.pth
+Saving training stats csv
+
+Epoch 6
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00009945
+Fine-tune learning rate: 0.00000995
+Teacher forcing probability: 0.89288136
+Gumbel-softmax tau: 2.85966298
+Using hard sampling: False
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.32435941689009046
+Time for this training epoch: 1181.62 seconds (19.69 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.2407231008383765
+
+Epoch 7
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00009876
+Fine-tune learning rate: 0.00000989
+Teacher forcing probability: 0.87145278
+Gumbel-softmax tau: 2.55724803
+Using hard sampling: False
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.27286587617228214
+Time for this training epoch: 1182.20 seconds (19.70 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.19557967477007462
+
+Epoch 8
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00009780
+Fine-tune learning rate: 0.00000980
+Teacher forcing probability: 0.85002421
+Gumbel-softmax tau: 2.28681406
+Using hard sampling: False
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.23768543308444467
+Time for this training epoch: 1181.44 seconds (19.69 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.1649448574065908
+
+Epoch 9
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00009658
+Fine-tune learning rate: 0.00000969
+Teacher forcing probability: 0.82859564
+Gumbel-softmax tau: 2.04497900
+Using hard sampling: False
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.2120135045423788
+Time for this training epoch: 1184.12 seconds (19.74 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.15425385968453847
+
+Epoch 10
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00009510
+Fine-tune learning rate: 0.00000955
+Teacher forcing probability: 0.80716707
+Gumbel-softmax tau: 1.82871848
+Using hard sampling: False
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.1930588557116222
+Time for this training epoch: 1181.01 seconds (19.68 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.15501202155214383
+Checkpointing model, optimizer, scheduler state dicts
+Saving omr training state to tf_omr_train/checkpoints/epoch_10_checkpoint.pth
+Saving training stats csv
+
+Epoch 11
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00009337
+Fine-tune learning rate: 0.00000940
+Teacher forcing probability: 0.78573850
+Gumbel-softmax tau: 1.63532792
+Using hard sampling: False
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.17670785113600695
+Time for this training epoch: 1179.44 seconds (19.66 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.12641409874311896
+
+Epoch 12
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00009140
+Fine-tune learning rate: 0.00000922
+Teacher forcing probability: 0.76430993
+Gumbel-softmax tau: 1.46238880
+Using hard sampling: False
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.1668824293950952
+Time for this training epoch: 1177.28 seconds (19.62 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.12492249717812802
+
+Epoch 13
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00008920
+Fine-tune learning rate: 0.00000902
+Teacher forcing probability: 0.74288136
+Gumbel-softmax tau: 1.30773833
+Using hard sampling: False
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.1565484391205912
+Time for this training epoch: 1179.44 seconds (19.66 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.12791050921307442
+
+Epoch 14
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00008679
+Fine-tune learning rate: 0.00000880
+Teacher forcing probability: 0.72145278
+Gumbel-softmax tau: 1.16944244
+Using hard sampling: False
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.15001105429253594
+Time for this training epoch: 1180.11 seconds (19.67 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.12447911074389019
+
+Epoch 15
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00008417
+Fine-tune learning rate: 0.00000856
+Teacher forcing probability: 0.70002421
+Gumbel-softmax tau: 1.04577162
+Using hard sampling: False
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.14529876096537808
+Time for this training epoch: 1184.07 seconds (19.73 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.11193248010806438
+Checkpointing model, optimizer, scheduler state dicts
+Saving omr training state to tf_omr_train/checkpoints/epoch_15_checkpoint.pth
+Saving training stats csv
+
+Epoch 16
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00008136
+Fine-tune learning rate: 0.00000831
+Teacher forcing probability: 0.67859564
+Gumbel-softmax tau: 0.93517923
+Using hard sampling: False
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.14108985170246216
+Time for this training epoch: 1178.16 seconds (19.64 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.11559750038439404
+
+Epoch 17
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00007838
+Fine-tune learning rate: 0.00000803
+Teacher forcing probability: 0.65716707
+Gumbel-softmax tau: 0.83628220
+Using hard sampling: False
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.1395913371892594
+Time for this training epoch: 1181.31 seconds (19.69 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.09880863948226738
+
+Epoch 18
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00007525
+Fine-tune learning rate: 0.00000775
+Teacher forcing probability: 0.63573850
+Gumbel-softmax tau: 0.74784372
+Using hard sampling: False
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.13683350217286797
+Time for this training epoch: 1181.04 seconds (19.68 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.09902333793863813
+
+Epoch 19
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00007198
+Fine-tune learning rate: 0.00000745
+Teacher forcing probability: 0.61430993
+Gumbel-softmax tau: 0.66875779
+Using hard sampling: False
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.1364218059113535
+Time for this training epoch: 1182.99 seconds (19.72 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.10343246077344234
+
+Epoch 20
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00006858
+Fine-tune learning rate: 0.00000714
+Teacher forcing probability: 0.59288136
+Gumbel-softmax tau: 0.59803534
+Using hard sampling: False
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.13608236836996346
+Time for this training epoch: 1186.54 seconds (19.78 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.09404035813725198
+Checkpointing model, optimizer, scheduler state dicts
+Saving omr training state to tf_omr_train/checkpoints/epoch_20_checkpoint.pth
+Saving training stats csv
+
+Epoch 21
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00006509
+Fine-tune learning rate: 0.00000683
+Teacher forcing probability: 0.57145278
+Gumbel-softmax tau: 0.53479194
+Using hard sampling: False
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.13586303645939132
+Time for this training epoch: 1185.20 seconds (19.75 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.09987658591889369
+
+Epoch 22
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00006151
+Fine-tune learning rate: 0.00000650
+Teacher forcing probability: 0.55002421
+Gumbel-softmax tau: 0.47823665
+Using hard sampling: False
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.13902038944751977
+Time for this training epoch: 1180.74 seconds (19.68 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.1039451737957659
+
+Epoch 23
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00005788
+Fine-tune learning rate: 0.00000617
+Teacher forcing probability: 0.52859564
+Gumbel-softmax tau: 0.42766219
+Using hard sampling: False
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.1565105600488341
+Time for this training epoch: 1184.05 seconds (19.73 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.07204453037904777
+
+Epoch 24
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00005420
+Fine-tune learning rate: 0.00000584
+Teacher forcing probability: 0.50716707
+Gumbel-softmax tau: 0.38243607
+Using hard sampling: True
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.1346472975274
+Time for this training epoch: 1180.25 seconds (19.67 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.07172867876968023
+
+Epoch 25
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00005050
+Fine-tune learning rate: 0.00000550
+Teacher forcing probability: 0.48573850
+Gumbel-softmax tau: 0.34199271
+Using hard sampling: True
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.12311969164313655
+Time for this training epoch: 1178.95 seconds (19.65 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.06525243393806761
+Checkpointing model, optimizer, scheduler state dicts
+Saving omr training state to tf_omr_train/checkpoints/epoch_25_checkpoint.pth
+Saving training stats csv
+
+Epoch 26
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00004680
+Fine-tune learning rate: 0.00000516
+Teacher forcing probability: 0.46430993
+Gumbel-softmax tau: 0.30582631
+Using hard sampling: True
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.11449289460374107
+Time for this training epoch: 1181.13 seconds (19.69 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.06524759174576764
+
+Epoch 27
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00004312
+Fine-tune learning rate: 0.00000483
+Teacher forcing probability: 0.44288136
+Gumbel-softmax tau: 0.27348458
+Using hard sampling: True
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.10814682358792185
+Time for this training epoch: 1187.39 seconds (19.79 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.06336185122047787
+
+Epoch 28
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00003949
+Fine-tune learning rate: 0.00000450
+Teacher forcing probability: 0.42145278
+Gumbel-softmax tau: 0.24456305
+Using hard sampling: True
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.10135294479223489
+Time for this training epoch: 1182.98 seconds (19.72 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.06398136013233141
+
+Epoch 29
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00003591
+Fine-tune learning rate: 0.00000417
+Teacher forcing probability: 0.40002421
+Gumbel-softmax tau: 0.21870003
+Using hard sampling: True
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.09592990077480434
+Time for this training epoch: 1181.06 seconds (19.68 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.059950740513469235
+
+Epoch 30
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00003242
+Fine-tune learning rate: 0.00000386
+Teacher forcing probability: 0.37859564
+Gumbel-softmax tau: 0.19557208
+Using hard sampling: True
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.0915384895170087
+Time for this training epoch: 1182.19 seconds (19.70 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.062432125991166654
+Checkpointing model, optimizer, scheduler state dicts
+Saving omr training state to tf_omr_train/checkpoints/epoch_30_checkpoint.pth
+Saving training stats csv
+
+Epoch 31
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00002902
+Fine-tune learning rate: 0.00000355
+Teacher forcing probability: 0.35716707
+Gumbel-softmax tau: 0.17488995
+Using hard sampling: True
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.08714605312621813
+Time for this training epoch: 1184.42 seconds (19.74 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.05974805622355643
+
+Epoch 32
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00002575
+Fine-tune learning rate: 0.00000325
+Teacher forcing probability: 0.33573850
+Gumbel-softmax tau: 0.15639499
+Using hard sampling: True
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.08391600543821
+Time for this training epoch: 1179.54 seconds (19.66 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.05991844391660777
+
+Epoch 33
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00002262
+Fine-tune learning rate: 0.00000297
+Teacher forcing probability: 0.31430993
+Gumbel-softmax tau: 0.13985592
+Using hard sampling: True
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.08053533329888146
+Time for this training epoch: 1179.35 seconds (19.66 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.05839846103982345
+
+Epoch 34
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00001964
+Fine-tune learning rate: 0.00000269
+Teacher forcing probability: 0.29288136
+Gumbel-softmax tau: 0.12506588
+Using hard sampling: True
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.07781700042791415
+Time for this training epoch: 1181.91 seconds (19.70 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.05930719062932201
+
+Epoch 35
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00001683
+Fine-tune learning rate: 0.00000244
+Teacher forcing probability: 0.27145278
+Gumbel-softmax tau: 0.11183992
+Using hard sampling: True
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.07519215257039942
+Time for this training epoch: 1183.61 seconds (19.73 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.05832184555489562
+Checkpointing model, optimizer, scheduler state dicts
+Saving omr training state to tf_omr_train/checkpoints/epoch_35_checkpoint.pth
+Saving training stats csv
+
+Epoch 36
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00001421
+Fine-tune learning rate: 0.00000220
+Teacher forcing probability: 0.25002421
+Gumbel-softmax tau: 0.10001263
+Using hard sampling: True
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.07280360596866578
+Time for this training epoch: 1181.80 seconds (19.70 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.058781350206242186
+
+Epoch 37
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00001180
+Fine-tune learning rate: 0.00000198
+Teacher forcing probability: 0.25000000
+Gumbel-softmax tau: 0.10000000
+Using hard sampling: True
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.06905092853541199
+Time for this training epoch: 1183.44 seconds (19.72 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.058151362975165724
+
+Epoch 38
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00000960
+Fine-tune learning rate: 0.00000178
+Teacher forcing probability: 0.25000000
+Gumbel-softmax tau: 0.10000000
+Using hard sampling: True
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.06620655663224112
+Time for this training epoch: 1180.30 seconds (19.67 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.059535121084498696
+
+Epoch 39
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00000763
+Fine-tune learning rate: 0.00000160
+Teacher forcing probability: 0.25000000
+Gumbel-softmax tau: 0.10000000
+Using hard sampling: True
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.06340807924001322
+Time for this training epoch: 1180.04 seconds (19.67 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.058504685870747065
+
+Epoch 40
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00000590
+Fine-tune learning rate: 0.00000145
+Teacher forcing probability: 0.25000000
+Gumbel-softmax tau: 0.10000000
+Using hard sampling: True
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.061151262189309774
+Time for this training epoch: 1182.19 seconds (19.70 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.05842099186164071
+Checkpointing model, optimizer, scheduler state dicts
+Saving omr training state to tf_omr_train/checkpoints/epoch_40_checkpoint.pth
+Saving training stats csv
+
+Epoch 41
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00000442
+Fine-tune learning rate: 0.00000131
+Teacher forcing probability: 0.25000000
+Gumbel-softmax tau: 0.10000000
+Using hard sampling: True
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.0596882759146845
+Time for this training epoch: 1179.14 seconds (19.65 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.05739586953141256
+
+Epoch 42
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00000320
+Fine-tune learning rate: 0.00000120
+Teacher forcing probability: 0.25000000
+Gumbel-softmax tau: 0.10000000
+Using hard sampling: True
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.05795614803765168
+Time for this training epoch: 1183.07 seconds (19.72 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.05764402081367812
+
+Epoch 43
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00000224
+Fine-tune learning rate: 0.00000111
+Teacher forcing probability: 0.25000000
+Gumbel-softmax tau: 0.10000000
+Using hard sampling: True
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.05698522704309492
+Time for this training epoch: 1178.34 seconds (19.64 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.05688545198392258
+
+Epoch 44
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00000155
+Fine-tune learning rate: 0.00000105
+Teacher forcing probability: 0.25000000
+Gumbel-softmax tau: 0.10000000
+Using hard sampling: True
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.05713133809916458
+Time for this training epoch: 1180.83 seconds (19.68 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.057111515625338276
+
+Epoch 45
+--------------------------------------------------
+Hyperparameters at epoch start:
+Base learning rate: 0.00000114
+Fine-tune learning rate: 0.00000101
+Teacher forcing probability: 0.25000000
+Gumbel-softmax tau: 0.10000000
+Using hard sampling: True
+Starting training
+[   16/56612]
+[ 1616/56612]
+[ 3216/56612]
+[ 4816/56612]
+[ 6416/56612]
+[ 8016/56612]
+[ 9616/56612]
+[11216/56612]
+[12816/56612]
+[14416/56612]
+[16016/56612]
+[17616/56612]
+[19216/56612]
+[20816/56612]
+[22416/56612]
+[24016/56612]
+[25616/56612]
+[27216/56612]
+[28816/56612]
+[30416/56612]
+[32016/56612]
+[33616/56612]
+[35216/56612]
+[36816/56612]
+[38416/56612]
+[40016/56612]
+[41616/56612]
+[43216/56612]
+[44816/56612]
+[46416/56612]
+[48016/56612]
+[49616/56612]
+[51216/56612]
+[52816/56612]
+[54416/56612]
+[56016/56612]
+Average training loss over this epoch: 0.05621435953194697
+Time for this training epoch: 1183.18 seconds (19.72 minutes)
+Starting validation
+[   16/ 7499]
+[  816/ 7499]
+[ 1616/ 7499]
+[ 2416/ 7499]
+[ 3216/ 7499]
+[ 4016/ 7499]
+[ 4816/ 7499]
+[ 5616/ 7499]
+[ 6416/ 7499]
+[ 7216/ 7499]
+Average validation loss for this epoch: 0.057938026754793204
+Checkpointing model, optimizer, scheduler state dicts
+Saving omr training state to tf_omr_train/checkpoints/epoch_45_checkpoint.pth
+Saving training stats csv
+Saving final omr training state
+Saving omr training state to tf_omr_train/ending_omr_train_state.pth
+Saving final model state dict separately to tf_omr_train/vitomr.pth

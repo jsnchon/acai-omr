@@ -2,8 +2,8 @@
     --text-color: white;
     --accent-color: #de0bcf;
     --primary-color: #1a1a1a;
-    --lighter-primary-color: #1e1e1e;
-    --secondary-color: #3f1b54;
+    --lighter-primary-color: #272727;
+    --secondary-color: #4f1d83;
 }
 
 body {
@@ -30,10 +30,57 @@ body {
     pointer-events: auto;
 }
 
+.start-view {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+
+    h1 {
+        color: var(--accent-color);
+        font-size: 4.5rem;
+        margin: 10px 10px;
+    }
+
+    h4 {
+        margin: 5px 0px 2rem;
+    }
+}
+
+.title-wrapper {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 5rem;
+}
+
+#image-form {
+    display: flex;
+    flex-direction: column;
+    align-content: center;
+    align-items: center;
+    min-height: 5rem;
+    width: 20rem;
+}
+
+#image-upload {
+    position: relative; 
+    margin: 10px 0px 0px;
+    left: 10px;
+}
+
+#image-preview-window {
+
+}
+
+button, input, select, textarea {
+  font: inherit;   
+  color: inherit;  
+  background: none;
+  border: none;
+}
+
 .interactive-el {
-    color: var(--text-color);
-    background-color: var(--lighter-primary-color);
-    font-family: Iosevka;
+    background-color: var(--lighter-primary-color); 
     border: 3px solid var(--secondary-color);
     border-radius: 8px;
 }
@@ -58,11 +105,32 @@ body {
 }
 
 button {
+    cursor: pointer;
     transition: background-color 0.7s ease;
 }
 
 button:hover {
     background-color: var(--accent-color);
+}
+
+input[type="file"]::file-selector-button {
+    color: var(--text-color);
+    background-color: var(--lighter-primary-color); /* Example background color */
+    font-family: Iosevka;
+    border: 3px solid var(--secondary-color);
+    border-radius: 8px;
+    padding: 8px 16px;
+    transition: background-color 0.7s ease;
+    cursor: pointer;
+}
+
+input[type="file"]::file-selector-button:hover {
+    background-color: var(--accent-color); 
+}
+
+img {
+    max-width: 50vh;
+    max-height: 50vh
 }
 
 .dot-load-wrapper {
@@ -124,6 +192,7 @@ with other spans. Parent container will center this container */
     min-height: 0.5em;
     display: inline-block; 
     text-align: left;
+    line-height: 1.5;
     white-space: pre-wrap;
 }
 
@@ -145,11 +214,9 @@ with other spans. Parent container will center this container */
 
 @keyframes slide-in {
     from {
-        transform: translateY(10px);
         opacity: 0;
     }
     to {
-        transform: translateY(0px);
         opacity: 1;
     }
 }
