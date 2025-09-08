@@ -8,13 +8,14 @@ from acai_omr.__init__ import InferenceEvent
 from acai_omr.utils.utils import stringify_lmx_seq
 import logging  
 from PIL import Image
+from pathlib import Path
 import json
 import os
 
 main = Blueprint("main", __name__)
 logger = logging.getLogger(__name__)
 
-DEBUG_IMAGE_PATH = "inference_test.png"
+UPLOADS_DIR = Path("var/www/uploads/")
 MAX_BATCH_SIZE = 1
 CACHE_DTYPE = torch.bfloat16
 
@@ -40,6 +41,8 @@ if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
     else:
         flush_interval = 50 # buffer GPUs more
 
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
 @main.route("/")
 def index():
     return render_template("index.html", weights_path=INFERENCE_VITOMR_PATH)
@@ -47,15 +50,17 @@ def index():
 @main.route("/upload", methods=["POST"])
 def upload_img():
     f = request.files["img_file"]
-    file_path = f"/var/www/uploads/{secure_filename(f.filename)}"
+    logger.debug(f"Saving {f.filename} to disk")
+    file_path = UPLOADS_DIR / secure_filename(f.filename)
     f.save(file_path)
     logger.info(f"File saved to {file_path}")
-    return {"path": file_path}
+    return {"path": str(file_path)}
 
 # SSE wrapper that post-processes and then yields events yielded by inference.
 # Again, we assume there's only one sequence being passed here at a time
 def stream_inference_wrapper(vitomr, img, device, max_inference_len, flush_interval):
     for event in streamed_inference(vitomr, img, device, max_inference_len, flush_interval):
+        logger.debug(f"Inference event: {event}")
         if event["type"] == InferenceEvent.STEP.value:
             tokens = event["payload"]["tokens"]
             tokens = tokens[tokens != vitomr.decoder.pad_idx] # last buffer may have leftover pad tokens
@@ -77,11 +82,10 @@ def stream_inference_wrapper(vitomr, img, device, max_inference_len, flush_inter
 @main.route("/inference/stream")
 def stream_inference():
     max_inference_len = int(request.args.get("max_inference_len", 1536))
+    img_path = request.args.get("path")
 
-    img = Image.open(DEBUG_IMAGE_PATH).convert("L")
+    img = Image.open(img_path).convert("L")
     img = base_img_transform(img).to(device)
 
-    # make sure to transform any images using patch transform
     logger.info(f"Starting inference with max length {max_inference_len} and streaming from endpoint with a flush interval of {flush_interval}")
-
     return Response(stream_inference_wrapper(vitomr, img, device, max_inference_len, flush_interval), mimetype="text/event-stream")

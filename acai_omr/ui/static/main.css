@@ -30,7 +30,7 @@ body {
     pointer-events: auto;
 }
 
-.start-view {
+#start-view {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -68,8 +68,8 @@ body {
     left: 10px;
 }
 
-#image-preview-window {
-
+#image-preview {
+    margin: 8px;
 }
 
 button, input, select, textarea {
@@ -130,7 +130,25 @@ input[type="file"]::file-selector-button:hover {
 
 img {
     max-width: 50vh;
-    max-height: 50vh
+    max-height: 50vh;
+}
+
+#inference-form {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+
+    button {
+        margin: 5px;
+        height: 40px;
+    }
+}
+
+.centered-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.25rem;
 }
 
 .dot-load-wrapper {
