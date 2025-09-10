@@ -1,12 +1,14 @@
 import torch
 from flask import Blueprint, render_template, request, Response
 from werkzeug.utils import secure_filename
-from acai_omr.inference.vitomr_inference import streamed_inference
+from acai_omr.inference.vitomr_inference import streamed_inference, convert_back_to_img
 from acai_omr.config import INFERENCE_VITOMR_PATH
 from acai_omr.train.omr_teacher_force_train import set_up_omr_teacher_force_train
 from acai_omr.__init__ import InferenceEvent
 from acai_omr.utils.utils import stringify_lmx_seq
+from olimpic_app.linearization.__main__ import direct_delinearize
 import logging  
+import tempfile
 from PIL import Image
 from pathlib import Path
 import json
@@ -89,3 +91,19 @@ def stream_inference():
 
     logger.info(f"Starting inference with max length {max_inference_len} and streaming from endpoint with a flush interval of {flush_interval}")
     return Response(stream_inference_wrapper(vitomr, img, device, max_inference_len, flush_interval), mimetype="text/event-stream")
+
+# convert decoded lmx sequence into delinearized musicxml and reconstructed image, store as tempfiles and return their paths
+@main.route("prepare_results", methods=["POST"])
+def prepare_results():
+    data = request.json
+    sequence = data["sequence"]
+    lmx_tempfile = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
+    lmx_tempfile.write(sequence)
+    lmx_tempfile.close()
+
+    musicxml = direct_delinearize(sequence)
+    musicxml_tempfile = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
+    musicxml_tempfile.write(musicxml)
+    musicxml_tempfile.close()
+
+        

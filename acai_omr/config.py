@@ -5,6 +5,7 @@ PRIMUS_PREPARED_ROOT_DIR = "data/primusPrepared"
 DOREMI_PREPARED_ROOT_DIR = "data/doReMiPrepared"
 OLIMPIC_SYNTHETIC_ROOT_DIR = "data/olimpic-1.0-synthetic.2024-02-12/olimpic-1.0-synthetic"
 OLIMPIC_SCANNED_ROOT_DIR = "data/olimpic-1.0-scanned.2024-02-12/olimpic-1.0-scanned"
+SYSTEM_DETECTION_ROOT_DIR = "data/system_detection"
 
 # weights for a tiny MAE for testing purposes
 DEBUG_PRETRAINED_MAE_PATH = "debug_pretrained_mae.pth"
@@ -13,7 +14,7 @@ LMX_BOS_TOKEN = "<bos>"
 LMX_EOS_TOKEN = "<eos>"
 LMX_PAD_TOKEN = "<pad>" # token used for padding lmx sequences
 
-INFERENCE_VITOMR_PATH = "good_tf.pth" # path to weights to use for inference
+INFERENCE_VITOMR_PATH = "tf_omr_train/vitomr.pth" # path to weights to use for inference
 
 OLIMPIC_ROOT_DIR = "olimpic-icdar24/"
 

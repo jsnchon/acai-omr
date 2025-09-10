@@ -3,6 +3,10 @@ from torch.utils.data import Dataset
 import pandas as pd
 from pathlib import Path
 from PIL import Image
+from pycocotools.coco import COCO
+import albumentations as A
+import numpy as np
+import contextlib
 
 # superclass to deal with the commonalities between the LMX datasets
 class LMXDataset(Dataset):
@@ -129,9 +133,6 @@ class PreparedDataset(Dataset):
 # can either specify the synthetic or scanned dataset
 class OlimpicDataset(LMXDataset):
     def __getitem__(self, idx):
-
-        if isinstance(idx, (list, torch.Tensor)):
-            return [self.__getitem__(int(i)) for i in idx]
         img_path = self.root_dir / (self.id_df.iat[idx, 0] + ".png")
         img = Image.open(img_path).convert("L")
 
@@ -183,3 +184,53 @@ class GrandStaffOMRTrainWrapper(Dataset):
             return input_img, lmx, musicxml
         else:
             return input_img, lmx
+
+# Returns an image and target dict formatted for torchvision's Faster RCNN. This class should only be used 
+# with albumentation transforms
+class SystemDetectionDataset(Dataset):
+    def __init__(self, root_dir, split_file_name, transform_list: list=None, bbox_params: A.BboxParams=None):
+        self.root_dir = Path(root_dir)
+        
+        with contextlib.redirect_stdout(None): # suppress annoying output
+            self.coco = COCO(self.root_dir / split_file_name)
+
+        self.ids = list(self.coco.imgs.keys())
+        if transform_list:
+            if bbox_params.format != "pascal_voc":
+                raise ValueError("torchvision uses the pascal voc format, so Albumentation transformations should be set up using that")
+            self.transform = A.Compose(transform_list, bbox_params=bbox_params)
+        else:
+            self.transform = None
+
+    def __len__(self):
+        return len(self.ids)
+
+    def __getitem__(self, idx):
+        id = self.ids[idx]
+        annotations_id = self.coco.getAnnIds(imgIds=id)
+        annotations = self.coco.loadAnns(ids=annotations_id)
+        img_info = self.coco.loadImgs(id)[0]
+
+        img_path = img_info["file_name"]
+        img = Image.open(img_path).convert("L")
+
+        boxes = []
+        labels = []
+        for annotation in annotations:
+            x_min, y_min, w, h = annotation["bbox"]
+            boxes.append([x_min, y_min, x_min + w, y_min + h])
+            labels.append(annotation["category_id"])
+        
+        if self.transform:
+            img = np.array(img)
+            augmented = self.transform(image=img, bboxes=boxes, class_labels=labels)
+            img = augmented["image"]
+            boxes = augmented["bboxes"]
+            labels = augmented["class_labels"]
+
+        target = {
+            "boxes": boxes,
+            "labels": labels
+        }
+
+        return img, target

@@ -104,8 +104,6 @@ function streamInference(source, inferenceEvents) {
     });
 }
 
-const resultWindow = document.getElementById("result-window")
-
 function displayTokenStream(outputElem, inferenceStepEvent) {
     const tokens = inferenceStepEvent.payload.tokens.split(" ");
     tokens.forEach((token, i) => {
@@ -118,6 +116,11 @@ function displayTokenStream(outputElem, inferenceStepEvent) {
     });
 }
 
+const resultView = document.getElementById("result-view")
+
+// TODO: look into hosting on digitalocean
+// test that can capture images with camera on mobile
+
 // listener that deals with the rest of the flow after inference finishes
 function handleStreamEnd(source, inferenceEvents) {
     source.addEventListener("message", (e) => {
@@ -127,7 +130,10 @@ function handleStreamEnd(source, inferenceEvents) {
             source.close();
 
             
-            // do more stuff
+            // do more stuff: 
+            // 1) send request to endpoint that converts to lmx, musicxml, and reconstructed img files
+            // 2) display all the results in a window, send musicxml file to user
+
         }
     });
 }

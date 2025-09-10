@@ -11,8 +11,6 @@ import subprocess
 from pathlib import Path
 import os
 
-INFERENCE_IMAGE_PATH = "scanned_inference_test.png"
-
 logger = logging.getLogger(__name__)
 
 # lmx_seq is the sequence of decoded lmx tokens (excluding <bos> and <eos>), lmx_seq_path and xml_file_path are where the lmx and xml files should be saved to
@@ -25,7 +23,7 @@ def delinearize(lmx_seq: str, lmx_seq_path: str, xml_file_path: str):
     logger.info(f"Delinearizing and saving xml file to {xml_file_path}")
     try:
         delinearize_result = subprocess.run(
-            ["python3", "-m", "olimpic_app.linearization", "delinearize", lmx_seq_path, xml_file_path], 
+            ["poetry", "run", "python", "-m", "olimpic_app.linearization", "delinearize", lmx_seq_path, xml_file_path], 
             capture_output=True, text=True
         )
 
@@ -48,7 +46,7 @@ def convert_back_to_img(xml_file_path: str, img_file_path: str):
     subprocess.run(["convert", "mscore_out-1.png", "-background", "white", "-alpha", "remove", "-alpha", "off", img_file_path])
     os.remove("mscore_out-1.png")
     logger.info("Final image saved!")
-    return {"img_file_path": img_file_path}
+    return img_file_path
 
 def streamed_inference(
     vitomr: ViTOMR, 
@@ -86,6 +84,8 @@ def inference(
     return seqs, log_probs, seq_mask
 
 if __name__ == "__main__":
+    INFERENCE_IMAGE_PATH = "inference_test.png"
+
     logging.basicConfig(level=logging.DEBUG)
 
     MAX_BATCH_SIZE = 32
