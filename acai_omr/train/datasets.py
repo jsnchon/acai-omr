@@ -206,13 +206,13 @@ class SystemDetectionDataset(Dataset):
         self.evaluation = evaluation
 
     def __len__(self):
-        return len(self.ids)
+        return len(self.img_ids)
 
     def __getitem__(self, idx):
         img_id = self.img_ids[idx]
         annotations_id = self.coco.getAnnIds(imgIds=img_id)
         annotations = self.coco.loadAnns(ids=annotations_id)
-        img_info = self.coco.loadImgs(id)[0]
+        img_info = self.coco.loadImgs(img_id)[0]
 
         img_path = img_info["file_name"]
         img = Image.open(img_path).convert("L")

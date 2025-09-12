@@ -14,6 +14,7 @@ from pathlib import Path
 import albumentations as A
 import pandas as pd
 import time
+import contextlib
 
 MODEL_DIR_PATH = Path("system_detector_train")
 CHECKPOINTS_DIR_PATH = MODEL_DIR_PATH / "checkpoints"
@@ -55,10 +56,8 @@ MIN_LR = 1e-6
 SGD_MOMENTUM = 0.9
 SGD_WEIGHT_DECAY = 1e-4
 
-BATCH_SIZE = 4
-NUM_WORKERS = 8
-
-GRAD_ACCUMULATION_STEPS = 4
+BATCH_SIZE = 16
+NUM_WORKERS = 26
 
 WARMUP_EPOCHS = 2
 EPOCHS = 40
@@ -103,14 +102,13 @@ def save_training_state(path, model, scheduler):
         "scheduler_state_dict": scheduler.state_dict()
     }, path)
 
-def train_loop(model, dataloader, optimizer, scheduler, device, grad_accumulation_steps, writer, counter):
+def train_loop(model, dataloader, optimizer, scheduler, device, writer, counter):
     print("Starting training")
     model.train()
     batch_size = dataloader.batch_size
     len_dataset = len(dataloader.dataset)
     num_batches = len(dataloader)
     epoch_loss = 0
-    accumlated_losses = []
 
     for batch_idx, batch in enumerate(dataloader):
         imgs = [img.to(device, non_blocking=True) for img in batch[0]]
@@ -118,40 +116,63 @@ def train_loop(model, dataloader, optimizer, scheduler, device, grad_accumulatio
         with autocast(device_type=device, dtype=torch.bfloat16):
             loss_dict = model(imgs, targets)
             loss = sum(loss for loss in loss_dict.values())
-        
         epoch_loss += loss.item()
-        accumlated_losses.append(loss.item())
 
         loss.backward()
-        
+        optimizer.step()
+        optimizer.zero_grad()
+        scheduler.step()
+
         if batch_idx % 10 == 0:
             current_ex = batch_idx * batch_size + len(imgs)
             print(f"[{current_ex:>5d}/{len_dataset:>5d}]")
 
-        if (batch_idx + 1) % grad_accumulation_steps == 0 or (batch_idx + 1) == num_batches:
-            optimizer.step()
-            optimizer.zero_grad()
-            scheduler.step()
-
-            writer.add_scalar(f"train/loss", sum(accumlated_losses) / len(accumlated_losses), counter.global_step)
-            writer.add_scalar(f"train/hyperparams/base_lr", optimizer.param_groups[0]["lr"], counter.global_step)
-            writer.add_scalar(f"train/hyperparams/fine_tune_base_lr", optimizer.param_groups[2]["lr"], counter.global_step)
-            accumlated_losses = []
-            counter.increment()
-
+        writer.add_scalar(f"train/loss", loss.item(), counter.global_step)
+        writer.add_scalar(f"train/hyperparams/base_lr", optimizer.param_groups[0]["lr"], counter.global_step)
+        writer.add_scalar(f"train/hyperparams/fine_tune_base_lr", optimizer.param_groups[2]["lr"], counter.global_step)
+        counter.increment()
+ 
     avg_loss = epoch_loss / num_batches
     print(f"Average training loss over this epoch: {avg_loss}")
     return avg_loss
 
-def validation_loop(model, dataloader, device):
-    print("Starting validation")
+def convert_predictions_to_coco(preds, img_ids):
+    result = []
+    for pred, img_id in zip(preds, img_ids):
+        boxes = pred["boxes"].cpu().numpy()
+        labels = pred["labels"].cpu().numpy()
+        scores = pred["scores"].cpu().numpy()
+
+        for box, score, label in zip(boxes, scores, labels):
+            x_min, y_min, x_max, y_max = box
+            w, h = x_max - x_min, y_max - y_min
+            coco_box = [float(x_min), float(y_min), float(w), float(h)]
+
+            result.append({
+                "image_id": img_id,
+                "category_id": int(label),  
+                "bbox": coco_box,
+                "score": float(score)
+            })            
+
+    return result
+
+def evaluation_loop(model, dataloader, device, validation=True):
     model.eval()
-    validation_loss = 0
-    num_batches = len(dataloader)
     len_dataset = len(dataloader.dataset)
     batch_size = dataloader.batch_size
 
-    ground_truth_coco = COCO(Path(SYSTEM_DETECTION_ROOT_DIR) / "train.json")
+    with contextlib.redirect_stdout(None):
+        if validation:
+            split_file = "validation.json"
+        else:
+            split_file = "test.json"
+
+        ground_truth_coco = COCO(Path(SYSTEM_DETECTION_ROOT_DIR) / split_file)
+    # pycocotools demands these fields be set, so give them filler values
+    ground_truth_coco.dataset.setdefault("info", {"description": "dummy"})
+    ground_truth_coco.dataset.setdefault("licenses", [])
+
     all_predictions = []
 
     for batch_idx, (imgs, img_ids) in enumerate(dataloader):
@@ -161,37 +182,24 @@ def validation_loop(model, dataloader, device):
                 preds = model(imgs) # list of prediction dictionaries, one for each image
 
         # convert model outputs to COCO json so we can later run COCO evaluation 
-        for pred, img_id in zip(preds, img_ids):
-            boxes = pred["boxes"].cpu().numpy()
-            labels = pred["labels"].cpu().numpy()
-            scores = pred["scores"].cpu().numpy()
-
-            for box, score, label in zip(boxes, scores, labels):
-                x_min, y_min, x_max, y_max = box
-                w, h = x_max - x_min, y_max - y_min
-                coco_box = [float(x_min), float(y_min), float(w), float(h)]
-
-                all_predictions.append({
-                    "image_id": img_id,
-                    "category_id": int(label),  
-                    "bbox": coco_box,
-                    "score": float(score)
-                })            
+        all_predictions.extend(convert_predictions_to_coco(preds, img_ids))
 
         if batch_idx % 2 == 0:
             current_ex = batch_idx * batch_size + len(imgs)
             print(f"[{current_ex:>5d}/{len_dataset:>5d}]")
 
-    preds_coco = ground_truth_coco.loadRes(preds)
+    preds_coco = ground_truth_coco.loadRes(all_predictions)
     coco_eval = COCOeval(ground_truth_coco, preds_coco, iouType="bbox")
     coco_eval.evaluate()
     coco_eval.accumulate()
     coco_eval.summarize()
-    print(coco_eval)
+    mAP = coco_eval.stats[0],
+    ap50 = coco_eval.stats[1],
+    ap75 = coco_eval.stats[2],
+    ar10 = coco_eval.stats[7],
  
-    avg_loss = validation_loss / num_batches
-    print(f"Average validation loss for this epoch: {avg_loss}")
-    return avg_loss
+    print(f"Results\nmAP: {mAP}\nAP@0.5: {ap50}\nAP@0.75{ap75}\nAR@10{ar10}")
+    return mAP, ap50, ap75, ar10
 
 def set_up_model(device):
     model = fasterrcnn_resnet50_fpn_v2(weights="COCO_V1", trainable_backbone_layers=TRAINABLE_BACKBONE_LAYERS, **RCNN_KWARGS)
@@ -238,11 +246,10 @@ if __name__ == "__main__":
     param_groups, backbone_layer_lrs = create_param_groups(model, BASE_LR, FINE_TUNE_BASE_LR, FINE_TUNE_DECAY_FACTOR, TRAINABLE_BACKBONE_LAYERS)
 
     optimizer = torch.optim.SGD(param_groups, momentum=SGD_MOMENTUM, weight_decay=SGD_WEIGHT_DECAY)
-    num_effective_batches = -(len(train_dataloader) // -GRAD_ACCUMULATION_STEPS)
-    scheduler = cosine_anneal_with_warmup(optimizer, WARMUP_EPOCHS, EPOCHS, MIN_LR, num_effective_batches)
+    scheduler = cosine_anneal_with_warmup(optimizer, WARMUP_EPOCHS, EPOCHS, MIN_LR, len(train_dataloader))
 
     writer = SummaryWriter(log_dir=LOG_DIR, max_queue=50)
-    epoch_stats_df = pd.DataFrame(columns=["train_loss", "validation_loss", "base_lr", "fine_tune_base_lr"])
+    epoch_stats_df = pd.DataFrame(columns=["train_loss", "mAP", "ap50", "ap75", "ar10" "base_lr", "fine_tune_base_lr"])
     counter = StepCounter()
 
     print(f"Model architecture\n{'-' * 50}\n{model}")
@@ -251,7 +258,7 @@ if __name__ == "__main__":
 
     print(f"General hyperparameters\n{'-' * 50}\nEpochs: {EPOCHS}\nWarmup epochs: {WARMUP_EPOCHS}\nCheckpoint frequency: {CHECKPOINT_FREQ} epochs\n" \
           f"Base lr: {BASE_LR}\nFine tune base lr: {FINE_TUNE_BASE_LR}, layer-wise decay factor of {FINE_TUNE_DECAY_FACTOR}\nMinimum lr: {MIN_LR}\n" \
-          f"SGD momentum: {SGD_MOMENTUM}, weight decay: {SGD_WEIGHT_DECAY}\nBatch size: {BATCH_SIZE}\nGradient accumulation steps: {GRAD_ACCUMULATION_STEPS}\n" \
+          f"SGD momentum: {SGD_MOMENTUM}, weight decay: {SGD_WEIGHT_DECAY}\nBatch size: {BATCH_SIZE}\n" \
           f"Number of DataLoader workers: {NUM_WORKERS}\nImage augmentation probability: {AUGMENT_P}\n")
 
     print(f"Backbone fine-tune base lrs by layer: {backbone_layer_lrs}\n")
@@ -264,15 +271,17 @@ if __name__ == "__main__":
         print(f"Hyperparameters at epoch start:\nBase learning rate: {base_lr:>0.8f}\nFine-tune base learning rate: {fine_tune_base_lr:>0.8f}")
 
         train_start_time = time.perf_counter()
-        epoch_train_loss = train_loop(model, train_dataloader, optimizer, scheduler, device, GRAD_ACCUMULATION_STEPS, writer, counter)
+        epoch_train_loss = train_loop(model, train_dataloader, optimizer, scheduler, device, writer, counter)
         train_end_time = time.perf_counter()
         time_delta = train_end_time - train_start_time
         print(f"Time for this training epoch: {time_delta:>0.2f} seconds ({time_delta / 60:>0.2f} minutes)")
 
-        epoch_validation_loss = validation_loop(model, validation_dataloader, device)
+        print("Starting validation")
+        mAP, ap50, ap75, ar10 = evaluation_loop(model, validation_dataloader, device, validation=True)
 
-        writer.add_scalars("epoch", {"train_loss": epoch_train_loss, "validation_loss": epoch_validation_loss}, counter.global_step)
-        epoch_stats = [epoch_train_loss, epoch_validation_loss, base_lr, fine_tune_base_lr]
+        writer.add_scalar("epoch/train_loss", epoch_train_loss, counter.global_step)
+        writer.add_scalars("epoch", {"mAP": mAP, "ap50": ap50, "ap75": ap75, "ar10": ar10}, counter.global_step)
+        epoch_stats = [epoch_train_loss, mAP, ap50, ap75, ar10, base_lr, fine_tune_base_lr]
         epoch_stats_df.loc[i] = epoch_stats
 
         if (i + 1) % CHECKPOINT_FREQ == 0:
