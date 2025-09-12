@@ -168,7 +168,7 @@ def test_system_detection_dataset():
     augment_transforms = [
         A.Perspective(scale=(0.025, 0.035), p=1), 
         A.GaussianBlur(blur_limit=(15, 20), sigma_limit=(0.8, 2.0), p=1), 
-        A.RandomBrightnessContrast(brightness_limit=(-0.15, 0.15), p=1),
+        A.RandomBrightnessContrast(brightness_limit=(-0.1, 0.1), p=1),
         A.GaussNoise(std_range=(0.03, 0.05), p=1)
         ]
 
@@ -180,7 +180,7 @@ def test_system_detection_dataset():
         ]
     bbox_params = A.BboxParams(format="pascal_voc", label_fields=["class_labels"])
     dataset = SystemDetectionDataset(SYSTEM_DETECTION_ROOT_DIR, "train.json", transform_list, bbox_params)
-    img, target = dataset[0]
+    img, target = dataset[20]
 
     _, ax = plt.subplots(1, figsize=(10, 10))
     for bbox in target["boxes"]:

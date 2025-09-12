@@ -196,7 +196,7 @@ class SystemDetectionDataset(Dataset):
 
         self.ids = list(self.coco.imgs.keys())
         if transform_list:
-            if bbox_params.format != "pascal_voc":
+            if bbox_params and bbox_params.format != "pascal_voc":
                 raise ValueError("torchvision uses the pascal voc format, so Albumentation transformations should be set up using that")
             self.transform = A.Compose(transform_list, bbox_params=bbox_params)
         else:

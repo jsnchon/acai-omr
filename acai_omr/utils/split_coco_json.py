@@ -11,7 +11,7 @@ TEST_SCORES = ["rach_liebesleid", "ravel_pavane"]
 
 def split_json_from_ids(whole_json: dict, ids: list, save_path: str):
     split_images = [img for img in whole_json["images"] if img["id"] in ids]
-    split_annotations = [annotation for annotation in whole_json["annotations"] if annotation["id"] in ids]
+    split_annotations = [annotation for annotation in whole_json["annotations"] if annotation["image_id"] in ids]
     split_dict = {"images": split_images, "categories": whole_json["categories"], "annotations": split_annotations}
     with open(save_path, "w") as f:
         print(f"Writing split file to {save_path}")

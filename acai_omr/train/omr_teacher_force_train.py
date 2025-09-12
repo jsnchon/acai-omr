@@ -105,7 +105,7 @@ def train_loop(vitomr: ScheduledSamplingViTOMR, dataloader, loss_fn, optimizer, 
     print("Starting training")
     vitomr.train()
     epoch_loss = 0
-    effective_batch_loss = 0
+    accumulated_losses = []
     num_batches = len(dataloader)
     len_dataset = len(dataloader.dataset)
     batch_size = dataloader.batch_size
@@ -116,25 +116,25 @@ def train_loop(vitomr: ScheduledSamplingViTOMR, dataloader, loss_fn, optimizer, 
             pred, target_seqs = vitomr.forward_train(batch, tf_config.tf_prob, tf_config.tau, tf_config.use_hard_sampling)
             loss = loss_fn(pred, target_seqs)
         epoch_loss += loss.item()
-        effective_batch_loss += loss.item()
+        accumulated_losses.append(loss.item())
         loss.backward()
 
         if batch_idx % 100 == 0:
             current_ex = batch_idx * batch_size + len(batch)
             print(f"[{current_ex:>5d}/{len_dataset:>5d}]")
 
-        if (batch_idx + 1) % grad_accumulation_steps == 0 or (batch_idx + 1) == len(dataloader):
+        if (batch_idx + 1) % grad_accumulation_steps == 0 or (batch_idx + 1) == num_batches:
             optimizer.step()
             optimizer.zero_grad()
             scheduler.step()
             tf_scheduler.step()
 
-            writer.add_scalar(f"train/loss", effective_batch_loss / grad_accumulation_steps, counter.global_step)
+            writer.add_scalar(f"train/loss", sum(accumulated_losses) / len(accumulated_losses), counter.global_step)
             writer.add_scalar(f"train/hyperparams/base_lr", optimizer.param_groups[0]["lr"], counter.global_step)
             writer.add_scalar(f"train/hyperparams/fine_tune_base_lr", optimizer.param_groups[2]["lr"], counter.global_step)
             writer.add_scalar(f"train/hyperparams/teacher_forcing_prob", tf_config.tf_prob, counter.global_step)
             writer.add_scalar(f"train/hyperparams/tau", tf_config.tau, counter.global_step)
-            effective_batch_loss = 0
+            accumulated_losses = []
             counter.increment()
     
     avg_loss = epoch_loss / num_batches
