@@ -310,8 +310,8 @@ def grpo_update(old_policy: GRPOViTOMR, policy_theta: GRPOViTOMR, optimizer, bat
 
     pad_idx = old_policy.decoder.pad_idx
     unexpanded_imgs, unexpanded_target_lmx_seqs, target_musicxml_strs = zip(*batch)
-    unexpanded_imgs = [unexpanded_img.to(device) for unexpanded_img in unexpanded_imgs]
-    unexpanded_target_lmx_seqs = [unexpanded_target_lmx_seq.to(device) for unexpanded_target_lmx_seq in unexpanded_target_lmx_seqs]
+    unexpanded_imgs = [unexpanded_img.to(device, non_blocking=True) for unexpanded_img in unexpanded_imgs]
+    unexpanded_target_lmx_seqs = [unexpanded_target_lmx_seq.to(device, non_blocking=True) for unexpanded_target_lmx_seq in unexpanded_target_lmx_seqs]
 
     group_size = rollout_config.group_size
     num_groups = len(batch) # batch_size = num_groups
@@ -466,8 +466,8 @@ def validation_loop(dataloader, policy_theta, reward_config, rollout_config, ce_
         with torch.autocast(device_type=device, dtype=torch.bfloat16):
             for i, batch in enumerate(dataloader):
                 imgs, target_lmx_seqs, target_musicxml_strs = zip(*batch)
-                imgs = [img.to(device) for img in imgs]
-                target_lmx_seqs = [target_lmx_seq.to(device) for target_lmx_seq in target_lmx_seqs]
+                imgs = [img.to(device, non_blocking=True) for img in imgs]
+                target_lmx_seqs = [target_lmx_seq.to(device, non_blocking=True) for target_lmx_seq in target_lmx_seqs]
                 num_groups = len(imgs)
 
                 img_latent, latent_attention_mask = policy_theta.encoder(imgs)

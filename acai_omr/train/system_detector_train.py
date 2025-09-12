@@ -48,7 +48,7 @@ SGD_MOMENTUM = 0.9
 SGD_WEIGHT_DECAY = 1e-4
 
 BATCH_SIZE = 4
-NUM_WORKERS = 4
+NUM_WORKERS = 8
 
 GRAD_ACCUMULATION_STEPS = 4
 
@@ -105,8 +105,8 @@ def train_loop(model, dataloader, optimizer, scheduler, device, grad_accumulatio
     accumlated_losses = []
 
     for batch_idx, batch in enumerate(dataloader):
-        imgs = [img.to(device) for img in batch[0]]
-        targets = [{k: torch.tensor(v).to(device) for k, v in target.items()} for target in batch[1]]
+        imgs = [img.to(device, non_blocking=True) for img in batch[0]]
+        targets = [{k: torch.tensor(v).to(device, non_blocking=True) for k, v in target.items()} for target in batch[1]]
         with autocast(device_type=device, dtype=torch.bfloat16):
             loss_dict = model(imgs, targets)
             loss = sum(loss for loss in loss_dict.values())
@@ -161,6 +161,17 @@ def validation_loop(model, dataloader, device):
     print(f"Average validation loss for this epoch: {avg_loss}")
     return avg_loss
 
+def set_up_model(device):
+    model = fasterrcnn_resnet50_fpn_v2(weights="COCO_V1", trainable_backbone_layers=TRAINABLE_BACKBONE_LAYERS, **RCNN_KWARGS)
+    model.to(device)
+
+    # replace the detection head and anchor generator
+    in_features = model.roi_heads.box_predictor.cls_score.in_features
+    model.rpn.anchor_generator = ANCHOR_GENERATOR
+    model.roi_heads.box_predictor = FastRCNNPredictor(in_features, NUM_CLASSES)
+
+    return model
+
 if __name__ == "__main__":
     MODEL_DIR_PATH.mkdir()
     CHECKPOINTS_DIR_PATH.mkdir()
@@ -168,15 +179,8 @@ if __name__ == "__main__":
     device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
     print(f"Using device {device}\n")
 
-    model = fasterrcnn_resnet50_fpn_v2(weights="COCO_V1", trainable_backbone_layers=TRAINABLE_BACKBONE_LAYERS, **RCNN_KWARGS)
-    model.to(device)
+    model = set_up_model(TRAINABLE_BACKBONE_LAYERS, ANCHOR_GENERATOR, NUM_CLASSES, RCNN_KWARGS, device)
     print(f"Model architecture\n{'-' * 50}\n{model}")
-
-    in_features = model.roi_heads.box_predictor.cls_score.in_features
-
-    # replace the detection head and anchor generator
-    model.roi_heads.box_predictor = FastRCNNPredictor(in_features, NUM_CLASSES)
-    model.rpn.anchor_generator = ANCHOR_GENERATOR
 
     augment_transforms = [
         A.Perspective(scale=(0.025, 0.035), p=1), 
@@ -195,8 +199,8 @@ if __name__ == "__main__":
     # validation has no augmentation that touches bboxes, so no need to pass bbox_params
     validation_dataset = SystemDetectionDataset(SYSTEM_DETECTION_ROOT_DIR, "validation.json", transform_list=base_transform_list, bbox_params=None)
 
-    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=rcnn_collate_fn)
-    validation_dataloader = DataLoader(validation_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=rcnn_collate_fn)
+    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=rcnn_collate_fn, pin_memory=True)
+    validation_dataloader = DataLoader(validation_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=rcnn_collate_fn, pin_memory=True)
 
     param_groups, backbone_layer_lrs = create_param_groups(model, BASE_LR, FINE_TUNE_BASE_LR, FINE_TUNE_DECAY_FACTOR, TRAINABLE_BACKBONE_LAYERS)
 
