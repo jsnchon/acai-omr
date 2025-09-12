@@ -188,13 +188,13 @@ class GrandStaffOMRTrainWrapper(Dataset):
 # Returns an image and target dict formatted for torchvision's Faster RCNN. This class should only be used 
 # with albumentation transforms
 class SystemDetectionDataset(Dataset):
-    def __init__(self, root_dir, split_file_name, transform_list: list=None, bbox_params: A.BboxParams=None):
+    def __init__(self, root_dir, split_file_name, transform_list: list=None, bbox_params: A.BboxParams=None, evaluation=False):
         self.root_dir = Path(root_dir)
         
         with contextlib.redirect_stdout(None): # suppress annoying output
             self.coco = COCO(self.root_dir / split_file_name)
 
-        self.ids = list(self.coco.imgs.keys())
+        self.img_ids = list(self.coco.imgs.keys())
         if transform_list:
             if bbox_params and bbox_params.format != "pascal_voc":
                 raise ValueError("torchvision uses the pascal voc format, so Albumentation transformations should be set up using that")
@@ -202,12 +202,15 @@ class SystemDetectionDataset(Dataset):
         else:
             self.transform = None
 
+        # for COCO evaluation, we need to keep track of the image id to convert predictions back into COCO json format
+        self.evaluation = evaluation
+
     def __len__(self):
         return len(self.ids)
 
     def __getitem__(self, idx):
-        id = self.ids[idx]
-        annotations_id = self.coco.getAnnIds(imgIds=id)
+        img_id = self.img_ids[idx]
+        annotations_id = self.coco.getAnnIds(imgIds=img_id)
         annotations = self.coco.loadAnns(ids=annotations_id)
         img_info = self.coco.loadImgs(id)[0]
 
@@ -233,4 +236,7 @@ class SystemDetectionDataset(Dataset):
             "labels": labels
         }
 
-        return img, target
+        if self.evaluation:        
+            return img, img_id
+        else:
+            return img, target

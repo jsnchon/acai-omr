@@ -8,7 +8,7 @@ from acai_omr.models.models import MAE, MAELoss
 from pathlib import Path
 import time
 
-MODEL_DIR_PATH = Path("foo")
+MODEL_DIR_PATH = Path("mae_pre_train")
 CHECKPOINTS_DIR_PATH = MODEL_DIR_PATH / "checkpoints"
 STATS_DIR_PATH = MODEL_DIR_PATH / "stats"
 

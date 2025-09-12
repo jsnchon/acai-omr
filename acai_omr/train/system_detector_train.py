@@ -154,7 +154,7 @@ def validation_loop(model, dataloader, device):
     ground_truth_coco = COCO(Path(SYSTEM_DETECTION_ROOT_DIR) / "train.json")
     all_predictions = []
 
-    for batch_idx, (imgs, _, img_ids) in enumerate(dataloader):
+    for batch_idx, (imgs, img_ids) in enumerate(dataloader):
         with torch.no_grad():
             imgs = [img.to(device) for img in imgs]
             with autocast(device_type=device, dtype=torch.bfloat16):
@@ -181,7 +181,6 @@ def validation_loop(model, dataloader, device):
         if batch_idx % 2 == 0:
             current_ex = batch_idx * batch_size + len(imgs)
             print(f"[{current_ex:>5d}/{len_dataset:>5d}]")
-
 
     preds_coco = ground_truth_coco.loadRes(preds)
     coco_eval = COCOeval(ground_truth_coco, preds_coco, iouType="bbox")
@@ -231,7 +230,7 @@ if __name__ == "__main__":
 
     train_dataset = SystemDetectionDataset(SYSTEM_DETECTION_ROOT_DIR, "train.json", transform_list=train_transform_list, bbox_params=bbox_params)
     # validation has no augmentation that touches bboxes, so no need to pass bbox_params
-    validation_dataset = SystemDetectionDataset(SYSTEM_DETECTION_ROOT_DIR, "validation.json", transform_list=base_transform_list, bbox_params=None, return_img_id=True)
+    validation_dataset = SystemDetectionDataset(SYSTEM_DETECTION_ROOT_DIR, "validation.json", transform_list=base_transform_list, bbox_params=None, evaluation=True)
 
     train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=rcnn_collate_fn, pin_memory=True)
     validation_dataloader = DataLoader(validation_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=rcnn_collate_fn, pin_memory=True)
