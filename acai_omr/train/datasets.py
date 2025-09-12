@@ -3,10 +3,6 @@ from torch.utils.data import Dataset
 import pandas as pd
 from pathlib import Path
 from PIL import Image
-from pycocotools.coco import COCO
-import albumentations as A
-import numpy as np
-import contextlib
 
 # superclass to deal with the commonalities between the LMX datasets
 class LMXDataset(Dataset):
@@ -184,59 +180,3 @@ class GrandStaffOMRTrainWrapper(Dataset):
             return input_img, lmx, musicxml
         else:
             return input_img, lmx
-
-# Returns an image and target dict formatted for torchvision's Faster RCNN. This class should only be used 
-# with albumentation transforms
-class SystemDetectionDataset(Dataset):
-    def __init__(self, root_dir, split_file_name, transform_list: list=None, bbox_params: A.BboxParams=None, evaluation=False):
-        self.root_dir = Path(root_dir)
-        
-        with contextlib.redirect_stdout(None): # suppress annoying output
-            self.coco = COCO(self.root_dir / split_file_name)
-
-        self.img_ids = list(self.coco.imgs.keys())
-        if transform_list:
-            if bbox_params and bbox_params.format != "pascal_voc":
-                raise ValueError("torchvision uses the pascal voc format, so Albumentation transformations should be set up using that")
-            self.transform = A.Compose(transform_list, bbox_params=bbox_params)
-        else:
-            self.transform = None
-
-        # for COCO evaluation, we need to keep track of the image id to convert predictions back into COCO json format
-        self.evaluation = evaluation
-
-    def __len__(self):
-        return len(self.img_ids)
-
-    def __getitem__(self, idx):
-        img_id = self.img_ids[idx]
-        annotations_id = self.coco.getAnnIds(imgIds=img_id)
-        annotations = self.coco.loadAnns(ids=annotations_id)
-        img_info = self.coco.loadImgs(img_id)[0]
-
-        img_path = img_info["file_name"]
-        img = Image.open(img_path).convert("L")
-
-        boxes = []
-        labels = []
-        for annotation in annotations:
-            x_min, y_min, w, h = annotation["bbox"]
-            boxes.append([x_min, y_min, x_min + w, y_min + h])
-            labels.append(annotation["category_id"])
-        
-        if self.transform:
-            img = np.array(img)
-            augmented = self.transform(image=img, bboxes=boxes, class_labels=labels)
-            img = augmented["image"]
-            boxes = augmented["bboxes"]
-            labels = augmented["class_labels"]
-
-        target = {
-            "boxes": boxes,
-            "labels": labels
-        }
-
-        if self.evaluation:        
-            return img, img_id
-        else:
-            return img, target

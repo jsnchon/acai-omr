@@ -5,7 +5,6 @@ PRIMUS_PREPARED_ROOT_DIR = "data/primusPrepared"
 DOREMI_PREPARED_ROOT_DIR = "data/doReMiPrepared"
 OLIMPIC_SYNTHETIC_ROOT_DIR = "data/olimpic-1.0-synthetic.2024-02-12/olimpic-1.0-synthetic"
 OLIMPIC_SCANNED_ROOT_DIR = "data/olimpic-1.0-scanned.2024-02-12/olimpic-1.0-scanned"
-SYSTEM_DETECTION_ROOT_DIR = "data/system_detection"
 
 # weights for a tiny MAE for testing purposes
 DEBUG_PRETRAINED_MAE_PATH = "debug_pretrained_mae.pth"

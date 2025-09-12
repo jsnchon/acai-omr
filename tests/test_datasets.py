@@ -1,12 +1,10 @@
 from acai_omr.train.datasets import GrandStaffLMXDataset, PreparedDataset, OlimpicDataset, PreTrainWrapper, OlimpicPreTrainWrapper, GrandStaffPreTrainWrapper, GrandStaffOMRTrainWrapper, SystemDetectionDataset
 from acai_omr.utils.utils import display_dataset_img, DynamicResize
-from acai_omr.config import GRAND_STAFF_ROOT_DIR, PRIMUS_PREPARED_ROOT_DIR, DOREMI_PREPARED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR, SYSTEM_DETECTION_ROOT_DIR
+from acai_omr.config import GRAND_STAFF_ROOT_DIR, PRIMUS_PREPARED_ROOT_DIR, DOREMI_PREPARED_ROOT_DIR, OLIMPIC_SYNTHETIC_ROOT_DIR, OLIMPIC_SCANNED_ROOT_DIR
 from torchvision.transforms import ToTensor
 import pytest
 import torch
 import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-import albumentations as A
 
 def test_grand_staff_dataset(mocker):
     # verify dataset retrieval works
@@ -160,38 +158,3 @@ def test_grand_staff_omr_train_wrapper(mocker):
     mock_transform.assert_not_called()
     assert input_img != "transformed_img" and lmx != "transformed_img"
     assert type(lmx) == str
-
-def test_system_detection_dataset():
-    augment_p = 0.5
-    # note that albumentation transforms seem to be stronger than torchvision's and effects are also amplified since
-    # the images are large
-    augment_transforms = [
-        A.Perspective(scale=(0.025, 0.035), p=1), 
-        A.GaussianBlur(blur_limit=(15, 20), sigma_limit=(0.8, 2.0), p=1), 
-        A.RandomBrightnessContrast(brightness_limit=(-0.1, 0.1), p=1),
-        A.GaussNoise(std_range=(0.03, 0.05), p=1)
-        ]
-
-    transform_list = [
-        A.Resize(1536, 1024), 
-        A.SomeOf(augment_transforms, n=len(augment_transforms), p=augment_p), 
-        A.Normalize(mean=0, std=1), 
-        A.ToTensorV2()
-        ]
-    bbox_params = A.BboxParams(format="pascal_voc", label_fields=["class_labels"])
-    dataset = SystemDetectionDataset(SYSTEM_DETECTION_ROOT_DIR, "train.json", transform_list, bbox_params)
-    img, target = dataset[20]
-
-    _, ax = plt.subplots(1, figsize=(10, 10))
-    for bbox in target["boxes"]:
-        print(bbox)
-        x_min, y_min, x_max, y_max = bbox
-        width, height = x_max - x_min, y_max - y_min
-
-        rect = patches.Rectangle((x_min, y_min), width, height,
-                                 linewidth=1, edgecolor="orange",
-                                 facecolor='none')
-        ax.add_patch(rect)
-        plt.imshow(img.squeeze(0), cmap="gray")
-
-    plt.savefig("bbox_augment_test.png")
