@@ -7,6 +7,8 @@ from acai_omr.config import SYSTEM_DETECTION_ROOT_DIR
 from torchvision.models.detection import fasterrcnn_resnet50_fpn_v2
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.models.detection.rpn import AnchorGenerator
+from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
 from torch.amp import autocast
 from pathlib import Path
 import albumentations as A
@@ -21,9 +23,15 @@ MIN_WIDTH = 960
 MAX_HEIGHT = 1280
 
 TRAINABLE_BACKBONE_LAYERS = 5
+
+# NOTE: to use the pre-trained RPN, we have to have to match the pre-trained model's use of 5 sizes and 3 aspect ratios
+# (one size per FPN feature map, 3 aspect ratios per anchor)
+anchor_sizes = ((128,), (256,), (512,), (768,), (1024,))
+anchor_aspect_ratios = ((0.25, 0.5, 1.0),) * len(anchor_sizes)
+
 ANCHOR_GENERATOR = AnchorGenerator(
-    sizes=((128, 256, 512, 768, 1024), ),
-    aspect_ratios=((0.1, 0.25, 0.5, 1.0), ),
+    sizes=anchor_sizes,
+    aspect_ratios=anchor_aspect_ratios
 )
 
 RCNN_KWARGS = {
@@ -106,7 +114,7 @@ def train_loop(model, dataloader, optimizer, scheduler, device, grad_accumulatio
 
     for batch_idx, batch in enumerate(dataloader):
         imgs = [img.to(device, non_blocking=True) for img in batch[0]]
-        targets = [{k: torch.tensor(v).to(device, non_blocking=True) for k, v in target.items()} for target in batch[1]]
+        targets = [{k: torch.tensor(v, dtype=torch.int64).to(device, non_blocking=True) for k, v in target.items()} for target in batch[1]]
         with autocast(device_type=device, dtype=torch.bfloat16):
             loss_dict = model(imgs, targets)
             loss = sum(loss for loss in loss_dict.values())
@@ -143,32 +151,58 @@ def validation_loop(model, dataloader, device):
     len_dataset = len(dataloader.dataset)
     batch_size = dataloader.batch_size
 
-    for batch_idx, batch in enumerate(dataloader):
+    ground_truth_coco = COCO(Path(SYSTEM_DETECTION_ROOT_DIR) / "train.json")
+    all_predictions = []
+
+    for batch_idx, (imgs, _, img_ids) in enumerate(dataloader):
         with torch.no_grad():
-            imgs = [img.to(device) for img in batch[0]]
-            targets = [{k: torch.tensor(v).to(device) for k, v in target.items()} for target in batch[1]]
+            imgs = [img.to(device) for img in imgs]
             with autocast(device_type=device, dtype=torch.bfloat16):
-                loss_dict = model(imgs, targets)
-                loss = sum(loss for loss in loss_dict.values())
-       
-        validation_loss += loss.item()
-        
+                preds = model(imgs) # list of prediction dictionaries, one for each image
+
+        # convert model outputs to COCO json so we can later run COCO evaluation 
+        for pred, img_id in zip(preds, img_ids):
+            boxes = pred["boxes"].cpu().numpy()
+            labels = pred["labels"].cpu().numpy()
+            scores = pred["scores"].cpu().numpy()
+
+            for box, score, label in zip(boxes, scores, labels):
+                x_min, y_min, x_max, y_max = box
+                w, h = x_max - x_min, y_max - y_min
+                coco_box = [float(x_min), float(y_min), float(w), float(h)]
+
+                all_predictions.append({
+                    "image_id": img_id,
+                    "category_id": int(label),  
+                    "bbox": coco_box,
+                    "score": float(score)
+                })            
+
         if batch_idx % 2 == 0:
             current_ex = batch_idx * batch_size + len(imgs)
             print(f"[{current_ex:>5d}/{len_dataset:>5d}]")
 
+
+    preds_coco = ground_truth_coco.loadRes(preds)
+    coco_eval = COCOeval(ground_truth_coco, preds_coco, iouType="bbox")
+    coco_eval.evaluate()
+    coco_eval.accumulate()
+    coco_eval.summarize()
+    print(coco_eval)
+ 
     avg_loss = validation_loss / num_batches
     print(f"Average validation loss for this epoch: {avg_loss}")
     return avg_loss
 
 def set_up_model(device):
     model = fasterrcnn_resnet50_fpn_v2(weights="COCO_V1", trainable_backbone_layers=TRAINABLE_BACKBONE_LAYERS, **RCNN_KWARGS)
-    model.to(device)
 
     # replace the detection head and anchor generator
     in_features = model.roi_heads.box_predictor.cls_score.in_features
     model.rpn.anchor_generator = ANCHOR_GENERATOR
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, NUM_CLASSES)
+
+    model.to(device) # important to move the model after making our changes so the replaced parameters are also replaced
 
     return model
 
@@ -179,7 +213,7 @@ if __name__ == "__main__":
     device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
     print(f"Using device {device}\n")
 
-    model = set_up_model(TRAINABLE_BACKBONE_LAYERS, ANCHOR_GENERATOR, NUM_CLASSES, RCNN_KWARGS, device)
+    model = set_up_model(device)
     print(f"Model architecture\n{'-' * 50}\n{model}")
 
     augment_transforms = [
@@ -197,7 +231,7 @@ if __name__ == "__main__":
 
     train_dataset = SystemDetectionDataset(SYSTEM_DETECTION_ROOT_DIR, "train.json", transform_list=train_transform_list, bbox_params=bbox_params)
     # validation has no augmentation that touches bboxes, so no need to pass bbox_params
-    validation_dataset = SystemDetectionDataset(SYSTEM_DETECTION_ROOT_DIR, "validation.json", transform_list=base_transform_list, bbox_params=None)
+    validation_dataset = SystemDetectionDataset(SYSTEM_DETECTION_ROOT_DIR, "validation.json", transform_list=base_transform_list, bbox_params=None, return_img_id=True)
 
     train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=rcnn_collate_fn, pin_memory=True)
     validation_dataloader = DataLoader(validation_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, collate_fn=rcnn_collate_fn, pin_memory=True)
