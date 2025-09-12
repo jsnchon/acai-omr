@@ -46,13 +46,14 @@ imageForm.addEventListener("submit",
         const formData = new FormData();
         formData.append("img_file", imgFile);
 
-        let resp = await fetch("/upload", {
-            method: "POST",
-            body: formData
-        });
-
-        resp = await resp.json();
-        imgPath = resp.path;
+//        const resp = await fetch("/upload", {
+//            method: "POST",
+//            body: formData
+//        });
+//
+//        resp = await resp.json();
+//        console.log("Server response to image upload: ", resp);
+//        imgPath = resp.path;
 
         showSection(inferenceForm);
     }
@@ -72,10 +73,9 @@ inferenceForm.addEventListener("submit",
         const inferenceEvents = await resp.json();
 
         const formData = new FormData(inferenceForm);
-        formData.append("path", imgPath)
         const params = new URLSearchParams(formData);
         
-        console.log(`Starting inference stream with image at ${imgPath}`);
+        console.log("Starting inference stream");
         const source = new EventSource(`/inference/stream?${params.toString()}`);
 
         streamInference(source, inferenceEvents);

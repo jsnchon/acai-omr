@@ -8,7 +8,7 @@
 </head>
 <body>
     <main>
-        <section id="start-view" class="toggleable-section">
+        <section id="start-view" class="start-view toggleable-section">
             <div class="title-wrapper">
                 <h1>AcaiOMR</h1>
                 <img src="{{ url_for('static', filename='berries.svg') }}" height="70px">
@@ -16,7 +16,7 @@
             <h4>An optical music recognition model</h4>
             <form id="image-form">
                 <label for="image-upload" class="center-text">Upload an image to transcribe</label>
-                <input type="file" id="image-upload" name="inference_image" accept="image/*" capture>
+                <input type="file" id="image-upload" name="inference_image" accept="image/*">
                 <section id="image-preview-window" class="toggleable-section">
                     <p>Selected image:</p>
                     <img id="image-preview" alt="Preview of the image to run inference on" hidden>
@@ -25,12 +25,10 @@
             </form>
         </section>
         <form id="inference-form" class="toggleable-section">
-            <h3>Inference Settings</h3>
             <p>Model weights path (defined in acai_omr/config.py): {{ weights_path }}</p>
-            <div class="centered-row">
-                <label for="max-inference-len">Max inference token length</label><br>
-                <input type="number" class="interactive-el num-input" id="max-inference-len" name="max_inference_len" value="1536" min="2" max="1536" required><br>
-            </div>
+
+            <label for="max-inference-len">Max inference token length</label><br>
+            <input type="number" class="interactive-el num-input" id="max-inference-len" name="max_inference_len" value="1536" min="2" max="1536" required><br>
             <button type="submit" class="interactive-el">Start inference</button>
         </form>
         <section id="encoding-progress-view" class="toggleable-section">
@@ -55,9 +53,6 @@
             <div class="stream-output gradient-border">
                 <div id="output-window" class="output-window"></div>
             </div>
-        </section>
-        <section id="result-view" class="result-view">
-
         </section>
         <script src="{{ url_for('static', filename='inference.js') }}" type="module"></script>
     </main>
