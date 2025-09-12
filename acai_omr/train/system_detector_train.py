@@ -143,7 +143,7 @@ def convert_predictions_to_coco(preds, img_ids):
         labels = pred["labels"].cpu().numpy()
         scores = pred["scores"].cpu().numpy()
 
-        for box, score, label in zip(boxes, scores, labels):
+        for box, label, score in zip(boxes, labels, scores):
             x_min, y_min, x_max, y_max = box
             w, h = x_max - x_min, y_max - y_min
             coco_box = [float(x_min), float(y_min), float(w), float(h)]
@@ -162,19 +162,17 @@ def evaluation_loop(model, dataloader, device, validation=True):
     len_dataset = len(dataloader.dataset)
     batch_size = dataloader.batch_size
 
+    if validation:
+        split_file = "validation.json"
+    else:
+        split_file = "test.json"
     with contextlib.redirect_stdout(None):
-        if validation:
-            split_file = "validation.json"
-        else:
-            split_file = "test.json"
-
         ground_truth_coco = COCO(Path(SYSTEM_DETECTION_ROOT_DIR) / split_file)
     # pycocotools demands these fields be set, so give them filler values
     ground_truth_coco.dataset.setdefault("info", {"description": "dummy"})
     ground_truth_coco.dataset.setdefault("licenses", [])
 
     all_predictions = []
-
     for batch_idx, (imgs, img_ids) in enumerate(dataloader):
         with torch.no_grad():
             imgs = [img.to(device) for img in imgs]
@@ -193,12 +191,12 @@ def evaluation_loop(model, dataloader, device, validation=True):
     coco_eval.evaluate()
     coco_eval.accumulate()
     coco_eval.summarize()
-    mAP = coco_eval.stats[0],
-    ap50 = coco_eval.stats[1],
-    ap75 = coco_eval.stats[2],
-    ar10 = coco_eval.stats[7],
+    mAP = coco_eval.stats[0]
+    ap50 = coco_eval.stats[1]
+    ap75 = coco_eval.stats[2]
+    ar10 = coco_eval.stats[7]
  
-    print(f"Results\nmAP: {mAP}\nAP@0.5: {ap50}\nAP@0.75{ap75}\nAR@10{ar10}")
+    print(f"Results\nmAP: {mAP}\nAP@0.5: {ap50}\nAP@0.75: {ap75}\nAR@10: {ar10}")
     return mAP, ap50, ap75, ar10
 
 def set_up_model(device):
@@ -210,7 +208,6 @@ def set_up_model(device):
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, NUM_CLASSES)
 
     model.to(device) # important to move the model after making our changes so the replaced parameters are also replaced
-
     return model
 
 if __name__ == "__main__":

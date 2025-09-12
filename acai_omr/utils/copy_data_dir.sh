@@ -2,8 +2,8 @@
 
 # USAGE
 # dest is the only positional argument and is the data root directory to transfer subdirectories into (should end with a /,
-# can include user@host: at the start for remote transfers). rsync needs this root directory to already exist
-# -r flag will make rsync use compression to help speed up the network transfer (since the GPU machines are far away)
+# include user@host: at the start for remote transfers). rsync needs this root directory to already exist.
+# -r flag will allow for remote transfers using ssh private key
 send_to_remote=false
 while getopts "r:" opt; do
     case "$opt" in
