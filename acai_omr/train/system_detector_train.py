@@ -186,11 +186,12 @@ def evaluation_loop(model, dataloader, device, validation=True):
             current_ex = batch_idx * batch_size + len(imgs)
             print(f"[{current_ex:>5d}/{len_dataset:>5d}]")
 
-    preds_coco = ground_truth_coco.loadRes(all_predictions)
-    coco_eval = COCOeval(ground_truth_coco, preds_coco, iouType="bbox")
-    coco_eval.evaluate()
-    coco_eval.accumulate()
-    coco_eval.summarize()
+    with contextlib.redirect_stdout(None):
+        preds_coco = ground_truth_coco.loadRes(all_predictions)
+        coco_eval = COCOeval(ground_truth_coco, preds_coco, iouType="bbox")
+        coco_eval.evaluate()
+        coco_eval.accumulate()
+        coco_eval.summarize()
     mAP = coco_eval.stats[0]
     ap50 = coco_eval.stats[1]
     ap75 = coco_eval.stats[2]
@@ -246,7 +247,7 @@ if __name__ == "__main__":
     scheduler = cosine_anneal_with_warmup(optimizer, WARMUP_EPOCHS, EPOCHS, MIN_LR, len(train_dataloader))
 
     writer = SummaryWriter(log_dir=LOG_DIR, max_queue=50)
-    epoch_stats_df = pd.DataFrame(columns=["train_loss", "mAP", "ap50", "ap75", "ar10" "base_lr", "fine_tune_base_lr"])
+    epoch_stats_df = pd.DataFrame(columns=["train_loss", "mAP", "ap50", "ap75", "ar10", "base_lr", "fine_tune_base_lr"])
     counter = StepCounter()
 
     print(f"Model architecture\n{'-' * 50}\n{model}")

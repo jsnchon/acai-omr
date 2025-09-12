@@ -1041,3 +1041,6 @@ class GRPOViTOMR(ViTOMR):
         rollout_log_probs = rollout_log_probs.masked_fill(~rollout_mask, 0.0)
 
         return rollouts, rollout_log_probs, rollout_mask
+
+# TODO: super simple wrapper around regular encoder that just expects non ragged batches, so really just embedding,
+# calling each layer individually and returning reshaped feature maps at interval depths
