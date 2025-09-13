@@ -6,7 +6,7 @@ from acai_omr.config import INFERENCE_VITOMR_PATH
 from acai_omr.train.omr_teacher_force_train import set_up_omr_teacher_force_train
 from acai_omr.__init__ import InferenceEvent
 from acai_omr.utils.utils import stringify_lmx_seq
-from olimpic_app.linearization.__main__ import direct_delinearize
+from olimpic_app.linearization.Delinearizer import direct_delinearize
 import logging  
 import tempfile
 from PIL import Image
@@ -49,8 +49,10 @@ def index():
 @main.route("/upload", methods=["POST"])
 def upload_img():
     f = request.files["img_file"]
-    file_path = f"/var/www/uploads/{secure_filename(f.filename)}"
-    f.save(file_path)
+    disk_f = tempfile.NamedTemporaryFile(delete=False)
+    f.save(disk_f)
+    disk_f.close()
+    file_path = disk_f.name
     logger.info(f"File saved to {file_path}")
     return {"path": file_path}
 
@@ -89,7 +91,7 @@ def stream_inference():
     return Response(stream_inference_wrapper(vitomr, img, device, max_inference_len, flush_interval), mimetype="text/event-stream")
 
 # convert decoded lmx sequence into delinearized musicxml and reconstructed image, store as tempfiles and return their paths
-@main.route("prepare_results", methods=["POST"])
+@main.route("/prepare_results", methods=["POST"])
 def prepare_results():
     data = request.json
     sequence = data["sequence"]
@@ -101,5 +103,3 @@ def prepare_results():
     musicxml_tempfile = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
     musicxml_tempfile.write(musicxml)
     musicxml_tempfile.close()
-
-        
