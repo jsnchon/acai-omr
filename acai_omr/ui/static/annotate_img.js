@@ -5,8 +5,7 @@ const BACKGROUND_MAX_HEIGHT = 1500;
 const BOX_MIN_WIDTH = 0.01;
 const BOX_MIN_HEIGHT = 0.01;
 
-// TODO: manage a dict of boxes ({id: box}), return that. Add button to delete box when it's active
-function annotateImage(imgSrc) {
+function setUpStage(imgSrc) {
     const stage = new Konva.Stage({
         container: "annotate-container",
     });
@@ -33,8 +32,80 @@ function annotateImage(imgSrc) {
         layer.draw();
     };
 
-    const transform = new Konva.Transformer();
-    layer.add(transform);
+    return [stage, layer, background];
+}
+
+function createDeleteButton(initFill) {
+    const deleteButton = new Konva.Group({ visible: false });
+    deleteButton.add(new Konva.Circle({
+        radius: 10,
+        fill: initFill,
+        stroke: "black",
+        strokeWidth: 2,
+    }));
+    const buttonText = new Konva.Text({
+        text: "x",
+        fontSize: 16,
+        fill: "black",
+    });
+    buttonText.offsetX(buttonText.width() / 2);
+    buttonText.offsetY(buttonText.height() / 2);
+    deleteButton.add(buttonText);
+
+    return deleteButton;
+}
+
+function setUpDeleteButtonListeners(deleteButton, hoverFill, transformer, layer) {
+    const hoverTween = new Konva.Tween({
+        node: deleteButton.findOne("Circle"), // animate the actual button part of the Group
+        duration: 0.5,
+        fill: hoverFill,
+        easing: Konva.Easings.EaseInOut,
+    });
+
+    deleteButton.on("mouseenter", () => {
+       hoverTween.play();
+    });
+    deleteButton.on("mouseleave", () => {
+        hoverTween.reverse();
+    });
+    deleteButton.on("click", () => {
+        const focusedRect = transformer.nodes()[0];
+        focusedRect.destroy();
+        transformer.nodes([]);
+        deleteButton.hide();
+        layer.draw();
+    });
+}
+
+// keep delete button position synced with the bounding boxes
+function syncDeleteButton(deleteButton, transformer, layer, padding) {
+    const focusedRect = transformer.nodes()[0];
+    const rectBox = focusedRect.getClientRect({ relativeTo: layer });
+    deleteButton.position({
+        x: rectBox.x + (rectBox.width - padding),
+        y: rectBox.y 
+    });
+    layer.batchDraw();
+}
+
+// TODO: on form submit, call another function that takes stage and returns all remaining boxes
+function annotateImage(imgSrc) {
+    const [stage, layer, background] = setUpStage(imgSrc);
+
+    const initFill = "#a71d6dff"
+    const deleteButton = createDeleteButton(initFill);
+    layer.add(deleteButton)
+    const deleteButtonPadding = 25; // prevent button from overlapping corner transform anchor
+
+    const transformer = new Konva.Transformer({ anchorSize: 12, rotateEnabled: false });
+    transformer.on("transform", () => { // keep delete button in sync with box while it's being transformed
+        syncDeleteButton(deleteButton, transformer, layer, deleteButtonPadding);
+    });
+    layer.add(transformer);
+
+    const hoverFill = "#eb2f45ff";
+    setUpDeleteButtonListeners(deleteButton, hoverFill, transformer, layer);
 
     let startX = null;
     let startY = null;
@@ -44,7 +115,10 @@ function annotateImage(imgSrc) {
     stage.on("mousedown", (e) => {
         console.log("mousedown")
         if (e.target === background) {
-            transform.nodes([]);
+            // reset any Rects that were being transformed
+            transformer.nodes([]); 
+            deleteButton.hide();
+            layer.draw();
 
             startX = stage.getPointerPosition().x;
             startY = stage.getPointerPosition().y;
@@ -54,16 +128,28 @@ function annotateImage(imgSrc) {
                 y: startY,
                 width: 0,
                 height: 0,
-                stroke: "orange",
+                stroke: "#de0bcf",
                 strokeWidth: 2,
                 draggable: true,
             });
             layer.add(currRect);
         } 
-        // transformer handles are also considered instances of their parent shapes, so need to avoid repeatedly adjusting
-        // transform.nodes if manipulating them in a mousedown event (eg dragging them around)
-        else if (e.target instanceof Konva.Rect && e.target.getParent() !== transform) {
-            transform.nodes([e.target]);
+        // attach the transformer to an already existing rectangle that's clicked. The parent check makes sure we don't 
+        // reattach when transformer anchors are clicked/dragged (since they're also instances of Konva.Rect)
+        else if (e.target instanceof Konva.Rect && e.target.getParent() !== transformer) {
+            transformer.nodes([e.target]);
+            e.target.on("dragmove", () => {
+                syncDeleteButton(deleteButton, transformer, layer, deleteButtonPadding);
+            });
+
+            const rectBox = e.target.getClientRect({ relativeTo: layer });
+            deleteButton.position({
+                x: rectBox.x + (rectBox.width - deleteButtonPadding),
+                y: rectBox.y 
+            });
+            deleteButton.show();
+            deleteButton.moveToTop();
+            layer.draw();
         }
     });
 
@@ -89,25 +175,14 @@ function annotateImage(imgSrc) {
         };
 
         if (box.x1 - box.x0 < BOX_MIN_WIDTH || box.y1 - box.y0 < BOX_MIN_HEIGHT) {
-            console.log("Not counting as a box");
+            console.log("Not counting as a box"); // debug
             currRect.width(0);
             currRect.height(0);
         }
-        else {
-            console.log("Box:", box);
+        else { // debug
+            console.log("Box: ", box);
         }
 
         currRect = null; 
     });
-
-    // when clicking a rectangle, attach the transformer to allow for rectangle resizing
-    stage.on("click", (e) => {  
-        if (e.target instanceof Konva.Rect) {
-        } else {
-            transform.nodes([]);
-        }
-        layer.draw();
-    });
 }
-
-export default annotateImage;
