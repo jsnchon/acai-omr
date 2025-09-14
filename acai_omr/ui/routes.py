@@ -10,13 +10,13 @@ from olimpic_app.linearization.Delinearizer import direct_delinearize
 import logging  
 import tempfile
 from PIL import Image
+from pathlib import Path
 import json
 import os
 
 main = Blueprint("main", __name__)
 logger = logging.getLogger(__name__)
 
-DEBUG_IMAGE_PATH = "inference_test.png"
 MAX_BATCH_SIZE = 1
 CACHE_DTYPE = torch.bfloat16
 
@@ -53,13 +53,14 @@ def upload_img():
     f.save(disk_f)
     disk_f.close()
     file_path = disk_f.name
-    logger.info(f"File saved to {file_path}")
+    logger.debug(f"Image saved to {file_path}")
     return {"path": file_path}
 
 # SSE wrapper that post-processes and then yields events yielded by inference.
 # Again, we assume there's only one sequence being passed here at a time
 def stream_inference_wrapper(vitomr, img, device, max_inference_len, flush_interval):
     for event in streamed_inference(vitomr, img, device, max_inference_len, flush_interval):
+        logger.debug(f"Inference event: {event}")
         if event["type"] == InferenceEvent.STEP.value:
             tokens = event["payload"]["tokens"]
             tokens = tokens[tokens != vitomr.decoder.pad_idx] # last buffer may have leftover pad tokens
@@ -78,16 +79,36 @@ def stream_inference_wrapper(vitomr, img, device, max_inference_len, flush_inter
         
         yield f"data: {json.dumps(event)}\n\n"
 
+# given the path to the original unsplit image and the submitted bounding boxes, crop the image at each bounding box and 
+# return a path to a directory containing the split images
+@main.route("/inference/setup", methods=["POST"])
+def setup_inference():
+    data = request.json
+    img_path = data["path"]
+    bboxes = data["bboxes"]
+    logger.debug(f"Received bboxes {bboxes} for img at {img_path}")
+    unsplit_img = Image.open(img_path).convert("L")
+    tmpdir = tempfile.TemporaryDirectory(delete=False)
+    tmpdir_path = Path(tmpdir.name)
+    # sort from top-most to bottom-most
+    bboxes = sorted(bboxes, key=lambda x: x["y0"])
+
+    logger.debug(f"Splitting images and saving to {str(tmpdir_path)}")
+    for i, bbox in enumerate(bboxes):
+        split_img = unsplit_img.crop((bbox["x0"] * unsplit_img.width, bbox["y0"] * unsplit_img.height, bbox["x1"] * unsplit_img.width, bbox["y1"] * unsplit_img.height))
+        split_img.save(tmpdir_path / f"system_{i}.png")
+
+    return {"path": str(tmpdir_path)}
+
 @main.route("/inference/stream")
 def stream_inference():
     max_inference_len = int(request.args.get("max_inference_len", 1536))
+    img_path = request.args.get("path")
 
-    img = Image.open(DEBUG_IMAGE_PATH).convert("L")
+    img = Image.open(img_path).convert("L")
     img = base_img_transform(img).to(device)
 
-    # make sure to transform any images using patch transform
     logger.info(f"Starting inference with max length {max_inference_len} and streaming from endpoint with a flush interval of {flush_interval}")
-
     return Response(stream_inference_wrapper(vitomr, img, device, max_inference_len, flush_interval), mimetype="text/event-stream")
 
 # convert decoded lmx sequence into delinearized musicxml and reconstructed image, store as tempfiles and return their paths

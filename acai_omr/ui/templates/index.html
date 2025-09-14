@@ -26,7 +26,17 @@
             </form>
         </section>
         <form id="annotate-form" class="toggleable-section">
+            <h3>Split Systems</h3>
+            <p class="reduced-margin">Draw a box around each musical system in the image</p>
+            <h4>Controls</h4>
+            <ul class="reduced-margin">
+                <li>Click and drag on the image to create a bounding box</li>
+                <li>Click a box to resize or delete it</li>
+                <li>Click and drag a box to move it</li>
+                <li>Systems can overlap</li>
+            </ul>
             <div id="annotate-container"></div>
+            <button type="submit" class="interactive-el large-button">Next</button>
         </form>
         <form id="settings-form" class="toggleable-section">
             <h3>Inference Settings</h3>
@@ -35,7 +45,7 @@
                 <label for="max-inference-len">Max inference token length</label><br>
                 <input type="number" class="interactive-el num-input" id="max-inference-len" name="max_inference_len" value="1536" min="2" max="1536" required><br>
             </div>
-            <button type="submit" class="interactive-el">Start inference</button>
+            <button type="submit" class="interactive-el large-button">Start inference</button>
         </form>
         <section id="encoding-progress-view" class="toggleable-section">
             <div class="dot-load-wrapper">

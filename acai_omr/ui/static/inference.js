@@ -1,4 +1,9 @@
-import annotateImage from "./annotate_img.js";
+// TODOs: 
+// look into hosting on digitalocean
+// rewrite streamed inference to batched version, batch infer on split images
+// test that can capture images with camera on mobile. Test with single staff systems, multiple systems, phone camera, etc
+
+import { annotateImage, getBboxes } from "./annotate_img.js";
 
 function showSection(elem) {
     elem.classList.add("active");
@@ -37,6 +42,8 @@ imageUpload.addEventListener("change", (e) => {
 });
 
 let imgPath = null;
+let stage = null;
+let layer = null;
 const annotateForm = document.getElementById("annotate-form");
 
 imageForm.addEventListener("submit", 
@@ -58,11 +65,36 @@ imageForm.addEventListener("submit",
         imgPath = resp.path;
 
         showSection(annotateForm);
-        annotateImage(imagePreview.src);
+        [stage, layer] = annotateImage(imagePreview.src);
     }
 );
 
-// TODO: annotateForm.addEventListener(), on submit move onto settings-form
+let bboxes = null;
+let imgDir = null;
+annotateForm.addEventListener("submit", 
+    async(e) => {
+        e.preventDefault();
+        bboxes = getBboxes(stage, layer);
+        if (bboxes.length === 0) {
+            alert("At least one box should be drawn");
+            return;
+        }
+        hideSection(annotateForm);
+        console.log("Submitting bounding boxes: ", bboxes);
+        let resp = await fetch("/inference/setup", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ "path": imgPath, "bboxes": bboxes })
+        });
+        resp = await resp.json();
+        console.log("Server response to box submission: ", resp);
+        imgDir = resp.path;
+
+        showSection(settingsForm);
+    }
+)
 
 const settingsForm = document.getElementById("settings-form");
 const encodingProgressView = document.getElementById("encoding-progress-view");
@@ -79,6 +111,7 @@ settingsForm.addEventListener("submit",
         const inferenceEvents = await resp.json();
 
         const formData = new FormData(settingsForm);
+        formData.append("path", imgPath)
         const params = new URLSearchParams(formData);
         
         console.log("Starting inference stream");
@@ -123,9 +156,6 @@ function displayTokenStream(outputElem, inferenceStepEvent) {
 }
 
 const resultView = document.getElementById("result-view")
-
-// TODO: look into hosting on digitalocean
-// test that can capture images with camera on mobile
 
 // listener that deals with the rest of the flow after inference finishes
 function handleStreamEnd(source, inferenceEvents) {

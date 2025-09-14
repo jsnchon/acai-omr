@@ -5,6 +5,8 @@ const BACKGROUND_MAX_HEIGHT = 1500;
 const BOX_MIN_WIDTH = 0.01;
 const BOX_MIN_HEIGHT = 0.01;
 
+const BBOX_ID = "bbox"; // id string for created Rects so they can be filtered from layer
+
 function setUpStage(imgSrc) {
     const stage = new Konva.Stage({
         container: "annotate-container",
@@ -41,7 +43,7 @@ function createDeleteButton(initFill) {
         radius: 10,
         fill: initFill,
         stroke: "black",
-        strokeWidth: 2,
+        strokeWidth: 1,
     }));
     const buttonText = new Konva.Text({
         text: "x",
@@ -78,7 +80,7 @@ function setUpDeleteButtonListeners(deleteButton, hoverFill, transformer, layer)
     });
 }
 
-// keep delete button position synced with the bounding boxes
+// callback to keep delete button position synced with the bounding boxes
 function syncDeleteButton(deleteButton, transformer, layer, padding) {
     const focusedRect = transformer.nodes()[0];
     const rectBox = focusedRect.getClientRect({ relativeTo: layer });
@@ -89,22 +91,35 @@ function syncDeleteButton(deleteButton, transformer, layer, padding) {
     layer.batchDraw();
 }
 
+// takes a Konva.Rect instance and returns a bbox object with x and y coordinates
+function convertToBbox(rect, stage) {
+    const rectBox = rect.getClientRect();
+    // we scaled stage so that image fits within max dimensions, so normalize coordinates to later match to the raw image coordinates
+    const bbox = {
+        x0: rectBox.x / stage.width(), 
+        y0: rectBox.y / stage.height(),
+        x1: (rectBox.x + rectBox.width) / stage.width(),
+        y1: (rectBox.y + rectBox.height) / stage.height(),
+    };
+    return bbox;
+}
+
 // TODO: on form submit, call another function that takes stage and returns all remaining boxes
-function annotateImage(imgSrc) {
+export function annotateImage(imgSrc) {
     const [stage, layer, background] = setUpStage(imgSrc);
 
-    const initFill = "#a71d6dff"
+    const initFill = "#d61d89ff"
     const deleteButton = createDeleteButton(initFill);
     layer.add(deleteButton)
     const deleteButtonPadding = 25; // prevent button from overlapping corner transform anchor
 
     const transformer = new Konva.Transformer({ anchorSize: 12, rotateEnabled: false });
-    transformer.on("transform", () => { // keep delete button in sync with box while it's being transformed
+    transformer.on("transform", () => {
         syncDeleteButton(deleteButton, transformer, layer, deleteButtonPadding);
     });
     layer.add(transformer);
 
-    const hoverFill = "#eb2f45ff";
+    const hoverFill = "#fe1f39ff";
     setUpDeleteButtonListeners(deleteButton, hoverFill, transformer, layer);
 
     let startX = null;
@@ -113,7 +128,6 @@ function annotateImage(imgSrc) {
 
     // drag a new rectangle out when a click starts on the background, drags beyond the size thresholds, and releases
     stage.on("mousedown", (e) => {
-        console.log("mousedown")
         if (e.target === background) {
             // reset any Rects that were being transformed
             transformer.nodes([]); 
@@ -131,6 +145,7 @@ function annotateImage(imgSrc) {
                 stroke: "#de0bcf",
                 strokeWidth: 2,
                 draggable: true,
+                name: BBOX_ID,
             });
             layer.add(currRect);
         } 
@@ -162,27 +177,25 @@ function annotateImage(imgSrc) {
     });
 
     stage.on("mouseup", () => {
-        console.log("mouseup")
         if (!currRect) return;
 
-        // normalize coordinates relative to image
-        const rect = currRect.getClientRect();
-        const box = {
-            x0: rect.x / stage.width(),
-            y0: rect.y / stage.height(),
-            x1: (rect.x + rect.width) / stage.width(),
-            y1: (rect.y + rect.height) / stage.height(),
-        };
-
-        if (box.x1 - box.x0 < BOX_MIN_WIDTH || box.y1 - box.y0 < BOX_MIN_HEIGHT) {
-            console.log("Not counting as a box"); // debug
-            currRect.width(0);
-            currRect.height(0);
-        }
-        else { // debug
-            console.log("Box: ", box);
+        const bbox = convertToBbox(currRect, stage);
+        if (bbox.x1 - bbox.x0 < BOX_MIN_WIDTH || bbox.y1 - bbox.y0 < BOX_MIN_HEIGHT) {
+            currRect.destroy();
         }
 
         currRect = null; 
     });
+
+    return [stage, layer];
+}
+
+export function getBboxes(stage, layer) {
+    const rects = layer.find(`.${BBOX_ID}`);
+    const bboxes = [];
+    rects.forEach((rect) => {
+        const bbox = convertToBbox(rect, stage);
+        bboxes.push(bbox);
+    });
+    return bboxes;
 }

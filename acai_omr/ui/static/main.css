@@ -11,6 +11,7 @@ body {
     background-color: var(--primary-color);
     font-family: Iosevka;
     min-height: 100vh;
+    margin: 0;
 }
 
 .toggleable-section { /* section that can be popped in/out */
@@ -24,7 +25,7 @@ body {
 }
 
 .toggleable-section.active {
-    max-height: 100vh;
+    max-height: 150vh; /* can't just set to none if want transition to play */
     opacity: 1;
     visibility: visible;
     pointer-events: auto;
@@ -53,11 +54,14 @@ body {
     height: 5rem;
 }
 
-#image-form {
+form {
     display: flex;
     flex-direction: column;
-    align-content: center;
     align-items: center;
+    align-content: center;
+}
+
+#image-form {
     min-height: 5rem;
     width: 20rem;
 }
@@ -70,6 +74,23 @@ body {
 
 #image-preview {
     margin: 8px;
+}
+
+.reduced-margin {
+    margin: 4px;
+}
+
+#annotate-form {
+    overflow: auto;
+
+    h4 {
+        margin: 10px 0px 0px;
+    }
+}
+
+.large-button {
+    margin: 5px;
+    padding: 10px 20px;
 }
 
 button, input, select, textarea {
@@ -131,17 +152,6 @@ input[type="file"]::file-selector-button:hover {
 img {
     max-width: 50vh;
     max-height: 50vh;
-}
-
-#inference-form {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-
-    button {
-        margin: 5px;
-        height: 40px;
-    }
 }
 
 .centered-row {
