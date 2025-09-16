@@ -10,8 +10,11 @@ import pathlib
 class InferenceEvent(Enum):
     ENCODING_START = "encoding_start"
     ENCODING_FINISH = "encoding_finish"
-    STEP = "step" # each inference step yields both beam(s) and log prob(s)
-    INFERENCE_FINISH = "inference_finish" # include the result from the last step which we treat differently (eg only has one sequence, want to stream its score to the ui)
+    STEP = "step"
+    # INFERENCE_FINISH is sent after a single image is done. ALL_INFERENCE_FINISH is sent when all images that need
+    # to be inferred on are done (so one or more INFERENCE_FINISH events have already been sent)
+    INFERENCE_FINISH = "inference_finish"
+    ALL_INFERENCE_FINISH = "all_inference_finish"
 
 INFERENCE_EVENTS_JSON_PATH = pathlib.Path("acai_omr/ui/static/inference_events.json")
 

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Acai OMR</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
-    <script src="https://unpkg.com/konva@9/konva.min.js"></script>
+    <script src="{{ url_for('static', filename='konva.min.js' )}}"></script>
 </head>
 <body>
     <main>
@@ -33,7 +33,7 @@
                 <li>Click and drag on the image to create a bounding box</li>
                 <li>Click a box to resize or delete it</li>
                 <li>Click and drag a box to move it</li>
-                <li>Systems can overlap</li>
+                <li>Boxes can overlap</li>
             </ul>
             <div id="annotate-container"></div>
             <button type="submit" class="interactive-el large-button">Next</button>
@@ -47,9 +47,14 @@
             </div>
             <button type="submit" class="interactive-el large-button">Start inference</button>
         </form>
-        <section id="encoding-progress-view" class="toggleable-section">
+        <section id="overall-progress-view" class="toggleable-section small-side-pad">
+            <h4 class="reduced-margin">
+                Inference progress: <span id="overall-progress-count"></span>
+            </h4>
+        </section>
+        <section id="encoding-progress-view" class="toggleable-section small-side-pad">
             <div class="dot-load-wrapper">
-                <p>Encoding image latent</p>
+                <p class="reduced-margin">Encoding image latent</p>
                 <div class="dot-load-indicator">
                     <span></span>
                     <span></span>
@@ -57,7 +62,7 @@
                 </div>
             </div>
         </section>
-        <section id="token-stream-view" class="token-stream-view toggleable-section">
+        <section id="token-stream-view" class="toggleable-section small-side-pad">
             <div class="dot-load-wrapper">
                 <h3>Generating sequence</h3>
                 <div class="dot-load-indicator">
@@ -66,7 +71,7 @@
                     <span></span>
                 </div>
             </div>
-            <div class="stream-output gradient-border">
+            <div id="stream-output" class="gradient-border">
                 <div id="output-window" class="output-window"></div>
             </div>
         </section>

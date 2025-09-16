@@ -614,9 +614,14 @@ class ViTOMR(nn.Module):
 
         return seqs, seq_log_probs, seq_mask
 
-    # variant that supports streaming to UI. NOTE: as of now, this only supports batch sizes of one image at a time.
-    # Flush interval is how many tokens to buffer before sending out in stream. During inference, we yield the latest generated
-    # and buffered tokens and the whole finished sequence is yielded at the end
+    """
+    Inference variant that supports streaming to the UI. Note that for now this only supports single image inference since
+    this is so fast it's fine to sequentially run inference rather than batch them all together which avoids the much higher
+    demands for batched inference (which would prevent running the model on-device in a lot of cases and generally complicate things).
+    flush_interval is how many tokens to buffer before yielding an event to be streamed. 
+    While inference is ongoing, the tokens generated since the last flush are yielded. When inference finishes, the 
+    whole completed sequences are yielded.
+    """
     def streamed_cached_greedy_generate(self, img_latent, latent_attention_mask=None, max_len=1536, flush_interval=25):
         if img_latent.shape[0] != 1:
             raise ValueError("Streamed generation only supports single image batches")

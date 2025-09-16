@@ -242,7 +242,7 @@ class MemoryCache(nn.Module):
         
         KV_cross = F.linear(memory, W_kv, b_kv)
         K_cross, V_cross = KV_cross.chunk(2, dim=-1)
-        # split the last (embedding) dimension into heads, then transpose latent_len and num_heads to match sdpa's expected dim order.
+        # split the last (embedding) dimension into heads, then transpose memory_len and num_heads to match sdpa's expected dim order.
         # Can't just do this all in one view() because it's not easy to specify one unambiguous shape configuration that matches the intention
         # of splitting heads/transposing in one step
         K_cross = K_cross.view(batch_size, memory_len, num_heads, head_dim).transpose(1, 2)

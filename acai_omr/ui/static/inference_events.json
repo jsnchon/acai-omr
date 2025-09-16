@@ -2,5 +2,6 @@
   "ENCODING_START": "encoding_start",
   "ENCODING_FINISH": "encoding_finish",
   "STEP": "step",
-  "INFERENCE_FINISH": "inference_finish"
+  "INFERENCE_FINISH": "inference_finish",
+  "ALL_INFERENCE_FINISH": "all_inference_finish"
 }

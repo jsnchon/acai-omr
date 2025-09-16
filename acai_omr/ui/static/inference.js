@@ -1,6 +1,6 @@
 // TODOs: 
 // look into hosting on digitalocean
-// rewrite streamed inference to batched version, batch infer on split images
+// change streaming to show progress for each inference (make sure to include a lil img i out of n progress tracker somewhere)
 // test that can capture images with camera on mobile. Test with single staff systems, multiple systems, phone camera, etc
 
 import { annotateImage, getBboxes } from "./annotate_img.js";
@@ -14,7 +14,6 @@ function hideSection(elem) {
 }
 
 const startView = document.getElementById("start-view");
-
 const firstSection = startView; // first section to show. Others are kept hidden until they should be activated
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -27,6 +26,9 @@ const imageForm = document.getElementById("image-form");
 const imageUpload = document.getElementById("image-upload");
 const imagePreviewWindow = document.getElementById("image-preview-window");
 const imagePreview = document.getElementById("image-preview");
+
+const rootTempDir = await fetch("/tmpdir/create", { method: "POST" }).then((resp) => resp.json()).then((resp) => resp.path);
+console.log(`Using temporary directory ${rootTempDir} for this run`)
 
 imageUpload.addEventListener("change", (e) => {
     const imgFile = e.target.files[0];
@@ -52,15 +54,15 @@ imageForm.addEventListener("submit",
         hideSection(startView);
         
         const imgFile = imageUpload.files[0]
-        const formData = new FormData();
+        const formData = new FormData(); // FormData deals with formatting request data
         formData.append("img_file", imgFile);
+        formData.append("root_temp_dir", rootTempDir);
 
-        let resp = await fetch("/upload", {
+        const resp = await fetch("/upload", {
             method: "POST",
             body: formData
-        });
+        }).then((resp) => resp.json());
 
-        resp = await resp.json();
         console.log("Server response to image upload: ", resp);
         imgPath = resp.path;
 
@@ -70,7 +72,9 @@ imageForm.addEventListener("submit",
 );
 
 let bboxes = null;
+let totalImgs = null;
 let imgDir = null;
+
 annotateForm.addEventListener("submit", 
     async(e) => {
         e.preventDefault();
@@ -81,15 +85,15 @@ annotateForm.addEventListener("submit",
         }
         hideSection(annotateForm);
         console.log("Submitting bounding boxes: ", bboxes);
-        let resp = await fetch("/inference/setup", {
+        const resp = await fetch("/inference/setup", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
             },
-            body: JSON.stringify({ "path": imgPath, "bboxes": bboxes })
-        });
-        resp = await resp.json();
+            body: JSON.stringify({ "path": imgPath, "bboxes": bboxes, "root_temp_dir": rootTempDir })
+        }).then((resp) => resp.json());
         console.log("Server response to box submission: ", resp);
+        totalImgs = bboxes.length;
         imgDir = resp.path;
 
         showSection(settingsForm);
@@ -100,6 +104,8 @@ const settingsForm = document.getElementById("settings-form");
 const encodingProgressView = document.getElementById("encoding-progress-view");
 const tokenStreamView = document.getElementById("token-stream-view");
 const outputElem = document.getElementById("output-window");
+const overallProgressView = document.getElementById("overall-progress-view");
+const overallProgressElem = document.getElementById("overall-progress-count");
 
 settingsForm.addEventListener("submit",
     async (e) => {
@@ -111,16 +117,24 @@ settingsForm.addEventListener("submit",
         const inferenceEvents = await resp.json();
 
         const formData = new FormData(settingsForm);
-        formData.append("path", imgPath)
+        formData.append("path", imgDir)
         const params = new URLSearchParams(formData);
-        
+
         console.log("Starting inference stream");
         const source = new EventSource(`/inference/stream?${params.toString()}`);
 
+        updateOverallProgress(overallProgressElem, 0, totalImgs);
+        showSection(overallProgressView);
         streamInference(source, inferenceEvents);
         handleStreamEnd(source, inferenceEvents);
    }
 );
+
+function updateOverallProgress(overallProgressElem, doneCount, totalCount) {
+    overallProgressElem.textContent = `${doneCount}/${totalCount}`;
+}
+
+let seqs = []; // list of [sequence, average confidence] lists
 
 function streamInference(source, inferenceEvents) {
     source.addEventListener("message", (e) => {
@@ -139,6 +153,15 @@ function streamInference(source, inferenceEvents) {
             case inferenceEvents.STEP:
                 displayTokenStream(outputElem, eventObj);
                 break;
+
+            case inferenceEvents.INFERENCE_FINISH:
+                // update progress counter, reset for the start of the next inference
+                seqs.push([eventObj.payload.sequence, eventObj.payload.averageConfidence]);
+                updateOverallProgress(overallProgressElem, seqs.length, totalImgs);
+
+                outputElem.replaceChildren([]);
+                hideSection(tokenStreamView);
+                break;
        }
     });
 }
@@ -146,7 +169,7 @@ function streamInference(source, inferenceEvents) {
 function displayTokenStream(outputElem, inferenceStepEvent) {
     const tokens = inferenceStepEvent.payload.tokens.split(" ");
     tokens.forEach((token, i) => {
-        let textDisplay = document.createElement("span");
+        const textDisplay = document.createElement("span");
         textDisplay.textContent = token + " ";
         textDisplay.classList.add("slide-in");
         textDisplay.style.opacity = 0;
@@ -161,10 +184,14 @@ const resultView = document.getElementById("result-view")
 function handleStreamEnd(source, inferenceEvents) {
     source.addEventListener("message", (e) => {
         const eventObj = JSON.parse(e.data);
-        if (eventObj.type === inferenceEvents.INFERENCE_FINISH) {
+        if (eventObj.type === inferenceEvents.ALL_INFERENCE_FINISH) {
             console.log("Inference stream finished; closing stream source");
             source.close();
 
+            seqs.forEach((seq) => {
+                console.log(seq);
+
+            });
             
             // do more stuff: 
             // 1) send request to endpoint that converts to lmx, musicxml, and reconstructed img files

@@ -49,8 +49,8 @@ def convert_back_to_img(xml_file_path: str, img_file_path: str):
     return img_file_path
 
 def streamed_inference(
-    vitomr: ViTOMR, 
     img: torch.Tensor, 
+    vitomr: ViTOMR, 
     device, 
     max_inference_len=1536,
     flush_interval=25):
@@ -59,6 +59,7 @@ def streamed_inference(
     with torch.no_grad():
         logger.debug("Encoding image into latent")
         yield {"type": InferenceEvent.ENCODING_START.value, "payload": None}
+        # don't autocast this because encoder uses some non autocastable path in eval() mode
         img_latent, latent_attention_mask = vitomr.encoder(img)
         with autocast(device_type=device, dtype=torch.bfloat16):
             img_latent = vitomr.transition_head(img_latent)

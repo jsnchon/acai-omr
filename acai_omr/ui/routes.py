@@ -1,6 +1,5 @@
 import torch
 from flask import Blueprint, render_template, request, Response
-from werkzeug.utils import secure_filename
 from acai_omr.inference.vitomr_inference import streamed_inference, convert_back_to_img
 from acai_omr.config import INFERENCE_VITOMR_PATH
 from acai_omr.train.omr_teacher_force_train import set_up_omr_teacher_force_train
@@ -13,6 +12,7 @@ from PIL import Image
 from pathlib import Path
 import json
 import os
+import re
 
 main = Blueprint("main", __name__)
 logger = logging.getLogger(__name__)
@@ -46,20 +46,26 @@ if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
 def index():
     return render_template("index.html", weights_path=INFERENCE_VITOMR_PATH)
 
+@main.route("/tmpdir/create", methods=["POST"]) # create temp dir for this whole inference run (includes temp files and other temp dirs)
+def create_root_temp_dir():
+    root_temp_dir = tempfile.TemporaryDirectory(delete=False)
+    return {"path": root_temp_dir.name}
+
 @main.route("/upload", methods=["POST"])
 def upload_img():
     f = request.files["img_file"]
-    disk_f = tempfile.NamedTemporaryFile(delete=False)
+    root_temp_dir = request.form["root_temp_dir"]
+    disk_f = tempfile.NamedTemporaryFile(dir=root_temp_dir, delete=False)
     f.save(disk_f)
     disk_f.close()
-    file_path = disk_f.name
+    file_path = str(Path(root_temp_dir) / disk_f.name)
     logger.debug(f"Image saved to {file_path}")
     return {"path": file_path}
 
 # SSE wrapper that post-processes and then yields events yielded by inference.
 # Again, we assume there's only one sequence being passed here at a time
-def stream_inference_wrapper(vitomr, img, device, max_inference_len, flush_interval):
-    for event in streamed_inference(vitomr, img, device, max_inference_len, flush_interval):
+def stream_inference_wrapper(img, vitomr, device, max_inference_len, flush_interval):
+    for event in streamed_inference(img, vitomr, device, max_inference_len, flush_interval):
         logger.debug(f"Inference event: {event}")
         if event["type"] == InferenceEvent.STEP.value:
             tokens = event["payload"]["tokens"]
@@ -75,9 +81,27 @@ def stream_inference_wrapper(vitomr, img, device, max_inference_len, flush_inter
             seq_log_probs = event["payload"]["log_probs"]
             average_log_prob = seq_log_probs.sum() / seq_mask.sum()
             average_confidence = torch.exp(average_log_prob).item()
-            event["payload"] = {"sequence": sequence, "average_confidence": average_confidence}
+            event["payload"] = {"sequence": sequence, "averageConfidence": average_confidence}
         
-        yield f"data: {json.dumps(event)}\n\n"
+        yield event
+
+"""
+Wrapper for multiple images. Takes a string of the path to the directory containing the images to run inference on. This
+assumes this directory was created by /inference/setup, meaning images have been labelled according to their order in 
+the original whole page. Different events will be yielded for when one image's inference as finished and when all images are finished
+"""
+def multiple_img_stream_inference_wrapper(img_dir, vitomr, device, max_inference_len, flush_interval):
+    img_dir = Path(img_dir)
+    # images should be labelled numerically in increasing order. Search for then sort based off of the int in their file name
+    for img in sorted(img_dir.iterdir(), key=lambda x: int(re.search(r"\d+", x.name).group(0))):
+        logger.debug(f"Running inference on image {img}")
+        img = Image.open(img).convert("L")
+        img = base_img_transform(img).to(device)
+        
+        for event in stream_inference_wrapper(img, vitomr, device, max_inference_len, flush_interval):
+            yield f"data: {json.dumps(event)}\n\n"
+
+    yield f"data: {json.dumps({"type": InferenceEvent.ALL_INFERENCE_FINISH.value, "payload": None})}\n\n"
 
 # given the path to the original unsplit image and the submitted bounding boxes, crop the image at each bounding box and 
 # return a path to a directory containing the split images
@@ -86,41 +110,40 @@ def setup_inference():
     data = request.json
     img_path = data["path"]
     bboxes = data["bboxes"]
+    root_temp_dir = Path(data["root_temp_dir"])
     logger.debug(f"Received bboxes {bboxes} for img at {img_path}")
     unsplit_img = Image.open(img_path).convert("L")
-    tmpdir = tempfile.TemporaryDirectory(delete=False)
-    tmpdir_path = Path(tmpdir.name)
-    # sort from top-most to bottom-most
+    tmpdir = tempfile.TemporaryDirectory(dir=root_temp_dir, delete=False)
+    splits_tmpdir_path = Path(tmpdir.name)
+    # sort from top-most to bottom-most bounding boxes
     bboxes = sorted(bboxes, key=lambda x: x["y0"])
 
-    logger.debug(f"Splitting images and saving to {str(tmpdir_path)}")
+    logger.debug(f"Splitting images and saving to {str(splits_tmpdir_path)}")
     for i, bbox in enumerate(bboxes):
         split_img = unsplit_img.crop((bbox["x0"] * unsplit_img.width, bbox["y0"] * unsplit_img.height, bbox["x1"] * unsplit_img.width, bbox["y1"] * unsplit_img.height))
-        split_img.save(tmpdir_path / f"system_{i}.png")
+        split_img.save(splits_tmpdir_path / f"system_{i}.png")
 
-    return {"path": str(tmpdir_path)}
+    return {"path": str(splits_tmpdir_path)}
 
 @main.route("/inference/stream")
 def stream_inference():
     max_inference_len = int(request.args.get("max_inference_len", 1536))
-    img_path = request.args.get("path")
-
-    img = Image.open(img_path).convert("L")
-    img = base_img_transform(img).to(device)
+    img_dir = request.args.get("path")
 
     logger.info(f"Starting inference with max length {max_inference_len} and streaming from endpoint with a flush interval of {flush_interval}")
-    return Response(stream_inference_wrapper(vitomr, img, device, max_inference_len, flush_interval), mimetype="text/event-stream")
+    return Response(multiple_img_stream_inference_wrapper(img_dir, vitomr, device, max_inference_len, flush_interval), mimetype="text/event-stream")
 
 # convert decoded lmx sequence into delinearized musicxml and reconstructed image, store as tempfiles and return their paths
-@main.route("/prepare_results", methods=["POST"])
+@main.route("/results/prepare", methods=["POST"])
 def prepare_results():
     data = request.json
     sequence = data["sequence"]
-    lmx_tempfile = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
-    lmx_tempfile.write(sequence)
-    lmx_tempfile.close()
 
     musicxml = direct_delinearize(sequence)
     musicxml_tempfile = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
     musicxml_tempfile.write(musicxml)
     musicxml_tempfile.close()
+
+    reconstructed_img_path = convert_back_to_img(musicxml.name, )
+
+    # return musicxml and reconstructed path

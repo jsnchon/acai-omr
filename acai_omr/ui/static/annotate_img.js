@@ -5,7 +5,7 @@ const BACKGROUND_MAX_HEIGHT = 1500;
 const BOX_MIN_WIDTH = 0.01;
 const BOX_MIN_HEIGHT = 0.01;
 
-const BBOX_ID = "bbox"; // id string for created Rects so they can be filtered from layer
+const BBOX_NAME = "bbox"; // id string for created Rects so they can be filtered from layer
 
 function setUpStage(imgSrc) {
     const stage = new Konva.Stage({
@@ -145,7 +145,7 @@ export function annotateImage(imgSrc) {
                 stroke: "#de0bcf",
                 strokeWidth: 2,
                 draggable: true,
-                name: BBOX_ID,
+                name: BBOX_NAME,
             });
             layer.add(currRect);
         } 
@@ -180,6 +180,7 @@ export function annotateImage(imgSrc) {
         if (!currRect) return;
 
         const bbox = convertToBbox(currRect, stage);
+        // ignore clicks/drags that create too small of boxes
         if (bbox.x1 - bbox.x0 < BOX_MIN_WIDTH || bbox.y1 - bbox.y0 < BOX_MIN_HEIGHT) {
             currRect.destroy();
         }
@@ -191,7 +192,7 @@ export function annotateImage(imgSrc) {
 }
 
 export function getBboxes(stage, layer) {
-    const rects = layer.find(`.${BBOX_ID}`);
+    const rects = layer.find(`.${BBOX_NAME}`);
     const bboxes = [];
     rects.forEach((rect) => {
         const bbox = convertToBbox(rect, stage);
