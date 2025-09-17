@@ -11,7 +11,6 @@ import tempfile
 from PIL import Image
 from pathlib import Path
 import json
-import os
 import re
 import subprocess
 import base64
@@ -23,27 +22,22 @@ logger = logging.getLogger(__name__)
 MAX_BATCH_SIZE = 1
 CACHE_DTYPE = torch.bfloat16
 
-# TODO: this model loading code doesn't work when the app isn't run with --debug
+vitomr, base_img_transform, _, device = set_up_omr_teacher_force_train()
+logger.info(f"Enabling caching for decoder with a max batch size of {MAX_BATCH_SIZE} and cache datatype of {CACHE_DTYPE}")
+vitomr.decoder = vitomr.decoder.to_cached_version(MAX_BATCH_SIZE, CACHE_DTYPE)
 
-# without this, in debug mode flask runs import statements twice in two processes which means the model is duplicated and
-# takes up too much memory
-if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
-    vitomr, base_img_transform, _, device = set_up_omr_teacher_force_train()
-    logger.info(f"Enabling caching for decoder with a max batch size of {MAX_BATCH_SIZE} and cache datatype of {CACHE_DTYPE}")
-    vitomr.decoder = vitomr.decoder.to_cached_version(MAX_BATCH_SIZE, CACHE_DTYPE)
-    
-    logger.info(f"Loading state dict from {INFERENCE_VITOMR_PATH}")
-    if device == "cpu":
-        vitomr_state_dict = torch.load(INFERENCE_VITOMR_PATH, map_location=torch.device("cpu"))
-    else:
-        vitomr_state_dict = torch.load(INFERENCE_VITOMR_PATH)
+logger.info(f"Loading state dict from {INFERENCE_VITOMR_PATH}")
+if device == "cpu":
+    vitomr_state_dict = torch.load(INFERENCE_VITOMR_PATH, map_location=torch.device("cpu"))
+else:
+    vitomr_state_dict = torch.load(INFERENCE_VITOMR_PATH)
 
-    vitomr.load_state_dict(vitomr_state_dict)
+vitomr.load_state_dict(vitomr_state_dict)
 
-    if device == "cpu":
-        flush_interval = 25
-    else:
-        flush_interval = 50 # buffer GPUs more
+if device == "cpu":
+    flush_interval = 25
+else:
+    flush_interval = 50 # buffer GPUs more
 
 @main.route("/")
 def index():
@@ -62,7 +56,7 @@ def upload_img():
     f.save(disk_f)
     disk_f.close()
     file_path = str(Path(root_temp_dir) / disk_f.name)
-    logger.debug(f"User uploaded iUser uploaded image saved to {file_path}")
+    logger.debug(f"User uploaded image saved to {file_path}")
     return {"path": file_path}
 
 # SSE wrapper that post-processes and then yields events yielded by inference.
