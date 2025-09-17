@@ -72,11 +72,24 @@
                 </div>
             </div>
             <div id="stream-output" class="gradient-border">
-                <div id="output-window" class="output-window"></div>
+                <div id="output-window" class="space-text"></div>
             </div>
         </section>
-        <section id="result-view" class="result-view">
+        <section id="result-view" class="toggleable-section small-side-pad">
+            <section>
+                <h4>Complete lmx sequence:</h4>
+                <div class="simple-box">
+                    <span id="final-lmx-display" class="space-text"></span>
+                </div>
+                <h4>Average confidence per token: <span id="average-confidence-display"></span></h4>
+            </section>
 
+            <section>
+                <h3>Transcribed score:</h3>
+                <div id="final-images-display">
+                    <button id="start-over-button" class="interactive-el">Start over</button>
+                </div>
+            </section>
         </section>
         <script src="{{ url_for('static', filename='inference.js') }}" type="module"></script>
     </main>

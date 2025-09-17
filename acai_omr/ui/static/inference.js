@@ -1,7 +1,6 @@
 // TODOs: 
 // look into hosting on digitalocean
-// change streaming to show progress for each inference (make sure to include a lil img i out of n progress tracker somewhere)
-// test that can capture images with camera on mobile. Test with single staff systems, multiple systems, phone camera, etc
+// test that can capture images with camera on mobile + test with single staff systems, multiple systems, phone camera, etc
 
 import { annotateImage, getBboxes } from "./annotate_img.js";
 
@@ -134,7 +133,8 @@ function updateOverallProgress(overallProgressElem, doneCount, totalCount) {
     overallProgressElem.textContent = `${doneCount}/${totalCount}`;
 }
 
-let seqs = []; // list of [sequence, average confidence] lists
+let seqs = []; 
+let avgLogProbs = [];
 
 function streamInference(source, inferenceEvents) {
     source.addEventListener("message", (e) => {
@@ -156,7 +156,8 @@ function streamInference(source, inferenceEvents) {
 
             case inferenceEvents.INFERENCE_FINISH:
                 // update progress counter, reset for the start of the next inference
-                seqs.push([eventObj.payload.sequence, eventObj.payload.averageConfidence]);
+                seqs.push(eventObj.payload.sequence);
+                avgLogProbs.push(eventObj.payload.avgLogProb);
                 updateOverallProgress(overallProgressElem, seqs.length, totalImgs);
 
                 outputElem.replaceChildren([]);
@@ -178,25 +179,80 @@ function displayTokenStream(outputElem, inferenceStepEvent) {
     });
 }
 
-const resultView = document.getElementById("result-view")
+function prepareResultView(resultView, finalLmxSeq, avgConfidence, finalImgs) {
+    const finalLmxDisplay = resultView.querySelector("#final-lmx-display");
+    const averageConfidenceDisplay = resultView.querySelector("#average-confidence-display")
+    const finalImgsDisplay = resultView.querySelector("#final-images-display");
+    const startOverButton = resultView.querySelector("#start-over-button");
+
+    finalLmxDisplay.textContent = finalLmxSeq;
+    averageConfidenceDisplay.textContent = avgConfidence;
+
+    const imgDisplayChildren = [];
+    finalImgs.forEach((encodedImg) => {
+      const img = document.createElement("img");
+      img.src = `data:image/png;base64,${encodedImg}`;
+      imgDisplayChildren.push(img);
+    });
+    finalImgsDisplay.replaceChildren(...imgDisplayChildren);
+    finalImgsDisplay.appendChild(startOverButton);
+
+    startOverButton.addEventListener("click", () => {
+        location.reload();
+    });
+}
+
+const resultView = document.getElementById("result-view");
 
 // listener that deals with the rest of the flow after inference finishes
 function handleStreamEnd(source, inferenceEvents) {
-    source.addEventListener("message", (e) => {
+    source.addEventListener("message", async (e) => {
         const eventObj = JSON.parse(e.data);
         if (eventObj.type === inferenceEvents.ALL_INFERENCE_FINISH) {
             console.log("Inference stream finished; closing stream source");
             source.close();
+            hideSection(overallProgressView);
 
-            seqs.forEach((seq) => {
-                console.log(seq);
+            const resp = await fetch("/inference/postprocess", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    "sequences": seqs,
+                    "avg_log_probs": avgLogProbs,
+                    "root_temp_dir": rootTempDir,
+                })
+            }).then((resp) => resp.json());
+            console.log("Server response to inference postprocess request: ", resp);
 
+            const finalLmxSeq = resp.finalLmxSeq;
+            const avgConfidence = resp.avgConfidence;
+            const musicxmlPath = resp.musicxmlPath;
+            const finalImgs = resp.finalImgs;
+
+            await fetch("/download", { 
+                method: "POST", 
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ "path": musicxmlPath })
+            }).then((resp) => resp.blob()).then((blob) => {
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = "result.musicxml";
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    window.URL.revokeObjectURL(url);
             });
-            
-            // do more stuff: 
-            // 1) send request to endpoint that converts to lmx, musicxml, and reconstructed img files
-            // 2) display all the results in a window, send musicxml file to user
+            await fetch("/clear", { 
+                method: "PUT", 
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ "path": rootTempDir })
+            });
 
+            prepareResultView(resultView, finalLmxSeq, avgConfidence, finalImgs);
+            showSection(resultView);
         }
     });
 }

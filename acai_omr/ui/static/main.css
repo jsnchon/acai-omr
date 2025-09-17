@@ -74,6 +74,8 @@ form {
 }
 
 #image-preview {
+    max-width: 50vh;
+    max-height: 50vh;
     margin: 8px;
 }
 
@@ -87,6 +89,7 @@ form {
     h4 {
         margin: 10px 0px 0px;
     }
+
     button {
         margin: 10px;
     }
@@ -151,11 +154,6 @@ input[type="file"]::file-selector-button {
 
 input[type="file"]::file-selector-button:hover {
     background-color: var(--accent-color); 
-}
-
-img {
-    max-width: 50vh;
-    max-height: 50vh;
 }
 
 .centered-row {
@@ -232,12 +230,15 @@ img {
 
 /* Container containing the actual tokens, each wrapped by a span (so they can be individually animated) which are inline
 with other spans. Parent container will center this container */
-.output-window {
+#output-window {
     min-height: 0.5em;
     display: inline-block; 
     text-align: left;
-    line-height: 1.5;
     white-space: pre-wrap;
+}
+
+.space-text {
+    line-height: 1.5;
 }
 
 @keyframes rotate {
@@ -262,5 +263,31 @@ with other spans. Parent container will center this container */
     }
     to {
         opacity: 1;
+    }
+}
+
+#result-view {
+    display: flex;
+    flex-direction: column;
+    overflow: auto;
+}
+
+.simple-box {
+    border: 3px solid var(--accent-color);
+    border-radius: 8px;
+    background-color: var(--lighter-primary-color);
+    padding: 0.75rem;
+}
+
+#final-images-display {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    margin: 1rem;
+
+    img {
+        max-height: 75vh;
+        max-width: 75vh;
     }
 }

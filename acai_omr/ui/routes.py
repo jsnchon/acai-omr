@@ -1,6 +1,6 @@
 import torch
-from flask import Blueprint, render_template, request, Response
-from acai_omr.inference.vitomr_inference import streamed_inference, convert_back_to_img
+from flask import Blueprint, render_template, request, Response, send_file
+from acai_omr.inference.vitomr_inference import streamed_inference
 from acai_omr.config import INFERENCE_VITOMR_PATH
 from acai_omr.train.omr_teacher_force_train import set_up_omr_teacher_force_train
 from acai_omr.__init__ import InferenceEvent
@@ -13,6 +13,9 @@ from pathlib import Path
 import json
 import os
 import re
+import subprocess
+import base64
+import shutil
 
 main = Blueprint("main", __name__)
 logger = logging.getLogger(__name__)
@@ -59,7 +62,7 @@ def upload_img():
     f.save(disk_f)
     disk_f.close()
     file_path = str(Path(root_temp_dir) / disk_f.name)
-    logger.debug(f"Image saved to {file_path}")
+    logger.debug(f"User uploaded iUser uploaded image saved to {file_path}")
     return {"path": file_path}
 
 # SSE wrapper that post-processes and then yields events yielded by inference.
@@ -79,9 +82,8 @@ def stream_inference_wrapper(img, vitomr, device, max_inference_len, flush_inter
             sequence = stringify_lmx_seq(sequence.squeeze(0), vitomr.decoder.idxs_to_tokens)
             logger.info("Inference finished")
             seq_log_probs = event["payload"]["log_probs"]
-            average_log_prob = seq_log_probs.sum() / seq_mask.sum()
-            average_confidence = torch.exp(average_log_prob).item()
-            event["payload"] = {"sequence": sequence, "averageConfidence": average_confidence}
+            avg_log_prob = (seq_log_probs.sum() / seq_mask.sum()).item()
+            event["payload"] = {"sequence": sequence, "avgLogProb": avg_log_prob}
         
         yield event
 
@@ -133,17 +135,70 @@ def stream_inference():
     logger.info(f"Starting inference with max length {max_inference_len} and streaming from endpoint with a flush interval of {flush_interval}")
     return Response(multiple_img_stream_inference_wrapper(img_dir, vitomr, device, max_inference_len, flush_interval), mimetype="text/event-stream")
 
-# convert decoded lmx sequence into delinearized musicxml and reconstructed image, store as tempfiles and return their paths
-@main.route("/results/prepare", methods=["POST"])
+"""
+Given a path to a musicxml file, converts that to a list of base64 encoded image(s). By default, the musescore
+CLI renders images with a transparent background, so we convert its output to a png with a white background using
+imagemagick
+"""
+def musicxml_to_imgs(xml_file_path: Path, root_temp_dir: Path):
+    result = []
+
+    logger.info(f"Converting {xml_file_path} to base64 image(s)")
+    musescore_out_stem = "musecore_out.png"
+    with tempfile.TemporaryDirectory(dir=root_temp_dir) as imgs_temp_dir_name:
+        logger.debug(f"Created {imgs_temp_dir_name} temporary directory for musescore CLI outputs")
+        subprocess.run(["musescore3", "-o", Path(imgs_temp_dir_name) / musescore_out_stem, xml_file_path])
+        musescore_outputs = list(Path(imgs_temp_dir_name).iterdir())
+        # in the event musescore outputs multiple files, the stem will have numerical suffixes appended to it corresponding to page numbers
+        if len(musescore_outputs) != 1:
+            musescore_outputs = sorted(musescore_outputs, key=lambda x: int(re.search(r"\d+", x.name).group(0)))
+
+        for i, musescore_out in enumerate(musescore_outputs):
+            logger.debug(f"Converting file {musescore_out} to final png")
+            final_img_name = Path(imgs_temp_dir_name) / f"page_{i}.png"
+            subprocess.run(["convert", musescore_out, "-background", "white", "-alpha", "remove", "-alpha", "off", final_img_name])
+
+            with open(final_img_name, "rb") as f:
+                final_img = f.read()
+
+            final_img = base64.b64encode(final_img).decode("utf-8")
+            result.append(final_img)
+    logger.info("Final image(s) encoded into base64")
+    return result
+
+# given a list of lmx sequences, do the following: concatenate the sequences, delinearize, convert back to image(s), encode 
+# everything into base64 strings, respond with that
+@main.route("/inference/postprocess", methods=["POST"])
 def prepare_results():
     data = request.json
-    sequence = data["sequence"]
+    seqs = data["sequences"]
+    avg_log_probs = data["avg_log_probs"]
+    root_temp_dir = Path(data["root_temp_dir"])
 
-    musicxml = direct_delinearize(sequence)
-    musicxml_tempfile = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
+    final_seq = " ".join(seqs)
+
+    musicxml = direct_delinearize(final_seq)
+    musicxml_tempfile = tempfile.NamedTemporaryFile(mode="tw", dir=root_temp_dir, delete=False, suffix=".musicxml")
     musicxml_tempfile.write(musicxml)
+    logger.debug(f"Wrote musicxml to {musicxml_tempfile.name}")
     musicxml_tempfile.close()
+    musicxml_path = root_temp_dir / musicxml_tempfile.name
 
-    reconstructed_img_path = convert_back_to_img(musicxml.name, )
+    final_imgs = musicxml_to_imgs(musicxml_path, root_temp_dir)
 
-    # return musicxml and reconstructed path
+    avg_confidence = torch.exp(torch.tensor(sum(avg_log_probs) / len(avg_log_probs))).item()
+
+    return {"finalLmxSeq": final_seq, "avgConfidence": avg_confidence, "musicxmlPath": musicxml_tempfile.name, "finalImgs": final_imgs}
+
+@main.route("/download", methods=["POST"])
+def download_file():
+    file_path = request.json["path"]
+    logger.info(f"Sending file located at {file_path}")
+    return send_file(file_path, as_attachment=True, download_name="result.musicxml")
+
+@main.route("/clear", methods=["PUT"])
+def clear_tempdir():
+    dir_path = request.json["path"]
+    logger.info(f"Clearing directory located at {dir_path}")
+    shutil.rmtree(dir_path)
+    return {"status": "ok"}
