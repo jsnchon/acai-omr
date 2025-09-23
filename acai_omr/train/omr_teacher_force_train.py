@@ -27,8 +27,8 @@ LMX_VOCAB_PATH = "lmx_vocab.txt"
 NUM_DECODER_LAYERS = 12
 
 # training settings
-EPOCHS = 45
-CHECKPOINT_FREQ = 5
+EPOCHS = 50
+CHECKPOINT_FREQ = 10
 FINE_TUNE_BASE_LR = 1e-5 # 0.1x base lr
 FINE_TUNE_DECAY_FACTOR = 0.9
 BASE_LR = 1e-4
@@ -49,10 +49,10 @@ LABEL_SMOOTHING = 0.0
 
 # teacher forcing/scheduled sampling settings. Teacher forcing prob decreases linearly, tau decreases exponentially
 INITIAL_TEACHER_FORCING_PROB = 1.0
-MIN_TEACHER_FORCING_PROB = 0.25
+MIN_TEACHER_FORCING_PROB = 0.1
 INITIAL_TAU = 5.0
 MIN_TAU = 0.1
-TF_ANNEAL_EPOCHS = 35 # number of epochs to anneal tf prob and tau down to. Remaining epochs, they'll remain at their floor
+TF_ANNEAL_EPOCHS = 40 # number of epochs to anneal tf prob and tau down to. Remaining epochs, they'll remain at their floor
 SOFT_EPOCHS = EPOCHS // 2
 
 @dataclass
