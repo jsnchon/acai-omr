@@ -32,6 +32,12 @@ ScheduledSamplingViTOMR(
       (norm): LayerNorm((768,), eps=1e-06, elementwise_affine=True)
     )
   )
+  (transition_head): Sequential(
+    (0): Linear(in_features=768, out_features=4096, bias=True)
+    (1): GELU(approximate='none')
+    (2): Dropout(p=0.05, inplace=False)
+    (3): Linear(in_features=4096, out_features=1024, bias=True)
+  )
   (decoder): OMRDecoder(
     (vocab_embedding): Embedding(227, 1024, padding_idx=1)
     (decoder_blocks): TransformerDecoder(
@@ -58,12 +64,6 @@ ScheduledSamplingViTOMR(
     )
     (unembed): Linear(in_features=1024, out_features=227, bias=True)
   )
-  (transition_head): Sequential(
-    (0): Linear(in_features=768, out_features=4096, bias=True)
-    (1): GELU(approximate='none')
-    (2): Dropout(p=0.05, inplace=False)
-    (3): Linear(in_features=4096, out_features=1024, bias=True)
-  )
 )
 Setting up test dataset and dataloader
 Using a batch size of 64 and 24 workers
@@ -75,20 +75,4 @@ Starting evaluation
 [ 6464/10647]
 [ 8064/10647]
 [ 9664/10647]
-Average test loss: 0.06128193112369069
-Creating directory at preds if it already doesn't exist
-Saving input image to preds/sample_0/input_image.png
-Saving predicted token sequence to preds/sample_0/pred.txt
-Saving target token sequence to preds/sample_0/target_seq.txt
-Saving input image to preds/sample_1/input_image.png
-Saving predicted token sequence to preds/sample_1/pred.txt
-Saving target token sequence to preds/sample_1/target_seq.txt
-Saving input image to preds/sample_2/input_image.png
-Saving predicted token sequence to preds/sample_2/pred.txt
-Saving target token sequence to preds/sample_2/target_seq.txt
-Saving input image to preds/sample_3/input_image.png
-Saving predicted token sequence to preds/sample_3/pred.txt
-Saving target token sequence to preds/sample_3/target_seq.txt
-Saving input image to preds/sample_4/input_image.png
-Saving predicted token sequence to preds/sample_4/pred.txt
-Saving target token sequence to preds/sample_4/target_seq.txt
+Average test loss: 0.06158203116344835

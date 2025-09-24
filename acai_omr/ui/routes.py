@@ -8,7 +8,7 @@ from acai_omr.utils.utils import stringify_lmx_seq
 from olimpic_app.linearization.Delinearizer import direct_delinearize
 import logging  
 import tempfile
-from PIL import Image
+from PIL import Image, ImageOps
 from pathlib import Path
 import json
 import re
@@ -109,6 +109,9 @@ def setup_inference():
     root_temp_dir = Path(data["root_temp_dir"])
     logger.debug(f"Received bboxes {bboxes} for img at {img_path}")
     unsplit_img = Image.open(img_path).convert("L")
+    # phone captured JPEGs may not actually be rotated and instead depend on EXIF metadata to display properly. To ensure proper cropping
+    # in this case, apply exif_transpose
+    unsplit_img = ImageOps.exif_transpose(unsplit_img)
     tmpdir = tempfile.TemporaryDirectory(dir=root_temp_dir, delete=False)
     splits_tmpdir_path = Path(tmpdir.name)
     # sort from top-most to bottom-most bounding boxes
