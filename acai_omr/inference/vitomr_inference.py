@@ -56,6 +56,7 @@ def streamed_inference(
     flush_interval=25):
 
     vitomr.eval()
+    logger.debug(f"Image tensor shape: {img.shape}")
     with torch.no_grad():
         logger.debug("Encoding image into latent")
         yield {"type": InferenceEvent.ENCODING_START.value, "payload": None}

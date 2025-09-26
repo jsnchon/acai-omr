@@ -144,6 +144,7 @@ export function annotateImage(imgSrc) {
                 height: 0,
                 stroke: "#de0bcf",
                 strokeWidth: 2,
+                strokeScaleEnabled: false,
                 draggable: true,
                 name: BBOX_NAME,
             });

@@ -21,13 +21,13 @@ CHECKPOINTS_DIR_PATH = MODEL_DIR_PATH / "checkpoints"
 
 PRETRAINED_MAE_STATE_DICT_PATH = "mae_pre_train/pretrained_mae.pth"
 ENCODER_FINE_TUNE_DEPTH = 12
-MAX_IMG_SEQ_LEN = 512 # for DynamicResize
+MAX_IMG_SEQ_LEN = 1024 # for DynamicResize
 MAX_LMX_SEQ_LEN = 1536 # in tokens, max lmx token sequence length to support
 LMX_VOCAB_PATH = "lmx_vocab.txt"
 NUM_DECODER_LAYERS = 12
 
 # training settings
-EPOCHS = 60
+EPOCHS = 40
 CHECKPOINT_FREQ = 10
 FINE_TUNE_BASE_LR = 1e-5 # 0.1x base lr
 FINE_TUNE_DECAY_FACTOR = 0.9
@@ -35,13 +35,13 @@ BASE_LR = 1e-4
 MIN_LR = 1e-6
 ADAMW_BETAS = (0.9, 0.95)
 ADAMW_WEIGHT_DECAY = 0.01
-WARMUP_EPOCHS = 3 # step scheduler per-batch since doing so little epochs
-BATCH_SIZE = 16
-GRAD_ACCUMULATION_STEPS = 4
+WARMUP_EPOCHS = 2 # step scheduler per-batch since doing so little epochs
+BATCH_SIZE = 8
+GRAD_ACCUMULATION_STEPS = 8
 NUM_WORKERS = 26
 
 # regularization settings
-AUGMENTATION_P = 0.4
+AUGMENTATION_P = 0.5
 ENCODER_DROPOUT = 0.05
 TRANSITION_HEAD_DROPOUT = 0.05
 DECODER_DROPOUT = 0.1
@@ -49,10 +49,10 @@ LABEL_SMOOTHING = 0.0
 
 # teacher forcing/scheduled sampling settings. Teacher forcing prob decreases linearly, tau decreases exponentially
 INITIAL_TEACHER_FORCING_PROB = 1.0
-MIN_TEACHER_FORCING_PROB = 0.1
+MIN_TEACHER_FORCING_PROB = 0.0
 INITIAL_TAU = 5.0
 MIN_TAU = 0.1
-TF_ANNEAL_EPOCHS = 50 # number of epochs to anneal tf prob and tau down to. Remaining epochs, they'll remain at their floor
+TF_ANNEAL_EPOCHS = 35 # number of epochs to anneal tf prob and tau down to. Remaining epochs, they'll remain at their floor
 SOFT_EPOCHS = EPOCHS // 2
 
 @dataclass

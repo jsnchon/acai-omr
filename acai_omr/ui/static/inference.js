@@ -190,9 +190,9 @@ function prepareResultView(resultView, finalLmxSeq, avgConfidence, finalImgs) {
 
     const imgDisplayChildren = [];
     finalImgs.forEach((encodedImg) => {
-      const img = document.createElement("img");
-      img.src = `data:image/png;base64,${encodedImg}`;
-      imgDisplayChildren.push(img);
+        const img = document.createElement("img");
+        img.src = `data:image/png;base64,${encodedImg}`;
+        imgDisplayChildren.push(img);
     });
     finalImgsDisplay.replaceChildren(...imgDisplayChildren);
     finalImgsDisplay.appendChild(startOverButton);
