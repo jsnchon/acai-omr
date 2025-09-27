@@ -4,7 +4,6 @@
 # this assumes the poetry venv has already been set up 
 # positional args: [absolute path to project root directory] [root domain name]
 
-APP_USER="acai-omr-user"
 APP_NAME="acai-omr"
 SOCKET_FILE_PATH="/run/$APP_NAME.sock"
 
@@ -19,9 +18,6 @@ echo "Installing apt dependencies"
 sudo apt update && sudo apt upgrade -y
 sudo apt install nginx && sudo apt install musescore3 && sudo apt install imagemagick && sudo apt install certbot python3-certbot-nginx -y
 
-echo "Creating user to run services under"
-sudo adduser --system --group "$APP_USER"
-
 # include /usr/bin in environment PATH for musescore/imagemagick cli and use gevent workers for SSE support
 echo "Creating gunicorn service file"
 gunicorn_file_path="/etc/systemd/system/$APP_NAME.service"
@@ -31,7 +27,7 @@ Description=Gunicorn worker to serve Flask app
 After=network.target
 
 [Service]
-User=$APP_USER
+User=root
 Group=www-data
 WorkingDirectory=$root_dir
 Environment="PATH=$venv_path/bin/:/usr/bin/" 
