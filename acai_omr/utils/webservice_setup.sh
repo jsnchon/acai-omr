@@ -31,7 +31,7 @@ User=root
 Group=www-data
 WorkingDirectory=$root_dir
 Environment="PATH=$venv_path/bin/:/usr/bin/" 
-ExecStart=$venv_path/bin/gunicorn --worker-class gevent --workers 1 --bind unix:$SOCKET_FILE_PATH -m 007 "acai_omr.wsgi:app" 
+ExecStart=$venv_path/bin/gunicorn --timeout 0 --worker-class gevent --workers 1 --bind unix:$SOCKET_FILE_PATH -m 007 "acai_omr.wsgi:app" 
 
 [Install]
 WantedBy=multi-user.target
