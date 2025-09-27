@@ -17,8 +17,10 @@
             </div>
             <h4>An optical music recognition model for pianoform music</h4>
             <form id="image-form">
-                <label for="image-upload" class="center-text">Upload an image to transcribe</label>
-                <input type="file" id="image-upload" name="inference_image" accept="image/*" capture="environment">
+                <div id="image-upload-container">
+                    <label for="image-upload">Upload an image to transcribe</label>
+                    <input type="file" id="image-upload" name="inference_image" accept="image/*" capture="environment">
+                </div>
                 <section id="image-preview-window" class="toggleable-section">
                     <p>Selected image:</p>
                     <img id="image-preview" alt="Preview of the image to run inference on" hidden>

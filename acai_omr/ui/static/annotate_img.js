@@ -1,5 +1,6 @@
-const BACKGROUND_MAX_WIDTH = 700;
-const BACKGROUND_MAX_HEIGHT = 1500;
+// in percentage of the viewport
+const BACKGROUND_MAX_WIDTH = 0.9;
+const BACKGROUND_MAX_HEIGHT = 1.5;
 
 // don't create a box if user just clicks -- drags have to be beyond a threshold
 const BOX_MIN_WIDTH = 0.01;
@@ -21,7 +22,10 @@ function setUpStage(imgSrc) {
     const imgObj = new Image();
     imgObj.src = imgSrc;
 
-    const scale = Math.min(BACKGROUND_MAX_WIDTH / imgObj.width, BACKGROUND_MAX_HEIGHT / imgObj.height, 1.0);
+    const background_max_width = BACKGROUND_MAX_WIDTH * window.innerWidth;
+    const background_max_height = BACKGROUND_MAX_HEIGHT * window.innerHeight;
+
+    const scale = Math.min(background_max_width / imgObj.width, background_max_height / imgObj.height, 1.0);
     const displayWidth = imgObj.width * scale;
     const displayHeight = imgObj.height * scale;
 
@@ -71,7 +75,7 @@ function setUpDeleteButtonListeners(deleteButton, hoverFill, transformer, layer)
     deleteButton.on("mouseleave", () => {
         hoverTween.reverse();
     });
-    deleteButton.on("click", () => {
+    deleteButton.on("click tap", () => {
         const focusedRect = transformer.nodes()[0];
         focusedRect.destroy();
         transformer.nodes([]);
@@ -127,7 +131,7 @@ export function annotateImage(imgSrc) {
     let currRect = null;
 
     // drag a new rectangle out when a click starts on the background, drags beyond the size thresholds, and releases
-    stage.on("mousedown", (e) => {
+    stage.on("mousedown touchstart", (e) => {
         if (e.target === background) {
             // reset any Rects that were being transformed
             transformer.nodes([]); 
@@ -169,7 +173,7 @@ export function annotateImage(imgSrc) {
         }
     });
 
-    stage.on("mousemove", () => {
+    stage.on("mousemove touchmove", () => {
         if (!currRect) return;
         const pos = stage.getPointerPosition();
         currRect.width(pos.x - startX);
@@ -177,7 +181,7 @@ export function annotateImage(imgSrc) {
         layer.batchDraw();
     });
 
-    stage.on("mouseup", () => {
+    stage.on("mouseup touchend", () => {
         if (!currRect) return;
 
         const bbox = convertToBbox(currRect, stage);
