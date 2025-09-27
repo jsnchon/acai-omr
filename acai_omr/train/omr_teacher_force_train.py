@@ -261,6 +261,28 @@ def omr_teacher_force_train(vitomr, train_dataset, validation_dataset, device):
     epoch_stats_df.to_csv((MODEL_DIR_PATH / "training_stats.csv"))
     writer.flush()
 
+# just set up and return the necessary components for inference: the model architecture (no weights), base image transform, and device
+def set_up_omr_inference():
+    device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
+    print(f"Using device {device}")
+
+    print(f"Setting up encoder with patch size {PATCH_SIZE}, pe grid of {PE_MAX_HEIGHT} x {PE_MAX_WIDTH}, fine-tuning last {ENCODER_FINE_TUNE_DEPTH} layers")
+    encoder = FineTuneOMREncoder(PATCH_SIZE, PE_MAX_HEIGHT, PE_MAX_WIDTH, ENCODER_FINE_TUNE_DEPTH)
+    print(f"Setting up decoder with max lmx sequence length {MAX_LMX_SEQ_LEN}, vocab file {LMX_VOCAB_PATH}")
+    decoder = OMRDecoder(MAX_LMX_SEQ_LEN, LMX_VOCAB_PATH, num_layers=NUM_DECODER_LAYERS)
+
+    print("Setting up ViTOMR model\n")
+    vitomr = ScheduledSamplingViTOMR(encoder, None, decoder)
+    vitomr = vitomr.to(device)
+
+    base_img_transform = v2.Compose([
+        v2.ToImage(),
+        v2.ToDtype(torch.float32, scale=True),
+        DynamicResize(PATCH_SIZE, MAX_IMG_SEQ_LEN, PE_MAX_HEIGHT, PE_MAX_WIDTH, False)
+    ])
+
+    return vitomr, base_img_transform, device
+
 # constructing/loading the model definition into memory can be intensive, so instead of doing this whenever this module is imported,
 # separate it into a function that can be called when it's needed
 def set_up_omr_teacher_force_train():

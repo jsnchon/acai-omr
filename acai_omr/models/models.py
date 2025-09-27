@@ -660,8 +660,9 @@ class TeacherForcedViTOMR(ViTOMR):
         )
         super().__init__(encoder, transition_head, decoder)
 
-        encoder_state_dict = self.create_omr_encoder_state_dict_from_mae(pretrained_mae_state_dict)
-        encoder.load_state_dict(encoder_state_dict)
+        if pretrained_mae_state_dict:
+            encoder_state_dict = self.create_omr_encoder_state_dict_from_mae(pretrained_mae_state_dict)
+            encoder.load_state_dict(encoder_state_dict)
 
         # depending on the type of encoder being used, either freeze the whole thing or just the frozen blocks or none at all (for full fine-tune)
         if isinstance(self.encoder, FineTuneOMREncoder) and self.encoder.frozen_blocks:

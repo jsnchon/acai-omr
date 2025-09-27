@@ -1,6 +1,6 @@
 import torch
 from acai_omr.models.models import ViTOMR
-from acai_omr.train.omr_teacher_force_train import set_up_omr_teacher_force_train
+from acai_omr.train.omr_teacher_force_train import set_up_omr_inference
 from acai_omr.config import INFERENCE_VITOMR_PATH
 from acai_omr.utils.utils import stringify_lmx_seq
 from acai_omr.__init__ import InferenceEvent
@@ -94,7 +94,7 @@ if __name__ == "__main__":
     CACHE_DTYPE = torch.bfloat16
     logger.info(f"Loading state dict from {INFERENCE_VITOMR_PATH}")
 
-    vitomr, base_img_transform, _, device = set_up_omr_teacher_force_train()
+    vitomr, base_img_transform, device = set_up_omr_inference()
     vitomr.decoder = vitomr.decoder.to_cached_version(MAX_BATCH_SIZE, CACHE_DTYPE)
     if device == "cpu":
         vitomr_state_dict = torch.load(INFERENCE_VITOMR_PATH, map_location=torch.device("cpu"))

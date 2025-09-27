@@ -2,7 +2,7 @@ import torch
 from flask import Blueprint, render_template, request, Response, send_file
 from acai_omr.inference.vitomr_inference import streamed_inference
 from acai_omr.config import INFERENCE_VITOMR_PATH
-from acai_omr.train.omr_teacher_force_train import set_up_omr_teacher_force_train
+from acai_omr.train.omr_teacher_force_train import set_up_omr_inference
 from acai_omr.__init__ import InferenceEvent
 from acai_omr.utils.utils import stringify_lmx_seq
 from olimpic_app.linearization.Delinearizer import direct_delinearize
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 MAX_BATCH_SIZE = 1
 CACHE_DTYPE = torch.bfloat16
 
-vitomr, base_img_transform, _, device = set_up_omr_teacher_force_train()
+vitomr, base_img_transform, device = set_up_omr_inference()
 logger.info(f"Enabling caching for decoder with a max batch size of {MAX_BATCH_SIZE} and cache datatype of {CACHE_DTYPE}")
 vitomr.decoder = vitomr.decoder.to_cached_version(MAX_BATCH_SIZE, CACHE_DTYPE)
 
