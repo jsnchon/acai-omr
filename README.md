@@ -10,6 +10,10 @@ also need to make sure git clone with submodules flag or init them after pulling
 
 training stuff will be helped along by new machine setup util script, need to also download data
 
+can run as flask for developing using poetry run flask --app acai_omr run or gunicorn for production using poetry run gunicorn "acai_omr.wsgi:app" --bind 0.0.0.0:8000
+
+digital ocean server sets up gunicorn as a systemd service bound to a unix domain socket file, nginx reverse proxy, certbot to set up DNS
+
 important papers in this project:
 mae are scalable vision learners
 attention is all you need

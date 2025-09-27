@@ -20,6 +20,8 @@ main = Blueprint("main", __name__)
 logger = logging.getLogger(__name__)
 
 MAX_BATCH_SIZE = 1
+CPU_FLUSH_INTERVAL = 10
+GPU_FLUSH_INTERVAL = 50 # buffer GPUs more
 CACHE_DTYPE = torch.bfloat16
 
 vitomr, base_img_transform, device = set_up_omr_inference()
@@ -35,9 +37,11 @@ else:
 vitomr.load_state_dict(vitomr_state_dict)
 
 if device == "cpu":
-    flush_interval = 25
+    flush_interval = CPU_FLUSH_INTERVAL
 else:
-    flush_interval = 50 # buffer GPUs more
+    flush_interval = GPU_FLUSH_INTERVAL
+
+logger.info("Set-up done!")
 
 @main.route("/")
 def index():
@@ -144,7 +148,7 @@ def musicxml_to_imgs(xml_file_path: Path, root_temp_dir: Path):
     musescore_out_stem = "musecore_out.png"
     with tempfile.TemporaryDirectory(dir=root_temp_dir) as imgs_temp_dir_name:
         logger.debug(f"Created {imgs_temp_dir_name} temporary directory for musescore CLI outputs")
-        subprocess.run(["musescore3", "-o", Path(imgs_temp_dir_name) / musescore_out_stem, xml_file_path])
+        subprocess.run(["musescore3", "-platform", "offscreen", "-o", Path(imgs_temp_dir_name) / musescore_out_stem, xml_file_path])
         musescore_outputs = list(Path(imgs_temp_dir_name).iterdir())
         # in the event musescore outputs multiple files, the stem will have numerical suffixes appended to it corresponding to page numbers
         if len(musescore_outputs) != 1:
