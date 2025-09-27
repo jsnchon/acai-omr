@@ -1,7 +1,8 @@
 # vitomr
 
 setup instructions:
-for inference just need to poetry install, install musescore CLI and imagemagick, and run flask app
+setup script at least assumes ubuntu 24.04 (for installing the right python version)
+simplest is to add add export PATH="/root/.local/bin:$PATH" to shell config file, pjust run setup script, transfer model weights and/or dataset, install musescore3 and imagemagick through cli (not part of setup script since only needed for inference/requires sudo). Can run flask app if developing locally with poetry run flask --app acai_omr run
 sudo apt install musescore3
 sudo apt install imagemagick
 
