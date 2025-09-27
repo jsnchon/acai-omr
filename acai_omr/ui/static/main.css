@@ -9,7 +9,7 @@
 body {
     color: var(--text-color);
     background-color: var(--primary-color);
-    font-family: Iosevka;
+    font-family: Iosevka Web;
     min-height: 100vh;
     margin: 0;
 }
@@ -144,10 +144,11 @@ button:hover {
 input[type="file"]::file-selector-button {
     color: var(--text-color);
     background-color: var(--lighter-primary-color); /* Example background color */
-    font-family: Iosevka;
+    font-family: Iosevka Web;
     border: 3px solid var(--secondary-color);
     border-radius: 8px;
-    padding: 8px 16px;
+    padding: 8px 20px;
+    margin: 0.5rem;
     transition: background-color 0.7s ease;
     cursor: pointer;
 }

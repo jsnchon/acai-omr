@@ -24,24 +24,25 @@ CPU_FLUSH_INTERVAL = 10
 GPU_FLUSH_INTERVAL = 50 # buffer GPUs more
 CACHE_DTYPE = torch.bfloat16
 
-vitomr, base_img_transform, device = set_up_omr_inference()
-logger.info(f"Enabling caching for decoder with a max batch size of {MAX_BATCH_SIZE} and cache datatype of {CACHE_DTYPE}")
-vitomr.decoder = vitomr.decoder.to_cached_version(MAX_BATCH_SIZE, CACHE_DTYPE)
-
-logger.info(f"Loading state dict from {INFERENCE_VITOMR_PATH}")
-if device == "cpu":
-    vitomr_state_dict = torch.load(INFERENCE_VITOMR_PATH, map_location=torch.device("cpu"))
-else:
-    vitomr_state_dict = torch.load(INFERENCE_VITOMR_PATH)
-
-vitomr.load_state_dict(vitomr_state_dict)
-
-if device == "cpu":
-    flush_interval = CPU_FLUSH_INTERVAL
-else:
-    flush_interval = GPU_FLUSH_INTERVAL
-
-logger.info("Set-up done!")
+# DEBUG
+# vitomr, base_img_transform, device = set_up_omr_inference()
+# logger.info(f"Enabling caching for decoder with a max batch size of {MAX_BATCH_SIZE} and cache datatype of {CACHE_DTYPE}")
+# vitomr.decoder = vitomr.decoder.to_cached_version(MAX_BATCH_SIZE, CACHE_DTYPE)
+# 
+# logger.info(f"Loading state dict from {INFERENCE_VITOMR_PATH}")
+# if device == "cpu":
+#     vitomr_state_dict = torch.load(INFERENCE_VITOMR_PATH, map_location=torch.device("cpu"))
+# else:
+#     vitomr_state_dict = torch.load(INFERENCE_VITOMR_PATH)
+# 
+# vitomr.load_state_dict(vitomr_state_dict)
+# 
+# if device == "cpu":
+#     flush_interval = CPU_FLUSH_INTERVAL
+# else:
+#     flush_interval = GPU_FLUSH_INTERVAL
+# 
+# logger.info("Set-up done!")
 
 @main.route("/")
 def index():

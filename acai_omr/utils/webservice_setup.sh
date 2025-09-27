@@ -13,6 +13,12 @@ echo "Project root directory: $root_dir"
 echo "Root domain to use for dns: $root_domain"
 
 venv_path=$(poetry env info --path)
+if [[ -z "$venv_path" ]]; then
+    echo "poetry env returned no path. Make sure the poetry project has been set up. Aborting"
+    exit 1
+else
+    echo "Poetry venv path: $venv_path"
+fi
 
 echo "Installing apt dependencies"
 sudo apt update && sudo apt upgrade -y

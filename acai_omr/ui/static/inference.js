@@ -15,7 +15,7 @@ function hideSection(elem) {
 const startView = document.getElementById("start-view");
 const firstSection = startView; // first section to show. Others are kept hidden until they should be activated
 
-document.addEventListener("DOMContentLoaded", () => {
+window.addEventListener("load", () => {
     setTimeout(() => { // brief pause so animations play nicely
         showSection(firstSection);
     }, 500);
