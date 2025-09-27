@@ -179,10 +179,11 @@ function displayTokenStream(outputElem, inferenceStepEvent) {
     });
 }
 
-function prepareResultView(resultView, finalLmxSeq, avgConfidence, finalImgs) {
+function prepareResultView(resultView, finalLmxSeq, avgConfidence, finalImgs, downloadElem) {
     const finalLmxDisplay = resultView.querySelector("#final-lmx-display");
     const averageConfidenceDisplay = resultView.querySelector("#average-confidence-display")
     const finalImgsDisplay = resultView.querySelector("#final-images-display");
+    const downloadButton = resultView.querySelector("#download-button");
     const startOverButton = resultView.querySelector("#start-over-button");
 
     finalLmxDisplay.textContent = finalLmxSeq;
@@ -195,8 +196,14 @@ function prepareResultView(resultView, finalLmxSeq, avgConfidence, finalImgs) {
         imgDisplayChildren.push(img);
     });
     finalImgsDisplay.replaceChildren(...imgDisplayChildren);
+    finalImgsDisplay.appendChild(downloadButton);
     finalImgsDisplay.appendChild(startOverButton);
 
+    downloadButton.addEventListener("click", async () => {
+        downloadElem.click();
+        downloadElem.remove();
+        window.URL.revokeObjectURL(downloadElem.href);
+    });
     startOverButton.addEventListener("click", () => {
         location.reload();
     });
@@ -230,6 +237,7 @@ function handleStreamEnd(source, inferenceEvents) {
             const avgConfidence = resp.avgConfidence;
             const musicxmlPath = resp.musicxmlPath;
             const finalImgs = resp.finalImgs;
+            let downloadElem = null;
 
             await fetch("/download", { 
                 method: "POST", 
@@ -237,21 +245,19 @@ function handleStreamEnd(source, inferenceEvents) {
                 body: JSON.stringify({ "path": musicxmlPath })
             }).then((resp) => resp.blob()).then((blob) => {
                     const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = "result.musicxml";
-                    document.body.appendChild(a);
-                    a.click();
-                    a.remove();
-                    window.URL.revokeObjectURL(url);
+                    downloadElem = document.createElement("a");
+                    downloadElem.href = url;
+                    downloadElem.download = "result.musicxml";
+                    document.body.appendChild(downloadElem);
             });
+
             await fetch("/clear", { 
                 method: "PUT", 
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ "path": rootTempDir })
             });
 
-            prepareResultView(resultView, finalLmxSeq, avgConfidence, finalImgs);
+            prepareResultView(resultView, finalLmxSeq, avgConfidence, finalImgs, downloadElem);
             showSection(resultView);
         }
     });
