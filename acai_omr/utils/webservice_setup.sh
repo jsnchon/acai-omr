@@ -16,7 +16,7 @@ venv_path=$(poetry env info --path)
 
 echo "Installing apt dependencies"
 sudo apt update && sudo apt upgrade -y
-sudo apt install nginx && sudo apt install musescore3 && sudo apt install imagemagick && sudo apt install certbot python3-certbot-nginx -y
+sudo apt install nginx -y && sudo apt install musescore3 -y && sudo apt install imagemagick -y && sudo apt install certbot python3-certbot-nginx -y
 
 # include /usr/bin in environment PATH for musescore/imagemagick cli and use gevent workers for SSE support
 echo "Creating gunicorn service file"
