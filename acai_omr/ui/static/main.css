@@ -21,11 +21,11 @@ body {
     visibility: hidden;
     pointer-events: none; /* prevent from accidentally clicking while hidden */
 
-    transition: opacity 1s ease, max-height 1s ease;
+    transition: opacity 1.5s ease, max-height 1.5s ease;
 }
 
 .toggleable-section.active {
-    max-height: 150vh; /* can't just set to none if want transition to play */
+    max-height: 250vh; /* can't just set to none if want transition to play */
     opacity: 1;
     visibility: visible;
     pointer-events: auto;
