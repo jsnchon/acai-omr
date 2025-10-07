@@ -79,13 +79,13 @@ sudo apt install musescore3 && sudo apt install imagemagick
 
 There are a few ways to use this project locally.
 
+First, you can download the model weights from the Releases page. Then, edit `acai_omr/config.py` to point to the weights path. This file also contains other important general constants. Constants specific to certain parts of the project will be defined in individual files.
+
 If you want to run/modify bare-bones inference, refer to `acai_omr/inference/vitomr_inference.py`.
 
 If you want to configure/modify/run model architecture or training scripts, refer to `acai_omr/models` and `acai_omr/train`.
 
 If you want to run the full application yourself, run `poetry run flask --app acai_omr run`.
-
-Important general constants are defined in `acai_omr/config.py`. Constants specific to certain parts of the project will be defined in individual files.
 
 ### More Details
 
