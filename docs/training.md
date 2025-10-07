@@ -17,6 +17,8 @@ In anticipation of using the model on photos from a camera, light camera-like im
 | Epochs | 500 |
 | Warmup epochs | 50 |
 | Image augmentation probability | 0.2 |
+| Decoder depth | 8 |
+| Decoder hidden dimension | 512 |
 
 #### Pretraining curriculum
 
@@ -51,6 +53,8 @@ In anticipation of using the model on photos from a camera, generous camera-like
 | Image augmentation probability | 0.5 |
 | Encoder/transition head dropout | 0.05 |
 | Decoder dropout | 0.1 |
+| Decoder depth | 12 |
+| Decoder hidden dimension | 1024 |
 
 #### Decoder Curriculum
 
