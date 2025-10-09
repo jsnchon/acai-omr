@@ -4,7 +4,7 @@ Essentially every implementation decision made within this project was motivated
 
 1. The nature of the task. Music notation is extremely varied, complex, and high-precision.    
    - For a given symbol, the smallest deviation in its position or the presence of another tiny symbol beside it can completely alter its semantic meaning and the meanings of other symbols around it 
-   - For more complex polyphonic sheets, the model must do more than simple visual recognition of symbols like in Optical Character Recognition. It must also identify different voices and separate notes between them which requires at least some semantic understanding of musi c
+   - For more complex polyphonic sheets, the model must do more than simple visual recognition of symbols like in Optical Character Recognition. It must also identify different voices and separate notes between them which requires at least some semantic understanding of music
 2. Data issues.
     - There's a general lack of datasets
     - Datasets that do exist are usually limited in size and/or difficult to work with for various reasons, eg image sizes vary wildly within/between them, lack of image diversity, etc. 
@@ -46,3 +46,15 @@ As mentioned before, there are no real OMR foundation models. Additionally, pret
 Intuitively, scheduled sampling seems especially important in this difficult, precise visual task where it's easy to make mistakes during autoregressive inference. Scheduled sampling provides a way for the model to learn to deal with its own past mistakes.
 
 And ultimately, scheduled sampling was the training method that achieved the best performance and generalization to somewhat out of distribution images, eg photos printed sheets.
+
+#### Why only pianoform music?
+
+Primarily, this is a data issue. This project would not have been possible without the OLiMPiC dataset, as it allowed me to focus only on the already extremely difficult process of designing and training the model instead of the process of creating a transformer-friendly sheet music encoding. And because the OLiMPiC dataset is only pianoform, this model is only pianoform. That being said, it's in theory possible to do some active-learning with the current model to somewhat efficiently label single or 3+ stave sheet music.
+
+Additionally, pianoform music is a good technical challenge. Within the field of OMR, it's generally recognized that pianoform sheet music is some of the hardest to transcribe for several reasons: it's multi-staff, polyphonic (multiple voices in each staff), information crosses across staves, and pianoform sheets are often very dense.
+
+#### Why only one system at a time?
+
+Again, this is was primarily because this is how the OLiMPiC dataset is organized. There are also technical factors: importantly, high-resolution images of whole sheets would be quite computationally expensive for transformers. In theory, this could maybe be mitigated by modified transformer architectures (like a Swin), but I never got around to testing this.
+
+This repository contains an attempt at creating another small model to split systems automatically instead of having a user manually do it, but again data issues proved a substantial roadblock to this. There's no real dataset for system-level splitting of a whole sheet, and there's also the problem of determining what kind of architecture to use (eg Mask RCNN, Faster RCNN, YOLO style, etc.). I quickly realized this was a whole project in itself, so I put it aside for now.
