@@ -31,25 +31,25 @@ This project contains an end-to-end image to text model that transcribes images 
 
 The best results can be seen on screenshots of digitally typeset scores (eg from Musescore).
 
-Input:
+**Input:**  
 ![Screenshot of a Musescore score](docs/docs_images/ballade.png)
 
-Reconstructed score:
+**Reconstructed score:**  
 ![Model output from the Musescore score](docs/docs_images/ballade_result_0.png)
 ![Model output from the Musescore score](docs/docs_images/ballade_result_1.png)
 
 While there will be more errors on digital scans and photos of printed sheets, overall the model still saves a huge amount of time: manually correcting the errors is orders of magnitude faster than transcribing everything from scratch.
 
-Input:
+**Input:**  
 ![Pdf scan of a score](docs/docs_images/liebesleid_scan.png)
 
-Reconstructed score:
+**Reconstructed score:**  
 ![Model output from the pdf scan](docs/docs_images/liebesleid_result.png)
 
-Input (taken with a phone camera):
+**Input (taken with a phone camera):**  
 ![Photo of a printed score](docs/docs_images/bethena_phone.jpg)
 
-Reconstructed score:
+**Reconstructed score:**  
 ![Model output from photo](docs/docs_images/bethena_result.png)
 
 Note that the model was trained exclusively with pianoform music, meaning two staves per musical system (a system is one unbroken row of staves that are played simultaneously). Additionally, it was trained on images containing only one system, so whole sheets will have to be split into individual systems. 
