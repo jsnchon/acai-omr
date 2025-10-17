@@ -8,8 +8,9 @@ class KVCache(nn.Module):
     with some small modifications to make it more useful for my case: 
         update() returns all filled in parts of the cache as of the current time step, rather than just the newest key and value tensors
         The cache is initialized with a max batch size, but smaller batches can be passed into it (eg like the last batch of
-        the dataloader which is usually smaller) and only the parts of the cache corresponding to the smaller batch will be updated/indexed. 
-        Things will break if you use update() with non-monotonically decreasing batch sizes within the same inference batch 
+        the dataloader which is usually smaller) and only the parts of the cache corresponding to the smaller batch will be used. 
+        Things will break if you use update() with changing batch sizes without calling reset() (eg if you drop out sequences from a minibatch
+        of 8 sequences to get a new one of 6 sequences, you can't use the cache to access the cached tensors for the remaining 6 sequences)
 
     Standalone ``nn.Module`` containing a kv-cache to cache past key and values during inference.
 
