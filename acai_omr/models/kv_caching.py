@@ -6,10 +6,10 @@ class KVCache(nn.Module):
     """
     NOTE: this is just torchtune's implementation (https://docs.pytorch.org/torchtune/stable/_modules/torchtune/modules/kv_cache.html#KVCache)
     with some small modifications to make it more useful for my case: 
-        update() returns only filled in parts of the cache each call
+        update() returns all filled in parts of the cache as of the current time step, rather than just the newest key and value tensors
         The cache is initialized with a max batch size, but smaller batches can be passed into it (eg like the last batch of
-        the dataloader which is usually smaller) and only the right parts of the cache will be updated/indexed. Things will break
-        if you use update() with changing batch sizes within the same batch (eg if you drop completed sequences)
+        the dataloader which is usually smaller) and only the parts of the cache corresponding to the smaller batch will be updated/indexed. 
+        Things will break if you use update() with non-monotonically decreasing batch sizes within the same inference batch 
 
     Standalone ``nn.Module`` containing a kv-cache to cache past key and values during inference.
 
