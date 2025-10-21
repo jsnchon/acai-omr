@@ -4,7 +4,7 @@ It's not uncommon for a musician to be manually transcribing sheet music to a di
 
 This project contains an end-to-end image to text model that transcribes images of pianoform sheet music into musicxml files, allowing users to avoid the boring and tedious process of manual transcription. It also comes with a UI.
 
-***Use it right now here: [acai-omr.com](acaiomr.com)***.
+***Use it right now here: [acaiomr.com](https://acaiomr.com)***.
 
 ### Table of Contents
 
