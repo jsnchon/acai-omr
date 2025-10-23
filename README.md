@@ -1,5 +1,7 @@
 # Acai OMR 
 
+![Screenshot of the ui](docs/docs_images/ui_screenshot.png)
+
 It's not uncommon for a musician to be manually transcribing sheet music to a digital format using notation software. For instance, if you have a printed sheet and you want to add another part for a new instrument, you'd have to open up notation software, transcribe the sheet yourself (which is ***slow*** and cumbersome), add your changes, and reprint the sheet.
 
 This project contains an end-to-end image to text model that transcribes images of pianoform sheet music into musicxml files, allowing users to avoid the boring and tedious process of manual transcription. It also comes with a UI.
