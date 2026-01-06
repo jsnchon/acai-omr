@@ -6,6 +6,8 @@ Due to the extreme domain shift from common ViT pretraining datasets like ImageN
 
 In anticipation of using the model on photos from a camera, light camera-like image augmentation was applied. When augmentation was applied, the reconstruction target was the unaugmented version of the image to hopefully learn representations that are robust to camera artifacts.
 
+The pretraining dataset comprises score images from the DoReMi, PrIMuS, GrandStaff, and OLiMPiC datasets.
+
 #### Pretraining hyperparameters
 
 | Hyperparameter | Value | 
