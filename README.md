@@ -89,6 +89,8 @@ If you want to configure/modify/run model architecture or training scripts, refe
 
 If you want to run the full application yourself, run `poetry run flask --app acai_omr run`.
 
+The dataset is hosted on [Hugging Face](https://huggingface.co/datasets/jsnchon/acai_OMR)
+
 ### More Details
 
 [Model architecture](docs/model_architecture.md)
